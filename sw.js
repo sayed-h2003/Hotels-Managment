@@ -1,4 +1,4 @@
-const CACHE_NAME = 'umrah-v1';
+const CACHE_NAME = 'Hotel-managment-v1';
 const assets = [
   '/umrah-app/',
   '/umrah-app/index.html',
