@@ -1,0 +1,17 @@
+{
+  "short_name": "ادارة رحلات العمرة - شركة منف للسياحة",
+  "name": "ادارة رحلات العمرة - شركة منف للسياحة",
+  "icons": [
+    {
+      "src": "https://flaticon.com",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": ".",
+  "background_color": "#1e3d59",
+  "theme-color": "#1e3d59",
+  "display": "standalone",
+  "orientation": "portrait"
+}
