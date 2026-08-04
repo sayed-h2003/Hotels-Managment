@@ -1,4 +1,6 @@
-const CACHE_NAME = 'hotel-managment-v2';
+// ⚠️ مهم: زد رقم النسخة (v3, v4, ...) في كل مرة تُعدّل فيها أي ملف على GitHub
+// هذا يُجبر كل متصفح على حذف الكاش القديم وجلب نسخة جديدة تلقائياً دون أي تدخل من المستخدم
+const CACHE_NAME = 'hotel-managment-v3';
 const assets = [
   './',
   './index.html',
@@ -6,26 +8,36 @@ const assets = [
 ];
 
 self.addEventListener('install', e => {
-  self.skipWaiting(); // تفعيل النسخة الجديدة من الـ Service Worker فوراً دون انتظار إغلاق كل التبويبات
+  self.skipWaiting(); // تفعيل النسخة الجديدة فوراً دون انتظار إغلاق كل التبويبات المفتوحة
   e.waitUntil(
     caches.open(CACHE_NAME).then(cache => cache.addAll(assets))
   );
 });
 
 self.addEventListener('activate', e => {
-  // حذف نسخ الكاش القديمة تلقائياً عند تحديث الإصدار (يمنع تراكم كاش قديم لا داعي له)
+  // حذف كل نسخ الكاش القديمة تلقائياً فور تفعيل النسخة الجديدة - هذا هو مفتاح حل المشكلة
   e.waitUntil(
     caches.keys().then(keys =>
       Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    )
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 self.addEventListener('fetch', e => {
-  // لا نتدخل إطلاقاً في طلبات Google Apps Script (iframe المحتوى الفعلي) - فقط الغلاف المحلي يُخزَّن
-  if (e.request.url.indexOf('script.google.com') > -1) return;
+  // استثناء تام لطلبات تطبيق الحجوزات الفعلي (Google Apps Script) - لا يُخزَّن مطلقاً
+  if (e.request.url.indexOf('script.google.com') > -1) {
+    e.respondWith(fetch(e.request));
+    return;
+  }
+  // استراتيجية "الشبكة أولاً" لملفات الغلاف نفسها: نحاول الشبكة أولاً للحصول على أحدث نسخة،
+  // ولا نلجأ للكاش إلا في حال انقطاع الاتصال بالإنترنت فقط (كنسخة احتياطية للعمل دون اتصال)
   e.respondWith(
-    caches.match(e.request).then(response => response || fetch(e.request))
+    fetch(e.request)
+      .then(networkResponse => {
+        var clone = networkResponse.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(e.request, clone));
+        return networkResponse;
+      })
+      .catch(() => caches.match(e.request))
   );
 });
