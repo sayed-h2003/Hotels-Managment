@@ -2,22 +2,85 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, minimum-scale=1.0, user-scalable=yes">
   <meta name="theme-color" content="#1e3d59">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="إدارة الفنادق">
   <link rel="manifest" href="manifest.json">
   <title>إدارة الفنادق</title>
   <style>
-    body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background-color: #1e3d59; }
-    iframe { border: none; width: 100%; height: 100%; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      background-color: #1e3d59;
+      /* لا نضع overflow:hidden هنا حتى لا نمنع تفاعل اللمس والزوم على مستوى الصفحة */
+    }
+    iframe {
+      border: none;
+      width: 100%;
+      height: 100vh;
+      height: 100dvh; /* يتعامل بشكل أفضل مع شريط عنوان المتصفح المتغيّر على الموبايل */
+      display: block;
+    }
+
+    /* شاشة تحميل بسيطة تظهر أثناء تحميل التطبيق الفعلي داخل iframe */
+    #loadingScreen {
+      position: fixed;
+      inset: 0;
+      background: linear-gradient(135deg, #0f2419, #1e3d59);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+      transition: opacity 0.4s ease;
+    }
+    #loadingScreen.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .loader-spinner {
+      width: 46px;
+      height: 46px;
+      border: 4px solid rgba(255,255,255,0.2);
+      border-top-color: #c9a84c;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+      margin-bottom: 14px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loader-text {
+      color: #fff;
+      font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      opacity: 0.9;
+    }
   </style>
 </head>
 <body>
 
-  <iframe src="https://script.google.com/macros/s/AKfycbxFRpXLO2Tbkl2nH8PRQuFDvr6LwNQI1RMOVXU3C30K40zyvvZteOPf2ndYYy1nmMi1/exec"></iframe>
+  <div id="loadingScreen">
+    <div class="loader-spinner"></div>
+    <div class="loader-text">جاري تحميل نظام إدارة الفنادق...</div>
+  </div>
+
+  <iframe id="appFrame" src="https://script.google.com/macros/s/AKfycbxFRpXLO2Tbkl2nH8PRQuFDvr6LwNQI1RMOVXU3C30K40zyvvZteOPf2ndYYy1nmMi1/exec"></iframe>
 
   <script>
+    // إخفاء شاشة التحميل بمجرد اكتمال تحميل محتوى الـ iframe
+    document.getElementById('appFrame').addEventListener('load', function() {
+      document.getElementById('loadingScreen').classList.add('hidden');
+    });
+
+    // في حال تأخر التحميل لأي سبب، نُخفي شاشة التحميل بعد 8 ثوانٍ كحد أقصى لتفادي تعليقها للأبد
+    setTimeout(function() {
+      document.getElementById('loadingScreen').classList.add('hidden');
+    }, 8000);
+
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('sw.js')
