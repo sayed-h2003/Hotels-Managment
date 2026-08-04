@@ -7,6 +7,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="إدارة الفنادق">
+  <!-- منع المتصفح من تخزين نسخة قديمة من هذه الصفحة نفسها -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <link rel="manifest" href="manifest.json">
   <title>إدارة الفنادق</title>
   <style>
@@ -16,17 +20,14 @@
       height: 100%;
       width: 100%;
       background-color: #1e3d59;
-      /* لا نضع overflow:hidden هنا حتى لا نمنع تفاعل اللمس والزوم على مستوى الصفحة */
     }
     iframe {
       border: none;
       width: 100%;
       height: 100vh;
-      height: 100dvh; /* يتعامل بشكل أفضل مع شريط عنوان المتصفح المتغيّر على الموبايل */
+      height: 100dvh;
       display: block;
     }
-
-    /* شاشة تحميل بسيطة تظهر أثناء تحميل التطبيق الفعلي داخل iframe */
     #loadingScreen {
       position: fixed;
       inset: 0;
@@ -68,15 +69,20 @@
     <div class="loader-text">جاري تحميل نظام إدارة الفنادق...</div>
   </div>
 
-  <iframe id="appFrame" src="https://script.google.com/macros/s/AKfycbyqJYTl6qlVpknrf5fXy0EkqxpL0I4OTAdEss6JJaJe2le39T9QihqBdaWeQ42zF20c/exec"></iframe>
+  <iframe id="appFrame" src=""></iframe>
 
   <script>
-    // إخفاء شاشة التحميل بمجرد اكتمال تحميل محتوى الـ iframe
+    // كسر كاش رابط تطبيق Apps Script: نُضيف طابعاً زمنياً فريداً لكل تحميل صفحة
+    // هذا يُجبر المتصفح على طلب نسخة جديدة تماماً من الخادم بدل الاعتماد على أي نسخة محفوظة سابقاً
+    (function() {
+      var baseUrl = 'https://script.google.com/macros/s/AKfycbyqJYTl6qlVpknrf5fXy0EkqxpL0I4OTAdEss6JJaJe2le39T9QihqBdaWeQ42zF20c/exec';
+      document.getElementById('appFrame').src = baseUrl + '?_cb=' + Date.now();
+    })();
+
     document.getElementById('appFrame').addEventListener('load', function() {
       document.getElementById('loadingScreen').classList.add('hidden');
     });
 
-    // في حال تأخر التحميل لأي سبب، نُخفي شاشة التحميل بعد 8 ثوانٍ كحد أقصى لتفادي تعليقها للأبد
     setTimeout(function() {
       document.getElementById('loadingScreen').classList.add('hidden');
     }, 8000);
@@ -84,7 +90,11 @@
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('sw.js')
-          .then(reg => console.log('Service Worker Registered'))
+          .then(reg => {
+            console.log('Service Worker Registered');
+            // فحص دوري لوجود نسخة جديدة من الـ Service Worker كل مرة تُفتح الصفحة
+            reg.update();
+          })
           .catch(err => console.log('Service Worker Failed', err));
       });
     }
