@@ -1,17 +1,26 @@
 {
-  "short_name": "ادارة الفنادق",
-  "name": "ادارة الفنادق",
+  "short_name": "إدارة الفنادق",
+  "name": "نظام إدارة حجوزات الفنادق",
   "icons": [
     {
-      "src": "https://flaticon.com",
+      "src": "icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
       "type": "image/png",
       "sizes": "512x512",
       "purpose": "any maskable"
     }
   ],
-  "start_url": ".",
-  "background_color": "#1e3d59",
-  "theme-color": "#1e3d59",
+  "start_url": "./index.html",
+  "scope": "./",
+  "background_color": "#0f2419",
+  "theme_color": "#0f2419",
   "display": "standalone",
-  "orientation": "portrait"
+  "orientation": "any",
+  "lang": "ar",
+  "dir": "rtl"
 }
