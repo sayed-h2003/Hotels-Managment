@@ -60,6 +60,32 @@
       font-weight: 600;
       opacity: 0.9;
     }
+    /* v4 — زر تفعيل الإشعارات على مستوى الصفحة العليا (يظهر فقط عند الحاجة) */
+    #notifPermBtn {
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 2000;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      background: linear-gradient(135deg, #c9a84c, #b8912e);
+      color: #0f2419;
+      border: none;
+      border-radius: 22px;
+      padding: 9px 22px;
+      font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(0,0,0,.35);
+      animation: notifPulse 2s ease-in-out infinite;
+    }
+    @keyframes notifPulse {
+      0%, 100% { box-shadow: 0 4px 14px rgba(0,0,0,.35); }
+      50% { box-shadow: 0 4px 22px rgba(201,168,76,.75); }
+    }
   </style>
 </head>
 <body>
@@ -69,13 +95,16 @@
     <div class="loader-text">جاري تحميل نظام إدارة الفنادق...</div>
   </div>
 
-  <iframe id="appFrame" src=""></iframe>
+  <!-- v4 — زر طلب إذن الإشعارات: نقرة هنا = User Gesture حقيقي على النافذة العليا فيقبله المتصفح دائماً -->
+  <button id="notifPermBtn" onclick="requestNotifPermissionTopLevel()">🔔 اضغط هنا لتفعيل إشعارات النظام</button>
+
+  <iframe id="appFrame" src="" allow="notifications"></iframe>
 
   <script>
     // كسر كاش رابط تطبيق Apps Script: نُضيف طابعاً زمنياً فريداً لكل تحميل صفحة
     // هذا يُجبر المتصفح على طلب نسخة جديدة تماماً من الخادم بدل الاعتماد على أي نسخة محفوظة سابقاً
     (function() {
-      var baseUrl = 'https://script.google.com/macros/s/AKfycbzfHTut7DVQ9iFKa5_gY8nuZ7vk8o6eIXyDSnQweJCpPqyi8wtYJJtvDP2xqrX87x0a/exec';
+      var baseUrl = 'https://script.google.com/macros/s/AKfycbyqJYTl6qlVpknrf5fXy0EkqxpL0I4OTAdEss6JJaJe2le39T9QihqBdaWeQ42zF20c/exec';
       document.getElementById('appFrame').src = baseUrl + '?_cb=' + Date.now();
     })();
 
@@ -98,6 +127,116 @@
           .catch(err => console.log('Service Worker Failed', err));
       });
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // v4 — جسر إشعارات المتصفح (postMessage Bridge)
+    // ═══════════════════════════════════════════════════════════════
+    // تطبيق Apps Script يعمل داخل iframe على نطاق googleusercontent.com حيث يمنع
+    // المتصفح طلبات إذن الإشعارات نهائياً. هذه الصفحة (الغلاف) نافذة عليا حقيقية:
+    // تطلب الإذن بشكل طبيعي وتعرض الإشعارات نيابةً عن التطبيق عبر رسائل postMessage.
+    // بروتوكول الرسائل:
+    //   من التطبيق → hotelapp_bridge_ping        : "هل الغلاف موجود؟ وما حالة الإذن؟"
+    //   من التطبيق → hotelapp_request_permission : "اطلب إذن الإشعارات من المستخدم"
+    //   من التطبيق → hotelapp_notify             : "اعرض هذا الإشعار الآن"
+    //   من الغلاف  → hotelapp_bridge_pong        : الرد بحالة الإذن الحالية
+    var __hotelappWin = null; // مرجع نافذة التطبيق الداخلية (لإرسال الردود إليها)
+
+    function _notifPermissionState() {
+      return ('Notification' in window) ? Notification.permission : 'unsupported';
+    }
+
+    function _replyPermissionToApp() {
+      if (!__hotelappWin) return;
+      try {
+        __hotelappWin.postMessage({ type: 'hotelapp_bridge_pong', permission: _notifPermissionState() }, '*');
+      } catch (e) {}
+    }
+
+    // إظهار/إخفاء زر التفعيل العلوي حسب حالة الإذن
+    function _syncNotifBtn() {
+      var btn = document.getElementById('notifPermBtn');
+      if (!btn) return;
+      btn.style.display = (_notifPermissionState() === 'default') ? 'flex' : 'none';
+    }
+
+    // نقرة الزر = User Gesture على النافذة العليا → طلب الإذن يعمل دائماً
+    function requestNotifPermissionTopLevel() {
+      if (!('Notification' in window)) return;
+      Notification.requestPermission().then(function(res) {
+        console.log('[Wrapper] نتيجة طلب إذن الإشعارات:', res);
+        _syncNotifBtn();
+        _replyPermissionToApp();
+        if (res === 'granted') {
+          _showWrapperNotification({ title: '✅ إشعارات النظام مفعّلة', body: 'ستصلك تنبيهات إدارة الفنادق فوراً من الآن.' });
+        }
+      }).catch(function(){});
+    }
+
+    // العرض الفعلي للإشعار — عبر Service Worker إن أمكن (أوثق وأبقى)، وإلا فالمنشئ المباشر
+    function _showWrapperNotification(d) {
+      if (_notifPermissionState() !== 'granted') return;
+      var title = String(d.title || 'إشعار جديد').slice(0, 120);
+      var opts = {
+        body: String(d.body || '').slice(0, 300),
+        icon: 'icon-512.png',
+        badge: 'icon-512.png',
+        tag: String(d.tag || Date.now()),
+        dir: 'rtl',
+        lang: 'ar'
+      };
+      // نحاول عبر Service Worker أولاً (أوثق)، مع مهلة قصيرة: ready لا يُرفض أبداً
+      // حسب المواصفة — لو لم يجهز خلال 1.5 ثانية نعرض الإشعار مباشرة كي لا يضيع
+      var shown = false;
+      function showDirect() {
+        if (shown) return;
+        shown = true;
+        try { new Notification(title, opts); } catch (e) {}
+      }
+      if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+        var swTimeout = setTimeout(showDirect, 1500);
+        navigator.serviceWorker.ready.then(function(reg) {
+          clearTimeout(swTimeout);
+          if (shown) return;
+          shown = true;
+          if (reg && reg.showNotification) reg.showNotification(title, opts);
+          else { shown = false; showDirect(); }
+        });
+      } else {
+        showDirect();
+      }
+    }
+
+    // استقبال رسائل التطبيق الداخلي
+    window.addEventListener('message', function(ev) {
+      var d = ev.data || {};
+      if (!d || typeof d.type !== 'string' || d.type.indexOf('hotelapp_') !== 0) return;
+
+      if (d.type === 'hotelapp_bridge_ping') {
+        __hotelappWin = ev.source; // نحفظ مرجع نافذة التطبيق للرد عليها لاحقاً
+        _replyPermissionToApp();
+        _syncNotifBtn(); // إن كان الإذن لم يُطلب بعد، نُظهر زر التفعيل العلوي مباشرة
+        return;
+      }
+      if (d.type === 'hotelapp_request_permission') {
+        __hotelappWin = ev.source;
+        // نحاول الطلب مباشرة (قد يعرضه المتصفح بواجهة هادئة)، ونُظهر الزر العلوي
+        // كخيار نقر مباشر مضمون (User Gesture حقيقي)
+        if (_notifPermissionState() === 'default') {
+          requestNotifPermissionTopLevel();
+          _syncNotifBtn();
+        } else {
+          _replyPermissionToApp();
+        }
+        return;
+      }
+      if (d.type === 'hotelapp_notify') {
+        _showWrapperNotification(d);
+        return;
+      }
+    });
+
+    // مزامنة أولية لحالة الزر عند فتح الصفحة
+    window.addEventListener('load', _syncNotifBtn);
   </script>
 </body>
 </html>

@@ -1,6 +1,6 @@
-// ⚠️ مهم: زد رقم النسخة (v3, v4, ...) في كل مرة تُعدّل فيها أي ملف على GitHub
+// ⚠️ مهم: زد رقم النسخة (v5, v6, ...) في كل مرة تُعدّل فيها أي ملف على GitHub
 // هذا يُجبر كل متصفح على حذف الكاش القديم وجلب نسخة جديدة تلقائياً دون أي تدخل من المستخدم
-const CACHE_NAME = 'hotel-managment-v3';
+const CACHE_NAME = 'hotel-managment-v4';
 const assets = [
   './',
   './index.html',
@@ -39,5 +39,18 @@ self.addEventListener('fetch', e => {
         return networkResponse;
       })
       .catch(() => caches.match(e.request))
+  );
+});
+
+// v4 — عند الضغط على إشعار: تركيز نافذة التطبيق المفتوحة أو فتح نافذة جديدة
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      for (const c of list) {
+        if ('focus' in c) return c.focus();
+      }
+      return clients.openWindow('./index.html');
+    })
   );
 });
