@@ -201,11 +201,20 @@ function doGet(e) {
   // وليس بتسجيل دخول مستخدم (لا جلسة متصفح هنا). يفشل مغلقاً دائماً إن لم يُضبط المفتاح بعد.
   if (action === 'perfReport') {
     try {
-      // trim للطرفين: لصق القيمة في واجهة GitHub أو Script Properties كثيراً ما يضيف سطراً/مسافة خفية
-      var expected = String(PropertiesService.getScriptProperties().getProperty('PERF_REPORT_SECRET') || '').trim();
+      // trim للطرفين: لصق القيمة في واجهة GitHub أو Script Properties كثيراً ما يضيف سطراً/مسافة خفية.
+      // واسم المفتاح نفسه يُطابَق بعد تجاهل المسافات وحالة الأحرف (خطأ شائع عند إدخاله يدوياً)
+      var _allProps = PropertiesService.getScriptProperties().getProperties();
+      var _keys = Object.keys(_allProps);
+      var _norm = function(s){ return String(s).replace(/\s+/g,'').toUpperCase(); };
+      var _matchKey = null;
+      for (var _i = 0; _i < _keys.length; _i++) { if (_norm(_keys[_i]) === 'PERF_REPORT_SECRET') { _matchKey = _keys[_i]; break; } }
+      var expected = String(_matchKey ? _allProps[_matchKey] : '').trim();
       var given = String(e.parameter.key || '').trim();
+      // تشخيص بلا كشف أي قيمة: عدد الخصائص + أسماء ما يشبه PERF فقط (بين علامتين لإظهار أي مسافة)
+      var _similar = _keys.filter(function(k){ return /PERF/i.test(k); }).map(function(k){ return '[' + k + ']'; });
       // رسائل مميَّزة للتشخيص دون كشف أي قيمة
-      var authErr = !expected ? 'not_configured: PERF_REPORT_SECRET غير موجود في Script Properties'
+      var authErr = !expected ? ('not_configured: PERF_REPORT_SECRET غير موجود في Script Properties — عدد الخصائص في هذا المشروع: '
+                                  + _keys.length + (_similar.length ? '، أسماء مشابهة: ' + _similar.join(' ') : '، لا توجد أسماء مشابهة'))
                   : !given ? 'missing_key'
                   : given !== expected ? 'key_mismatch: القيمة في GitHub لا تطابق Script Properties'
                   : '';
@@ -4195,7 +4204,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "v3.45";
+var APP_VERSION = "v3.46";
 
 // ═══════════════════════════════════════════════════════════════
 // طبقة تشفير كلمات المرور (SHA-256 + Salt) — متوافقة مع الحسابات القديمة
