@@ -2,12 +2,17 @@ name: Deploy to Google Apps Script
 
 # ينشر apps-script/Code.gs و apps-script/Index.html تلقائياً إلى مشروع Apps Script الفعلي
 # ويُحدِّث نفس النشر الحالي (Deployment ID) فيبقى رابط التطبيق كما هو دون تغيير.
+#
+# التشغيل اليدوي: عدّل أي سطر في ops/deploy/apps-script.txt من واجهة GitHub ثم احفظ — هذا
+# يكفي لتشغيل عملية النشر دون الحاجة لاستخدام تبويب Actions. يعمل أيضاً عند أي تعديل حقيقي
+# على apps-script/** أو على هذا الملف نفسه، أو يدوياً من Actions ▸ Run workflow.
 on:
   push:
     branches:
       - claude/google-apps-script-review-oaojxq
     paths:
       - 'apps-script/**'
+      - 'ops/deploy/apps-script.txt'
       - '.github/workflows/deploy-apps-script.yml'
   workflow_dispatch: {}
 
@@ -23,25 +28,29 @@ jobs:
         with:
           node-version: '20'
 
-      # v5 — تبيّن من خطوة التشخيص (أسماء المفاتيح فقط) أن ~/.clasprc.json الفعلي شكله:
-      # { "tokens": { "default": { client_id, client_secret, refresh_token, access_token, type } } }
-      # وهذا هو شكل بيانات الدخول في clasp 3.x تحديداً (وليس شكل 2.x القديم { "token": {...},
-      # "oauth2ClientSettings": {...} }) — لذلك نُثبِّت 3.x لتتوافق مع شكل السرّ الفعلي، بدل تثبيت 2.x
-      - name: Install clasp
-        run: |
-          npm install -g @google/clasp@3
-          clasp --version
-
-      # v3 — يُمرَّر السرّ عبر متغيّر بيئة (أكثر أماناً من تضمينه مباشرة داخل run:)، ثم يُصلَح عبر
-      # .github/scripts/sanitize-clasprc.js: بعض أدوات اللصق تُدخل حرف تحكّم خام داخل قيمة نصية
-      # (وليس بين العناصر) فيفشل JSON.parse بخطأ "Bad control character in string literal" —
-      # تجربة tr -d '\r' وحدها لم تكن كافية لأن الحرف المسبِّب قد يكون غير \r (مثل \n خام داخل قيمة)
-      - name: Write clasp credentials
+      # يُمرَّر السرّ عبر متغيّر بيئة (أكثر أماناً من تضمينه مباشرة داخل run:)، ثم يُصلَح عبر
+      # .github/scripts/sanitize-clasprc.js: يُبقي فقط على ما بين أول { وآخر } في السرّ (تحسّباً
+      # لأسطر فارغة زائدة من حقل Secret متعدد الأسطر)، ويُزيل أي حرف تحكّم خام وقع داخل قيمة
+      # نصية (مثل \n زائدة داخل access_token تكسر رأس HTTP لاحقاً)، ثم يتحقق أن الناتج JSON صالح.
+      # لا تُطبع أي خطوة هنا محتوى الملف في السجل مطلقاً.
+      - name: Write & sanitize clasp credentials
         env:
           CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
         run: |
           printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
           node .github/scripts/sanitize-clasprc.js
+
+      # شكل بيانات الاعتماد يختلف بين clasp 2.x ({"token":{...},"oauth2ClientSettings":{...}})
+      # و clasp 3.x ({"tokens":{"default":{...}}}) — نكتشف الشكل الفعلي ونثبّت الإصدار المطابق،
+      # بدل افتراض إصدار واحد قد لا يتوافق مع طريقة تسجيل الدخول المستخدمة فعلياً.
+      - name: Detect required clasp version
+        id: detect
+        run: node .github/scripts/detect-clasp-version.js
+
+      - name: Install clasp
+        run: |
+          npm install -g "@google/clasp@${{ steps.detect.outputs.clasp_version }}"
+          clasp --version
 
       - name: Prepare clasp project directory
         env:
@@ -50,9 +59,10 @@ jobs:
           mkdir -p .clasp-deploy
           printf '{"scriptId":"%s","rootDir":"."}' "$SCRIPT_ID" > .clasp-deploy/.clasp.json
 
-      # يجلب appsscript.json الحالي (والملفات الأخرى إن وُجدت) من المشروع الفعلي أولاً،
-      # حتى لا تحتاج متابعة إعدادات الـ manifest يدوياً هنا — هي تبقى كما ضُبطت بمحرر Apps Script
-      - name: Pull current manifest from Apps Script
+      # يُستخدم أيضاً كاختبار اتصال مبكر: لو فشل هنا فالمشكلة في بيانات الاعتماد أو صلاحية
+      # الوصول للمشروع، قبل أي محاولة كتابة — ويجلب appsscript.json الحالي (والملفات الأخرى)
+      # من المشروع الفعلي أولاً، حتى لا تحتاج متابعة إعدادات الـ manifest يدوياً هنا.
+      - name: Pull current manifest from Apps Script (connectivity test)
         working-directory: .clasp-deploy
         env:
           DEBUG: 'clasp:*'
@@ -84,3 +94,13 @@ jobs:
         run: |
           clasp deploy --deploymentId "$DEPLOYMENT_ID" \
             --description "Auto-deploy $(date -u +%Y-%m-%dT%H:%M:%SZ) — ${{ github.sha }}"
+
+      # لو فشلت أي خطوة سابقة (خصوصاً القراءة/الكتابة من Apps Script)، أكثر الأسباب شيوعاً
+      # ليست خطأ في هذا الـ workflow نفسه، بل في إعداد الحساب/الصلاحيات على جانب جوجل:
+      - name: Reminder if the pipeline failed
+        if: failure()
+        run: |
+          echo "::error::فشلت عملية النشر. الأسباب الشائعة التي تستحق التحقق منها:"
+          echo "::error::  1) فعّل Google Apps Script API لنفس حساب Google المستخدم لتسجيل الدخول عبر clasp، من الرابط: https://script.google.com/home/usersettings"
+          echo "::error::  2) تأكد أن هذا الحساب مالك المشروع أو محرِّر (Editor) فيه على script.google.com"
+          echo "::error::  3) أي تغيير لكلمة مرور حساب Google يُبطل رمز التحديث (refresh token) الحالي — نفّذ clasp login من جديد محلياً وحدِّث سرّ CLASPRC_JSON في GitHub Settings ← Secrets and variables ← Actions"

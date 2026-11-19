@@ -5,7 +5,17 @@
 // أي حرف تحكّم خام يقع داخل علامتي اقتباس (قيمة نصية)، تاركاً أي تنسيق/مسافات خارجها كما هي.
 const fs = require('fs');
 const path = process.env.HOME + '/.clasprc.json';
-const raw = fs.readFileSync(path, 'utf8');
+let raw = fs.readFileSync(path, 'utf8');
+
+// لو احتوى السرّ على أسطر/مسافات زائدة قبل { الأولى أو بعد } الأخيرة (شائع عند اللصق من
+// واجهة GitHub لحقل Secret متعدد الأسطر)، نُبقي فقط على ما بين أول { وآخر } في الملف.
+const firstBrace = raw.indexOf('{');
+const lastBrace = raw.lastIndexOf('}');
+if (firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace) {
+  console.error('❌ لم يُعثر على كائن JSON صالح الشكل ({ ... }) داخل CLASPRC_JSON.');
+  process.exit(1);
+}
+raw = raw.slice(firstBrace, lastBrace + 1);
 
 let out = '';
 let inStr = false;
