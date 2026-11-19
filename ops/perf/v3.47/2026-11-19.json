@@ -1,0 +1,26 @@
+{
+  "generatedAt": "2026-11-19T22:42:25.997Z",
+  "version": "v3.47",
+  "versions": [],
+  "topByVolume": [],
+  "slowCalls": [],
+  "today": {
+    "totalCalls": 0,
+    "avgMs": 0,
+    "failRatePct": 0
+  },
+  "quotas": {
+    "urlFetch": {
+      "used": 0,
+      "limit": 20000
+    },
+    "triggerMinutes": {
+      "used": 0,
+      "limit": 90
+    },
+    "sheetReadsToday": 0,
+    "cacheOpsToday": 0,
+    "lockAcquisitionsToday": 0
+  },
+  "exportedAt": "2026-11-19T22:42:26.000Z"
+}
