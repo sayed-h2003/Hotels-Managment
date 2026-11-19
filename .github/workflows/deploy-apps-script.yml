@@ -58,18 +58,20 @@ jobs:
           DEBUG: 'clasp:*'
         run: clasp pull
 
-      # اسم ملف الكود الفعلي في مشروع Apps Script هو "Hotelapp_code.gs" وليس "Code.gs" —
-      # محاولة سابقة كتبت المحتوى في ملف جديد باسم Code.gs بدل الكتابة فوق الملف الصحيح،
-      # فأصبح لدى المشروع نسختان من نفس المتغيرات العامة (مثل SHEET_SCHEMAS) في ملفين
-      # مختلفين، وهذا ما سبَّب "SyntaxError: Identifier ... has already been declared".
-      # الآن نكتب فوق الملف الصحيح فعلياً الذي سحبه clasp pull، ونحذف أي Code.gs زائد
-      # (سواء كان موجوداً محلياً من هذه الخطوة أو جرى سحبه لتوّه من النسخة الفعلية على
-      # جوجل بسبب الدفعة الخاطئة السابقة) حتى يُزال نهائياً في أول clasp push تالٍ.
+      # اسم ملف الكود الفعلي في مشروع Apps Script هو "Hotelapp_code" وليس "Code" — ومحلياً
+      # يخزّنه clasp pull بامتداد ".js" وليس ".gs" (كما تؤكد سجلات هذه الخطوة: "Hotelapp_code.js")
+      # رغم أنه .gs على خادم جوجل فعلياً. محاولة سابقة كتبت المحتوى في ملف جديد اسمه Code.gs
+      # فأصبح لدى المشروع نسختان من نفس المتغيرات العامة (مثل SHEET_SCHEMAS) في ملفين مختلفين
+      # ("SyntaxError: Identifier ... has already been declared")، ثم تكرر الخطأ بصورة أخرى
+      # في المحاولة التالية (الكتابة بامتداد .gs مع بقاء Hotelapp_code.js المسحوب أصلاً، فظهر عندها
+      # "Conflicting files found" لأن الاسمين يُعتبران نفس ملف السكربت البعيد بامتدادين مختلفين).
+      # الحل الصحيح: الكتابة فوق Hotelapp_code.js (بامتداد js كما يتوقعه clasp محلياً تماماً)،
+      # وحذف Code.js الزائد الذي بقي على الخادم منذ المحاولة الخاطئة الأولى حتى يختفي نهائياً.
       - name: Apply repo source files
         run: |
-          cp apps-script/Code.gs .clasp-deploy/Hotelapp_code.gs
+          cp apps-script/Code.gs .clasp-deploy/Hotelapp_code.js
           cp apps-script/Index.html .clasp-deploy/Index.html
-          rm -f .clasp-deploy/Code.gs
+          rm -f .clasp-deploy/Code.js .clasp-deploy/Code.gs
 
       - name: Push to Apps Script
         working-directory: .clasp-deploy
