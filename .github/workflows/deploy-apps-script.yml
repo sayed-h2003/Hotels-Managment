@@ -26,13 +26,22 @@ jobs:
       - name: Install clasp
         run: npm install -g @google/clasp
 
+      # v2 — يُمرَّر السرّ عبر متغيّر بيئة (أكثر أماناً وموثوقية من تضمينه مباشرة داخل run:)،
+      # ويُزال أي حرف CR عائم (\r) قد يكون تسلل عند لصق الملف من محرر على ويندوز، فيُسبّب فشل
+      # تحليل JSON بخطأ "Bad control character in string literal" رغم أن المحتوى يبدو سليماً بصرياً
       - name: Write clasp credentials
-        run: echo '${{ secrets.CLASPRC_JSON }}' > ~/.clasprc.json
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          printf '%s' "$CLASPRC_JSON" | tr -d '\r' > ~/.clasprc.json
+          node -e "JSON.parse(require('fs').readFileSync(process.env.HOME + '/.clasprc.json','utf8')); console.log('✅ clasprc.json صالح (JSON سليم)')"
 
       - name: Prepare clasp project directory
+        env:
+          SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
         run: |
           mkdir -p .clasp-deploy
-          echo '{"scriptId":"${{ secrets.APPS_SCRIPT_ID }}","rootDir":"."}' > .clasp-deploy/.clasp.json
+          printf '{"scriptId":"%s","rootDir":"."}' "$SCRIPT_ID" > .clasp-deploy/.clasp.json
 
       # يجلب appsscript.json الحالي (والملفات الأخرى إن وُجدت) من المشروع الفعلي أولاً،
       # حتى لا تحتاج متابعة إعدادات الـ manifest يدوياً هنا — هي تبقى كما ضُبطت بمحرر Apps Script
@@ -52,6 +61,8 @@ jobs:
 
       - name: Deploy (update existing deployment — same URL)
         working-directory: .clasp-deploy
+        env:
+          DEPLOYMENT_ID: ${{ secrets.APPS_SCRIPT_DEPLOYMENT_ID }}
         run: |
-          clasp deploy --deploymentId "${{ secrets.APPS_SCRIPT_DEPLOYMENT_ID }}" \
+          clasp deploy --deploymentId "$DEPLOYMENT_ID" \
             --description "Auto-deploy $(date -u +%Y-%m-%dT%H:%M:%SZ) — ${{ github.sha }}"
