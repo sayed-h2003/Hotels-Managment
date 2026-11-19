@@ -1,10 +1,38 @@
 {
-  "generatedAt": "2026-11-19T22:55:24.930Z",
+  "generatedAt": "2026-11-19T23:06:49.822Z",
   "version": "v3.49",
   "versions": [
-    "v3.48"
+    "v3.48",
+    "v3.49"
   ],
   "topByVolume": [
+    {
+      "fn": "client:getBookingsPage",
+      "version": "v3.49",
+      "totalCount": 2,
+      "avgMs": 55418,
+      "maxMs": 75153,
+      "totalTimeMs": 110836,
+      "fails": 0
+    },
+    {
+      "fn": "getBookingsPage",
+      "version": "v3.49",
+      "totalCount": 2,
+      "avgMs": 53248,
+      "maxMs": 72561,
+      "totalTimeMs": 106496,
+      "fails": 0
+    },
+    {
+      "fn": "getBookings",
+      "version": "v3.49",
+      "totalCount": 2,
+      "avgMs": 52229,
+      "maxMs": 71187,
+      "totalTimeMs": 104458,
+      "fails": 0
+    },
     {
       "fn": "client:getMyNotifications",
       "version": "v3.48",
@@ -21,6 +49,15 @@
       "avgMs": 1976,
       "maxMs": 2965,
       "totalTimeMs": 33592,
+      "fails": 0
+    },
+    {
+      "fn": "client:getMyNotifications",
+      "version": "v3.49",
+      "totalCount": 6,
+      "avgMs": 4550,
+      "maxMs": 7119,
+      "totalTimeMs": 27301,
       "fails": 0
     },
     {
@@ -60,6 +97,15 @@
       "fails": 0
     },
     {
+      "fn": "getMyNotifications",
+      "version": "v3.49",
+      "totalCount": 9,
+      "avgMs": 2007,
+      "maxMs": 4488,
+      "totalTimeMs": 18063,
+      "fails": 0
+    },
+    {
       "fn": "client:getAppBootstrap",
       "version": "v3.48",
       "totalCount": 2,
@@ -84,6 +130,24 @@
       "avgMs": 5528,
       "maxMs": 7023,
       "totalTimeMs": 11055,
+      "fails": 0
+    },
+    {
+      "fn": "formatHijriDisplay",
+      "version": "v3.49",
+      "totalCount": 331,
+      "avgMs": 31,
+      "maxMs": 85,
+      "totalTimeMs": 10227,
+      "fails": 0
+    },
+    {
+      "fn": "client:getAvailabilityVersion",
+      "version": "v3.49",
+      "totalCount": 5,
+      "avgMs": 1935,
+      "maxMs": 2311,
+      "totalTimeMs": 9676,
       "fails": 0
     },
     {
@@ -120,6 +184,15 @@
       "avgMs": 1422,
       "maxMs": 1625,
       "totalTimeMs": 7108,
+      "fails": 0
+    },
+    {
+      "fn": "client:pingHeartbeatAndGetActiveUsers",
+      "version": "v3.49",
+      "totalCount": 2,
+      "avgMs": 3526,
+      "maxMs": 3733,
+      "totalTimeMs": 7051,
       "fails": 0
     },
     {
@@ -168,6 +241,15 @@
       "fails": 0
     },
     {
+      "fn": "client:screen:Settings_Screen",
+      "version": "v3.49",
+      "totalCount": 1,
+      "avgMs": 5306,
+      "maxMs": 5306,
+      "totalTimeMs": 5306,
+      "fails": 0
+    },
+    {
       "fn": "client:screen:Availability_Screen",
       "version": "v3.48",
       "totalCount": 2,
@@ -201,6 +283,15 @@
       "avgMs": 4529,
       "maxMs": 4529,
       "totalTimeMs": 4529,
+      "fails": 0
+    },
+    {
+      "fn": "client:getBookingModalBootstrap",
+      "version": "v3.49",
+      "totalCount": 1,
+      "avgMs": 4306,
+      "maxMs": 4306,
+      "totalTimeMs": 4306,
       "fails": 0
     },
     {
@@ -255,6 +346,15 @@
       "avgMs": 3256,
       "maxMs": 3256,
       "totalTimeMs": 3256,
+      "fails": 0
+    },
+    {
+      "fn": "pingHeartbeatAndGetActiveUsers",
+      "version": "v3.49",
+      "totalCount": 2,
+      "avgMs": 1396,
+      "maxMs": 1589,
+      "totalTimeMs": 2792,
       "fails": 0
     },
     {
@@ -321,6 +421,15 @@
       "fails": 0
     },
     {
+      "fn": "_flushPerfBuckets_",
+      "version": "v3.49",
+      "totalCount": 1,
+      "avgMs": 2126,
+      "maxMs": 2126,
+      "totalTimeMs": 2126,
+      "fails": 0
+    },
+    {
       "fn": "getContractModalBootstrap",
       "version": "v3.48",
       "totalCount": 1,
@@ -346,122 +455,62 @@
       "maxMs": 792,
       "totalTimeMs": 1481,
       "fails": 0
-    },
-    {
-      "fn": "getCollectionAccounts",
-      "version": "v3.48",
-      "totalCount": 2,
-      "avgMs": 600,
-      "maxMs": 796,
-      "totalTimeMs": 1199,
-      "fails": 0
-    },
-    {
-      "fn": "checkWaitlistAvailabilityAndNotify",
-      "version": "v3.48",
-      "totalCount": 1,
-      "avgMs": 1105,
-      "maxMs": 1105,
-      "totalTimeMs": 1105,
-      "fails": 0
-    },
-    {
-      "fn": "checkConfirmationOptionDatesAndNotify",
-      "version": "v3.48",
-      "totalCount": 1,
-      "avgMs": 1094,
-      "maxMs": 1094,
-      "totalTimeMs": 1094,
-      "fails": 0
-    },
-    {
-      "fn": "getActiveContractsForDropdown",
-      "version": "v3.48",
-      "totalCount": 1,
-      "avgMs": 1024,
-      "maxMs": 1024,
-      "totalTimeMs": 1024,
-      "fails": 0
-    },
-    {
-      "fn": "checkDuePaymentsAndNotify",
-      "version": "v3.48",
-      "totalCount": 1,
-      "avgMs": 773,
-      "maxMs": 773,
-      "totalTimeMs": 773,
-      "fails": 0
-    },
-    {
-      "fn": "logAudit",
-      "version": "v3.48",
-      "totalCount": 3,
-      "avgMs": 250,
-      "maxMs": 338,
-      "totalTimeMs": 751,
-      "fails": 0
-    },
-    {
-      "fn": "getDistinctClientNames",
-      "version": "v3.48",
-      "totalCount": 1,
-      "avgMs": 383,
-      "maxMs": 383,
-      "totalTimeMs": 383,
-      "fails": 0
-    },
-    {
-      "fn": "getCompanyBranding",
-      "version": "v3.48",
-      "totalCount": 2,
-      "avgMs": 180,
-      "maxMs": 310,
-      "totalTimeMs": 359,
-      "fails": 0
-    },
-    {
-      "fn": "getAvailabilityVersion",
-      "version": "v3.48",
-      "totalCount": 11,
-      "avgMs": 28,
-      "maxMs": 81,
-      "totalTimeMs": 307,
-      "fails": 0
-    },
-    {
-      "fn": "getSessionTimeoutMinutes",
-      "version": "v3.48",
-      "totalCount": 2,
-      "avgMs": 46,
-      "maxMs": 77,
-      "totalTimeMs": 91,
-      "fails": 0
-    },
-    {
-      "fn": "getContractForEdit",
-      "version": "v3.48",
-      "totalCount": 1,
-      "avgMs": 18,
-      "maxMs": 18,
-      "totalTimeMs": 18,
-      "fails": 0
-    },
-    {
-      "fn": "getUserPermissions",
-      "version": "v3.48",
-      "totalCount": 21,
-      "avgMs": 0,
-      "maxMs": 1,
-      "totalTimeMs": 4,
-      "fails": 0
     }
   ],
   "slowCalls": [
     {
+      "time": "20/11 00:51:09",
+      "fn": "client:getBookingsPage",
+      "ms": 75153,
+      "user": "sayed",
+      "ok": "نجاح",
+      "version": "v3.49"
+    },
+    {
+      "time": "20/11 00:50:42",
+      "fn": "getBookingsPage",
+      "ms": 72561,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.49"
+    },
+    {
+      "time": "20/11 00:50:42",
+      "fn": "getBookings",
+      "ms": 71187,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.49"
+    },
+    {
+      "time": "20/11 00:51:09",
+      "fn": "client:getBookingsPage",
+      "ms": 35683,
+      "user": "sayed",
+      "ok": "نجاح",
+      "version": "v3.49"
+    },
+    {
+      "time": "20/11 00:50:55",
+      "fn": "getBookingsPage",
+      "ms": 33935,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.49"
+    },
+    {
+      "time": "20/11 00:50:55",
+      "fn": "getBookings",
+      "ms": 33271,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.49"
+    },
+    {
       "time": "20/11 00:45:05",
       "fn": "client:boot:ready",
       "ms": 15478,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -469,7 +518,7 @@
       "time": "20/11 00:48:09",
       "fn": "client:boot:ready",
       "ms": 10385,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -477,9 +526,17 @@
       "time": "20/11 00:45:05",
       "fn": "client:getAppBootstrap",
       "ms": 10310,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
+    },
+    {
+      "time": "20/11 00:51:08",
+      "fn": "client:getMyNotifications",
+      "ms": 7119,
+      "user": "sayed",
+      "ok": "نجاح",
+      "version": "v3.49"
     },
     {
       "time": "20/11 00:43:15",
@@ -493,7 +550,7 @@
       "time": "20/11 00:48:09",
       "fn": "client:getAppBootstrap",
       "ms": 6476,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -501,7 +558,7 @@
       "time": "20/11 00:49:40",
       "fn": "client:getOverCapacityNotifications",
       "ms": 6443,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -509,7 +566,7 @@
       "time": "20/11 00:45:07",
       "fn": "client:getMyNotifications",
       "ms": 5533,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -517,15 +574,31 @@
       "time": "20/11 00:49:39",
       "fn": "client:saveContract",
       "ms": 5338,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
+    },
+    {
+      "time": "20/11 00:51:08",
+      "fn": "client:screen:Settings_Screen",
+      "ms": 5306,
+      "user": "sayed",
+      "ok": "نجاح",
+      "version": "v3.49"
+    },
+    {
+      "time": "20/11 00:51:08",
+      "fn": "client:getMyNotifications",
+      "ms": 5147,
+      "user": "sayed",
+      "ok": "نجاح",
+      "version": "v3.49"
     },
     {
       "time": "20/11 00:45:03",
       "fn": "client:loginUser",
       "ms": 5128,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -533,7 +606,7 @@
       "time": "20/11 00:45:05",
       "fn": "client:getMyNotifications",
       "ms": 5125,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -541,7 +614,7 @@
       "time": "20/11 00:45:07",
       "fn": "client:getMyNotifications",
       "ms": 4982,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -549,7 +622,7 @@
       "time": "20/11 00:45:06",
       "fn": "client:getMyNotifications",
       "ms": 4813,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -557,7 +630,7 @@
       "time": "20/11 00:48:09",
       "fn": "client:getDistinctHotelNames",
       "ms": 4624,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -565,7 +638,7 @@
       "time": "20/11 00:49:38",
       "fn": "client:getContractModalBootstrap",
       "ms": 4529,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -573,7 +646,7 @@
       "time": "20/11 00:49:36",
       "fn": "client:getMyNotifications",
       "ms": 4496,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -581,126 +654,54 @@
       "time": "20/11 00:49:40",
       "fn": "client:getMyNotifications",
       "ms": 4488,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
+    },
+    {
+      "time": "20/11 00:50:04",
+      "fn": "getMyNotifications",
+      "ms": 4488,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.49"
     },
     {
       "time": "20/11 00:49:39",
       "fn": "client:getMyNotifications",
       "ms": 4412,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
+    },
+    {
+      "time": "20/11 00:51:07",
+      "fn": "client:getBookingModalBootstrap",
+      "ms": 4306,
+      "user": "sayed",
+      "ok": "نجاح",
+      "version": "v3.49"
     },
     {
       "time": "20/11 00:45:06",
       "fn": "client:getMyNotifications",
       "ms": 4252,
-      "user": "",
+      "user": "sayed",
       "ok": "نجاح",
       "version": "v3.48"
     },
     {
-      "time": "20/11 00:45:05",
-      "fn": "client:getAvailabilityData",
-      "ms": 4210,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:49:40",
-      "fn": "client:getDistinctHotelNames",
-      "ms": 4205,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:49:39",
-      "fn": "client:getContracts",
-      "ms": 4140,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:49:34",
-      "fn": "getOverCapacityNotifications",
-      "ms": 4128,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:47:49",
-      "fn": "getAppBootstrap",
-      "ms": 4032,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:45:07",
+      "time": "20/11 00:51:09",
       "fn": "client:getMyNotifications",
-      "ms": 4024,
-      "user": "",
+      "ms": 4236,
+      "user": "sayed",
       "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:49:37",
-      "fn": "client:getMyNotifications",
-      "ms": 4014,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:49:37",
-      "fn": "client:getAvailabilityData",
-      "ms": 3917,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:48:07",
-      "fn": "client:loginUser",
-      "ms": 3861,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:45:07",
-      "fn": "client:getMyNotifications",
-      "ms": 3835,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:49:36",
-      "fn": "client:getAvailabilityData",
-      "ms": 3809,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:49:40",
-      "fn": "client:getCollectionAccounts",
-      "ms": 3739,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
+      "version": "v3.49"
     }
   ],
   "today": {
-    "totalCalls": 285,
-    "avgMs": 1239,
+    "totalCalls": 668,
+    "avgMs": 1144,
     "failRatePct": 0
   },
   "quotas": {
@@ -709,11 +710,11 @@
       "limit": 20000
     },
     "triggerMinutes": {
-      "used": 0,
+      "used": 0.1,
       "limit": 90
     },
-    "sheetReadsToday": 117,
-    "cacheOpsToday": 20,
+    "sheetReadsToday": 148,
+    "cacheOpsToday": 22,
     "lockAcquisitionsToday": 1
   },
   "health": {
@@ -724,21 +725,21 @@
     },
     "diag": {
       "sheetCount": 25,
-      "totalCells": 641862,
+      "totalCells": 641888,
       "cellLimit": 10000000,
       "Perf": {
-        "lastRow": 51,
+        "lastRow": 67,
         "maxRows": 1000,
         "maxCols": 26
       },
       "PerfSlow": {
-        "lastRow": 44,
+        "lastRow": 61,
         "maxRows": 1000,
         "maxCols": 26
       },
-      "lastFlushedBucket": "202611200040",
+      "lastFlushedBucket": "202611200050",
       "lastFlushError": ""
     }
   },
-  "exportedAt": "2026-11-19T22:55:24.932Z"
+  "exportedAt": "2026-11-19T23:06:49.824Z"
 }
