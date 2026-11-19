@@ -1609,6 +1609,17 @@ body.sb-collapsed #availHScrollProxy { right: 0; }
             </button>
           </div>
         </div>
+
+        <!-- المجموعة 6: منطقة الخطر -->
+        <div class="settings-group" style="border:1px solid #e74c3c33;">
+          <div class="settings-group-title" style="color:#c0392b;">⚠️ منطقة الخطر — حذف نهائي</div>
+          <div class="settings-buttons-grid">
+            <button class="settings-btn" style="border-color:#e74c3c66;" onclick="openHotelPurgeModal()">
+              <span class="sb-emoji">🗑️</span>
+              <span class="sb-text"><b>حذف فندق نهائياً من النظام</b><small>يحذف الفندق وكل تعاقداته وحجوزاته ودفعاته — إجراء نهائي لا تراجع عنه</small></span>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -9433,7 +9444,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var APP_VERSION = 'v3.40';
+var APP_VERSION = 'v3.41';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {
@@ -9449,6 +9460,53 @@ function repairArabicDigitsSubmit() {
     }).repairArabicDigitsInSheets(sessionUser.username);
   });
 }
+// ═══ حذف فندق نهائياً (منطقة الخطر) ═══
+function openHotelPurgeModal() {
+  if ((sessionUser.role||'').toLowerCase() !== 'admin') { showToast('هذا الإجراء لمدير النظام فقط.', 'error'); return; }
+  document.getElementById('hp_hotel_names').value = '';
+  document.getElementById('hp_confirm_phrase').value = '';
+  document.getElementById('hp_result_box').innerHTML = '';
+  document.getElementById('hp_submit_btn').disabled = true;
+  document.getElementById('HotelPurge_Modal').classList.add('open');
+}
+function _hpCheckConfirmPhrase() {
+  var ok = (document.getElementById('hp_confirm_phrase').value||'').trim() === 'حذف نهائي';
+  document.getElementById('hp_submit_btn').disabled = !ok;
+}
+function submitHotelPurge() {
+  var namesRaw = document.getElementById('hp_hotel_names').value || '';
+  var names = namesRaw.split('\n').map(function(s){ return s.trim(); }).filter(Boolean);
+  if (!names.length) { showToast('اكتب اسم فندق واحد على الأقل.', 'error'); return; }
+  if ((document.getElementById('hp_confirm_phrase').value||'').trim() !== 'حذف نهائي') return;
+  showConfirm('سيتم حذف الفنادق التالية نهائياً وكل بياناتهم (تعاقدات/حجوزات/دفعات):\n\n• ' + names.join('\n• ') + '\n\nهل أنت متأكد تماماً؟ هذا الإجراء لا يمكن التراجع عنه.', function() {
+    document.getElementById('hp_submit_btn').disabled = true;
+    document.getElementById('hp_result_box').innerHTML = '⏳ جاري الحذف...';
+    google.script.run.withSuccessHandler(function(res) {
+      var c = res.counts||{};
+      var msg = '✅ تم الحذف النهائي لـ: ' + res.targets.join('، ') + '\n\n'
+        + 'تعاقدات: ' + (c['Contracts_Master']||0) + '\n'
+        + 'حجوزات: ' + (c['Bookings_Master']||0) + '\n'
+        + 'قائمة انتظار: ' + (c['Waitlist_Master']||0) + '\n'
+        + 'اتفاقيات نسك: ' + (c['Nusuk_Agreements']||0) + '\n'
+        + 'أقساط تعاقدات: ' + (c['Contract_Payments']||0) + '\n'
+        + 'سندات سداد: ' + (c['Contract_Payment_Receipts']||0) + '\n'
+        + 'دفعات حسابات: ' + (c['Account_Payments']||0) + '\n'
+        + 'تنبيهات: ' + (c['Notifications_Master']||0) + '\n\n'
+        + (res.backupSheets && res.backupSheets.length ? '📦 نُسخ احتياطية أُنشئت في ملف الإكسل:\n• ' + res.backupSheets.join('\n• ') : '📦 لا توجد بيانات كانت مرتبطة بهذه الفنادق.');
+      document.getElementById('hp_result_box').innerText = msg;
+      showToast('تم الحذف النهائي بنجاح.', 'success');
+      try {
+        invalidateScreenCache('Bookings_Screen'); invalidateScreenCache('Contracts_Screen');
+        invalidateScreenCache('Availability_Screen'); invalidateScreenCache('FinancialReport_Screen');
+        invalidateScreenCache('Accounts_Screen'); invalidateScreenCache('Waitlist_Screen'); invalidateScreenCache('Nusuk_Screen');
+      } catch(e) {}
+    }).withFailureHandler(function(e) {
+      document.getElementById('hp_submit_btn').disabled = false;
+      document.getElementById('hp_result_box').innerText = '❌ ' + (e.message||e);
+    }).purgeHotelsCompletely(names, sessionUser.username);
+  });
+}
+
 (function() {
   var lv = document.getElementById('login_app_version'); if (lv) lv.innerText = 'الإصدار ' + APP_VERSION;
   var sv = document.getElementById('sb_app_version');    if (sv) sv.innerText = APP_VERSION;
@@ -9959,6 +10017,28 @@ function repairArabicDigitsSubmit() {
     <div style="flex:1;overflow:hidden;">
       <iframe id="setupGuideFrame" src="" style="width:100%;height:100%;border:none;border-radius:0 0 var(--radius-md) var(--radius-md);"
         onload="this.style.opacity=1" style="opacity:0;transition:opacity .3s;"></iframe>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ نافذة حذف فندق نهائياً (منطقة خطر) ══════════════ -->
+<div id="HotelPurge_Modal" class="modal-overlay">
+  <div class="modal-box" style="max-width:520px;">
+    <div class="modal-header"><span style="color:#c0392b;">⚠️ حذف فندق نهائياً من النظام</span><button class="modal-close-btn" onclick="document.getElementById('HotelPurge_Modal').classList.remove('open')">×</button></div>
+    <div class="modal-body">
+      <div style="background:#fdecea;border:1px solid #e74c3c55;border-radius:8px;padding:10px 12px;font-size:8pt;color:#7a1f14;margin-bottom:12px;line-height:1.7;">
+        هذا الإجراء يحذف الفندق/الفنادق المذكورة أدناه وكل تعاقداتهم وحجوزاتهم وأقساط ودفعات سداد التعاقدات ودفعات الحسابات المرتبطة بهم واتفاقيات نسك وتنبيهاتهم — <b>نهائياً ولا يمكن التراجع عنه من داخل النظام</b>.
+        يحتفظ النظام بنسخة احتياطية في شيتات جديدة باسم "ZZ_Backup_..." داخل نفس ملف الإكسل قبل الحذف الفعلي.
+      </div>
+      <label style="font-size:8pt;font-weight:700;display:block;margin-bottom:4px;">أسماء الفنادق (كل اسم في سطر، يجب أن تطابق الاسم المسجَّل تماماً):</label>
+      <textarea id="hp_hotel_names" rows="3" style="width:100%;font-family:inherit;font-size:8.5pt;padding:8px;border-radius:6px;border:1px solid var(--clr-border);" placeholder="مثال:&#10;درة أسماء&#10;بارك رويال"></textarea>
+      <label style="font-size:8pt;font-weight:700;display:block;margin:12px 0 4px;">للتأكيد، اكتب نص التالي بالضبط: <code>حذف نهائي</code></label>
+      <input type="text" id="hp_confirm_phrase" style="width:100%;font-size:8.5pt;padding:8px;border-radius:6px;border:1px solid var(--clr-border);" oninput="_hpCheckConfirmPhrase()" placeholder="اكتب: حذف نهائي">
+      <div id="hp_result_box" style="margin-top:12px;font-size:8pt;white-space:pre-line;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="document.getElementById('HotelPurge_Modal').classList.remove('open')">إلغاء</button>
+      <button id="hp_submit_btn" class="btn-primary-dark" style="background:#c0392b;" disabled onclick="submitHotelPurge()">🗑️ تنفيذ الحذف النهائي</button>
     </div>
   </div>
 </div>

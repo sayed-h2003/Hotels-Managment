@@ -4123,7 +4123,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var SYSTEM_VERSION = "v3.40";
+var SYSTEM_VERSION = "v3.41";
 
 // ═══════════════════════════════════════════════════════════════
 // طبقة تشفير كلمات المرور (SHA-256 + Salt) — متوافقة مع الحسابات القديمة
@@ -4624,6 +4624,107 @@ function repairArabicDigitsInSheets(currentUser) {
     _bumpAvailabilityVersion_(); // تحديث شارت التوافر لعرض الأرقام المُصلَحة فوراً
     logAudit("الإعدادات","إصلاح بيانات","N/A","","","","إصلاح أرقام عربية مخزَّنة في الشيتات: "+totalFixed+" خلية عبر "+sheetsFixed+" شيت — "+details.join("، "), currentUser);
     return { success: true, cellsFixed: totalFixed, sheetsAffected: sheetsFixed, details: details };
+  } catch(e) { _logError_(_fn, e); throw e; }
+}
+
+// ===== أداة إدارية خطيرة: حذف فندق/فنادق نهائياً وكل بياناتهم المرتبطة من كل الشيتات =====
+// قبل الحذف الفعلي، تُنسخ كل الصفوف المتأثرة احتياطياً إلى شيتات جديدة باسم "ZZ_Backup_<الشيت>_<الوقت>"
+// بنفس رؤوس الأعمدة الأصلية — فهذه نسخة احتياطية يدوية يمكن الرجوع لمحتواها عند الحاجة، لكن الحذف من
+// الشيتات الحيّة نفسها نهائي ولا تراجع عنه تلقائياً من داخل النظام. مدير النظام فقط يملك صلاحية التنفيذ.
+function purgeHotelsCompletely(hotelNames, currentUser) {
+  var _fn="[purgeHotelsCompletely]"; _logInfo_(_fn, "START | hotelNames:"+JSON.stringify(hotelNames)+", currentUser:"+String(JSON.stringify(currentUser)||"").slice(0,80));
+  try {
+  if (!_isAdmin_(currentUser)) throw new Error("غير مصرح. حذف فندق بالكامل متاح لمدير النظام فقط.");
+  var targets = (hotelNames||[]).map(function(h){ return String(h||"").trim(); }).filter(Boolean);
+  if (!targets.length) throw new Error("لم يتم تحديد اسم فندق صالح للحذف.");
+  return _withLock_(function() {
+    var ss = _getSS_();
+    var ts = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyyMMdd_HHmmss");
+    var counts = {}, backupSheets = [];
+
+    function isTargetHotel(name) { return targets.indexOf(String(name||"").trim()) !== -1; }
+
+    // ينسخ كل الصفوف المطابقة لشيت احتياطي جديد، ثم يحذفها فعلياً من الشيت الأصلي (تنازلياً لتفادي انزياح الأرقام)
+    function backupAndDelete(sheetName, matchFn) {
+      var sheet = _getOrCreateSheet_(sheetName);
+      var data = sheet.getDataRange().getValues();
+      counts[sheetName] = 0;
+      if (data.length <= 1) return;
+      var headers = data[0];
+      var matchedRows = [], matchedRowNums = [];
+      for (var i = 1; i < data.length; i++) {
+        if (matchFn(data[i])) { matchedRows.push(data[i]); matchedRowNums.push(i+1); }
+      }
+      counts[sheetName] = matchedRows.length;
+      if (!matchedRows.length) return;
+      var backupName = "ZZ_Backup_" + sheetName + "_" + ts;
+      var bsheet = ss.insertSheet(backupName);
+      bsheet.getRange(1,1,1,headers.length).setValues([headers]);
+      bsheet.getRange(2,1,matchedRows.length,headers.length).setValues(matchedRows);
+      backupSheets.push(backupName);
+      for (var k = matchedRowNums.length-1; k >= 0; k--) sheet.deleteRow(matchedRowNums[k]);
+      _invalidateSheetCache_(sheetName);
+    }
+
+    // 1) التعاقدات المملوكة لهذه الفنادق مباشرةً
+    var contractIds = {};
+    backupAndDelete("Contracts_Master", function(row) {
+      if (!isTargetHotel(row[1])) return false;
+      contractIds[String(row[0])] = true; return true;
+    });
+
+    // 2) الحجوزات المرتبطة بهذه التعاقدات
+    var bookingIds = {};
+    backupAndDelete("Bookings_Master", function(row) {
+      if (!contractIds[String(row[1])]) return false;
+      bookingIds[String(row[0])] = true; return true;
+    });
+
+    // 3) قائمة الانتظار المرتبطة بهذه التعاقدات
+    backupAndDelete("Waitlist_Master", function(row) { return !!contractIds[String(row[1])]; });
+
+    // 4) اتفاقيات نسك — مطابقة باسم الفندق مباشرة أو برقم حجز تابع لهذه الفنادق
+    backupAndDelete("Nusuk_Agreements", function(row) {
+      return isTargetHotel(row[1]) || !!bookingIds[String(row[2])];
+    });
+
+    // 5) أقساط سداد التعاقدات
+    backupAndDelete("Contract_Payments", function(row) { return !!contractIds[String(row[1])]; });
+
+    // 6) سندات السداد الفعلي لهذه التعاقدات (جانب الفندق) — نجمع أيضاً أي Linked_Account_Payment_ID
+    //    لحذف دفعة العميل المقابلة لها في Account_Payments (دفعة مزدوجة مرتبطة)
+    var linkedAccountPaymentIds = {};
+    backupAndDelete("Contract_Payment_Receipts", function(row) {
+      if (!contractIds[String(row[2])]) return false;
+      if (row[10]) linkedAccountPaymentIds[String(row[10])] = true;
+      return true;
+    });
+
+    // 7) دفعات الحسابات (عملاء/جهات تحصيل) المخصَّصة لهذه الفنادق مباشرة، أو المرتبطة بسند سداد حُذف أعلاه
+    backupAndDelete("Account_Payments", function(row) {
+      return isTargetHotel(row[11]) || !!linkedAccountPaymentIds[String(row[0])];
+    });
+
+    // 8) التنبيهات المرتبطة بهذه الفنادق + سجلات قراءتها
+    var notifIds = {};
+    backupAndDelete("Notifications_Master", function(row) {
+      if (!isTargetHotel(row[3])) return false;
+      notifIds[String(row[0])] = true; return true;
+    });
+    backupAndDelete("Notification_Reads", function(row) { return !!notifIds[String(row[0])]; });
+
+    _invalidateReferenceCache_(); // خرائط الفندق/التعاقد/جهة التحصيل المخزَّنة مؤقتاً أصبحت قديمة
+    _bumpAvailabilityVersion_();
+
+    var summary = "تعاقدات:"+counts["Contracts_Master"]+"، حجوزات:"+counts["Bookings_Master"]
+      +"، انتظار:"+counts["Waitlist_Master"]+"، نسك:"+counts["Nusuk_Agreements"]
+      +"، أقساط:"+counts["Contract_Payments"]+"، سندات سداد:"+counts["Contract_Payment_Receipts"]
+      +"، دفعات حسابات:"+counts["Account_Payments"]+"، تنبيهات:"+counts["Notifications_Master"];
+    logAudit("الإعدادات","حذف فندق نهائياً","N/A","","","",
+      "حذف نهائي لفندق/فنادق ["+targets.join("، ")+"]: "+summary+" — نسخ احتياطية: "+(backupSheets.join("، ")||"لا يوجد"), currentUser);
+
+    return { success:true, targets: targets, counts: counts, backupSheets: backupSheets };
+  });
   } catch(e) { _logError_(_fn, e); throw e; }
 }
 
