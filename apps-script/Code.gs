@@ -4237,7 +4237,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "v3.50";
+var APP_VERSION = "v3.51";
 
 // ═══════════════════════════════════════════════════════════════
 // طبقة تشفير كلمات المرور (SHA-256 + Salt) — متوافقة مع الحسابات القديمة
@@ -5235,28 +5235,31 @@ function _perfBucketKey_(d) {
 
 // يُسجِّل عينة أداء واحدة في الكاش فقط (بدون أي كتابة شيت) - رخيص وآمن للمسار الحرج تماماً.
 // user اختياري: يُمرَّر فقط من القياس المُرسَل من المتصفح (الذي يعرف المستخدم)، فارغ من قياس الخادم مباشرة
-function _recordPerfSample_(name, ms, ok, user) {
+function _recordPerfSample_(name, ms, ok, user, ver) {
   try {
     name = String(name||"").slice(0,100);
     if (!name) return;
     ms = Math.max(0, Math.round(Number(ms)||0));
     var cache = CacheService.getScriptCache();
     var bucket = _perfBucketKey_(new Date());
+    // الإصدار يُثبَّت لحظة التسجيل (لا لحظة التفريغ): وإلا تُنسب قياسات الإصدار القديم للجديد بعد كل نشر
+    var ver = String(ver || APP_VERSION).slice(0, 20);
 
-    var aggKey = "PERF_AGG::" + name + "::" + bucket;
+    var aggKey = "PERF_AGG::" + name + "::" + ver + "::" + bucket;
     var agg = _perfCacheGet_(aggKey) || { count:0, sum:0, max:0, fails:0 };
     agg.count++; agg.sum += ms; if (ms > agg.max) agg.max = ms; if (ok===false) agg.fails++;
     cache.put(aggKey, JSON.stringify(agg), _PERF_AGG_TTL_SEC);
 
     var activeKey = "PERF_ACTIVE::" + bucket;
     var active = _perfCacheGet_(activeKey) || [];
-    if (active.indexOf(name) === -1) { active.push(name); cache.put(activeKey, JSON.stringify(active), _PERF_AGG_TTL_SEC); }
+    var tag = name + "@@" + ver;
+    if (active.indexOf(tag) === -1) { active.push(tag); cache.put(activeKey, JSON.stringify(active), _PERF_AGG_TTL_SEC); }
 
     if (ms > 3000) {
       var slowKey = "PERF_SLOWBUF::" + bucket;
       var slow = _perfCacheGet_(slowKey) || [];
       if (slow.length < 200) { // سقف أمان يمنع تضخم حجم قيمة الكاش الواحدة
-        slow.push([new Date().toISOString(), name, ms, String(user||""), ok!==false]);
+        slow.push([new Date().toISOString(), name, ms, String(user||""), ok!==false, ver]);
         cache.put(slowKey, JSON.stringify(slow), _PERF_AGG_TTL_SEC);
       }
     }
@@ -5305,7 +5308,7 @@ function flushClientPerfMetrics(entries, currentUser, extra) {
     _ensurePerfFlushTriggerThrottled_(false); // يثبّت مشغّل التفريغ تلقائياً من أول استخدام فعلي للتطبيق
     (entries || []).forEach(function(e) {
       if (!e || !e.fn || typeof e.ms !== "number") return;
-      _recordPerfSample_("client:" + String(e.fn).slice(0,90), e.ms, e.ok !== false, currentUser);
+      _recordPerfSample_("client:" + String(e.fn).slice(0,90), e.ms, e.ok !== false, currentUser, e.v);
     });
     var logged = 0;
     try { logged = _perfLogPush_(_perfClientExtraToItems_(extra, currentUser)); } catch(e2) {}
@@ -5607,13 +5610,16 @@ function _flushPerfBucketsCore_() {
     var cache = CacheService.getScriptCache();
     var perBucket = buckets.map(function(bucket) {
       var b = { bucket: bucket, rows: [], slowRows: [], logItems: [], logDropped: 0 };
-      (_perfCacheGet_("PERF_ACTIVE::" + bucket) || []).forEach(function(name) {
-        var agg = _perfCacheGet_("PERF_AGG::" + name + "::" + bucket);
+      (_perfCacheGet_("PERF_ACTIVE::" + bucket) || []).forEach(function(tag) {
+        // "name@@ver" (منذ v3.51)؛ الاسم المجرّد صيغة ما قبلها ما زال في الكاش خلال نافذة الانتقال
+        var sep = String(tag).lastIndexOf("@@");
+        var name = sep >= 0 ? tag.slice(0, sep) : tag, ver = sep >= 0 ? tag.slice(sep + 2) : APP_VERSION;
+        var agg = _perfCacheGet_(sep >= 0 ? ("PERF_AGG::" + name + "::" + ver + "::" + bucket) : ("PERF_AGG::" + name + "::" + bucket));
         if (!agg || !agg.count) return;
-        b.rows.push([bucket.slice(0,8), bucket.slice(8,10), name, agg.count, agg.sum, agg.max, agg.fails||0, APP_VERSION]);
+        b.rows.push([bucket.slice(0,8), bucket.slice(8,10), name, agg.count, agg.sum, agg.max, agg.fails||0, ver]);
       });
       (_perfCacheGet_("PERF_SLOWBUF::" + bucket) || []).forEach(function(s) {
-        b.slowRows.push([new Date(s[0]), s[1], s[2], s[3], s[4] ? "نجاح" : "فشل", APP_VERSION]);
+        b.slowRows.push([new Date(s[0]), s[1], s[2], s[3], s[4] ? "نجاح" : "فشل", s[5] || APP_VERSION]);
       });
       var keys = [];
       for (var sh = 0; sh < _PERF_LOG_SHARDS; sh++) keys.push("PERF_LOGBUF::" + bucket + "::" + sh);

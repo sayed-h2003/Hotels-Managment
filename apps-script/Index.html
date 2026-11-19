@@ -1754,9 +1754,9 @@ function _markScreenOpenStart_(screenId) {
 function _recordServerCallTiming_(fn, ms, ok, info) {
   try {
     if (!fn || _PERF_EXCLUDE_FNS[fn]) return;
-    _perfBuffer.push({ fn: fn, ms: Math.round(ms), ok: ok !== false });
+    _perfBuffer.push({ fn: fn, ms: Math.round(ms), ok: ok !== false, v: CLIENT_APP_VERSION });
     if (_screenOpenCtx) {
-      _perfBuffer.push({ fn: 'screen:' + _screenOpenCtx.screenId, ms: Math.round(performance.now() - _screenOpenCtx.t0), ok: true });
+      _perfBuffer.push({ fn: 'screen:' + _screenOpenCtx.screenId, ms: Math.round(performance.now() - _screenOpenCtx.t0), ok: true, v: CLIENT_APP_VERSION });
       _screenOpenCtx = null;
     }
     if (info) {
@@ -1794,7 +1794,7 @@ function _markBootStart_() { try { _bootT0 = performance.now(); } catch(e) {} }
 function _recordBootReady_() {
   try {
     if (_bootT0 == null) return;
-    _perfBuffer.push({ fn: 'boot:ready', ms: Math.round(performance.now() - _bootT0), ok: true });
+    _perfBuffer.push({ fn: 'boot:ready', ms: Math.round(performance.now() - _bootT0), ok: true, v: CLIENT_APP_VERSION });
     _bootT0 = null;
   } catch(e) {}
 }
@@ -9956,7 +9956,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'v3.50';
+var CLIENT_APP_VERSION = 'v3.51';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {
