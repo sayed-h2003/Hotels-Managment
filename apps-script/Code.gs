@@ -201,10 +201,16 @@ function doGet(e) {
   // وليس بتسجيل دخول مستخدم (لا جلسة متصفح هنا). يفشل مغلقاً دائماً إن لم يُضبط المفتاح بعد.
   if (action === 'perfReport') {
     try {
-      var expected = PropertiesService.getScriptProperties().getProperty('PERF_REPORT_SECRET');
-      var given = e.parameter.key;
-      if (!expected || !given || given !== expected) {
-        return ContentService.createTextOutput(JSON.stringify({ success:false, error:'unauthorized' }))
+      // trim للطرفين: لصق القيمة في واجهة GitHub أو Script Properties كثيراً ما يضيف سطراً/مسافة خفية
+      var expected = String(PropertiesService.getScriptProperties().getProperty('PERF_REPORT_SECRET') || '').trim();
+      var given = String(e.parameter.key || '').trim();
+      // رسائل مميَّزة للتشخيص دون كشف أي قيمة
+      var authErr = !expected ? 'not_configured: PERF_REPORT_SECRET غير موجود في Script Properties'
+                  : !given ? 'missing_key'
+                  : given !== expected ? 'key_mismatch: القيمة في GitHub لا تطابق Script Properties'
+                  : '';
+      if (authErr) {
+        return ContentService.createTextOutput(JSON.stringify({ success:false, error:authErr }))
           .setMimeType(ContentService.MimeType.JSON);
       }
       var data = _gatherPerfDashboardData_({});
@@ -4189,7 +4195,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "v3.44";
+var APP_VERSION = "v3.45";
 
 // ═══════════════════════════════════════════════════════════════
 // طبقة تشفير كلمات المرور (SHA-256 + Salt) — متوافقة مع الحسابات القديمة
