@@ -85,10 +85,12 @@ const SHEET_SCHEMAS = {
   "Account_Payments":    ["Payment_ID", "Party_Type", "Party_Key", "Party_Name", "Amount", "Payment_Date",
                            "Method", "Notes", "Created_By", "Created_At", "Is_Deleted", "Hotel_Name",
                            "Linked_Hotel_Receipt_ID"],
-  // v3.42 — قياس أداء الخادم: تفاصيل النداءات الأبطأ من 3 ثوانٍ فقط (التجميع الساعي الكامل في الشيت التالي)
-  "Performance_Log":    ["Timestamp", "Function", "Duration_Ms", "User", "Success"],
-  // تجميع ساعي (عدد/متوسط/أقصى) لكل دالة خادم، يُفرَّغ من الكاش مرة كل ساعة عبر مشغّل زمني
-  "Performance_Hourly": ["Hour_Start", "Function", "Call_Count", "Avg_Ms", "Max_Ms"]
+  // v3.44 — قياس أداء الخادم (يجمع قياس الخادم نفسه + قياس رحلة المتصفح الكاملة معاً):
+  // تجميع كل 10 دقائق (عدد/مجموع المدة/أقصى/فشل) لكل دالة، يُفرَّغ من الكاش عبر مشغّل زمني
+  "Perf":     ["Day", "Hour", "Function", "Count", "Sum_Duration_Ms", "Max_Ms", "Fails", "Version"],
+  // تفاصيل كل نداء أبطأ من 3 ثوانٍ تحديداً (دالة خادم مقاسة من الخادم نفسه بدون مستخدم معروف،
+  // أو دالة بادئتها "client:" مقاسة من المتصفح لرحلة كاملة وفيها اسم المستخدم)
+  "PerfSlow": ["Timestamp", "Function", "Duration_Ms", "User", "Success", "Version"]
 };
 
 // المصدر الوحيد والموحّد لقائمة الشاشات/الصلاحيات في كامل النظام (خادم + واجهة)
@@ -161,6 +163,7 @@ var __SHEET_VALUES_CACHE = {};
 function _getSheetValues_(sheetName) {
   if (!__SHEET_VALUES_CACHE.hasOwnProperty(sheetName)) {
     __SHEET_VALUES_CACHE[sheetName] = _getOrCreateSheet_(sheetName).getDataRange().getValues();
+    try { _incrementDailyQuota_("SHEETREAD"); } catch(e) {} // مؤشر تقريبي - فقط قراءات هذه النقطة المحدَّدة
   }
   return __SHEET_VALUES_CACHE[sheetName];
 }
@@ -193,6 +196,26 @@ function _logError_(fn, e) {
 
 function doGet(e) {
   var page = e && e.parameter && e.parameter.page;
+  var action = e && e.parameter && e.parameter.action;
+  // نقطة سحب تقرير الأداء آلياً (GitHub Actions) - محمية بمفتاح سرّي في Script Properties فقط،
+  // وليس بتسجيل دخول مستخدم (لا جلسة متصفح هنا). يفشل مغلقاً دائماً إن لم يُضبط المفتاح بعد.
+  if (action === 'perfReport') {
+    try {
+      var expected = PropertiesService.getScriptProperties().getProperty('PERF_REPORT_SECRET');
+      var given = e.parameter.key;
+      if (!expected || !given || given !== expected) {
+        return ContentService.createTextOutput(JSON.stringify({ success:false, error:'unauthorized' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      var data = _gatherPerfDashboardData_({});
+      data.exportedAt = new Date().toISOString();
+      return ContentService.createTextOutput(JSON.stringify({ success:true, data:data }))
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch(err) {
+      return ContentService.createTextOutput(JSON.stringify({ success:false, error:'internal_error' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+  }
   if (page === 'guide') {
     return HtmlService.createHtmlOutputFromFile('Setup_Guide')
       .setTitle('دليل الإعداد والتشغيل — HotelApp')
@@ -263,7 +286,7 @@ function loginUser(username, password) {
     logAudit("شاشة الدخول", "تسجيل دخول", "N/A", "", "", "", "تسجيل دخول ناجح", fullName);
     var permissions = getUserPermissions(storedUsername, role);
     return { success: true, username: storedUsername, fullName: fullName, role: role,
-             permissions: permissions, screens: ALL_SCREENS, systemVersion: SYSTEM_VERSION };
+             permissions: permissions, screens: ALL_SCREENS, systemVersion: APP_VERSION };
   }
   return { success: false, message: "اسم المستخدم أو كلمة المرور غير صحيحة!" };
   } catch(e) { _logError_(_fn, e); throw e; }
@@ -3453,6 +3476,7 @@ function _sendTelegramMessage_(text) {
   if (!token || !chatId) return {success:false, error:"لم يتم إعداد بوت تليجرام بعد."};
   var url = "https://api.telegram.org/bot" + token + "/sendMessage";
   try {
+    _incrementDailyQuota_("URLFETCH"); // نقطة العبور الوحيدة لكل نداءات UrlFetch في هذا المشروع
     var resp = UrlFetchApp.fetch(url, {
       method:"post", contentType:"application/json",
       payload: JSON.stringify({ chat_id: chatId, text: text, parse_mode: "HTML" }),
@@ -4165,7 +4189,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var SYSTEM_VERSION = "v3.43";
+var APP_VERSION = "v3.44";
 
 // ═══════════════════════════════════════════════════════════════
 // طبقة تشفير كلمات المرور (SHA-256 + Salt) — متوافقة مع الحسابات القديمة
@@ -4527,7 +4551,7 @@ function getAppBootstrap(username, fullName) {
   var _fn="[getAppBootstrap]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"fullName:"+String(JSON.stringify(fullName)||"").slice(0, 80));
   try {
   return {
-    systemVersion: SYSTEM_VERSION,
+    systemVersion: APP_VERSION,
     userMap: getUsernameFullNameMap(),
     branding: getCompanyBranding(),
     sessionTimeoutMinutes: getSessionTimeoutMinutes(),
@@ -4594,8 +4618,8 @@ var SETUP_STEPS = [
   },
   {
     id: "perf_trigger",
-    label: "مشغّل تفريغ إحصاءات أداء الخادم الساعي",
-    run: function() { return _ensurePerfHourlyTrigger_(); }
+    label: "مشغّل تفريغ إحصاءات أداء الخادم كل 10 دقائق",
+    run: function() { return _ensurePerfFlushTrigger_(); }
   },
   {
     id: "roles",
@@ -5056,12 +5080,14 @@ var _REF_CACHE_KEY_CONTRACT_LABEL_MAP = "REF_CONTRACT_LABEL_MAP";
 
 function _getFromCache_(key) {
   try {
+    try { _incrementDailyQuota_("CACHEOP"); } catch(e0) {}
     var raw = CacheService.getScriptCache().get(key);
     return raw ? JSON.parse(raw) : null;
   } catch(e) { return null; }
 }
 function _putInCache_(key, obj) {
   try {
+    try { _incrementDailyQuota_("CACHEOP"); } catch(e0) {}
     CacheService.getScriptCache().put(key, JSON.stringify(obj), _REFERENCE_CACHE_TTL_SEC);
   } catch(e) {}
 }
@@ -5129,19 +5155,89 @@ function getAvailabilityVersion() {
 
 /**
  * ======================================================================
- * قياس أداء الخادم — زمن الرحلة الكاملة لكل نداء google.script.run
+ * قياس أداء الخادم + الواجهة معاً، واستهلاك حصص جوجل اليومية
  * ======================================================================
- * الواجهة تقيس زمن كل نداء من المتصفح نفسه (الرحلة كاملة ذهاباً وإياباً)، وتُجمِّعها
- * في المتصفح وترسلها دفعة واحدة كل ~30 ثانية عبر flushClientPerfMetrics بدل نداء
- * مستقل لكل عملية - لا نضيف أي حمل شبكة إضافي بسبب القياس نفسه.
- * التجميع الساعي (عدد/متوسط/أقصى لكل دالة) يُحفَظ مؤقتاً في CacheService فقط (بدون
- * أي كتابة شيت لكل نداء عادي)، ثم يُفرَّغ لشيت Performance_Hourly مرة كل ساعة عبر
- * مشغّل زمني. فقط النداءات الأبطأ من 3 ثوانٍ تُسجَّل فوراً كتفصيل في Performance_Log.
+ * دالتا الخادم تُستدعيان تلقائياً حول كل دالة عامة عبر تحويل بنائي وقت النشر فقط
+ * (انظر .github/scripts/instrument-functions.js) - لا تُستدعى _perfCall_ يدوياً من هنا.
+ * الواجهة تقيس زمن كل نداء google.script.run من المتصفح نفسه (الرحلة كاملة ذهاباً
+ * وإياباً شاملة الشبكة)، وتُجمِّعها وترسلها دفعة واحدة كل بضع دقائق عبر
+ * flushClientPerfMetrics بدل نداء مستقل لكل عملية - فتُسجَّل بنفس آلية قياس الخادم
+ * لكن باسم مسبوق بـ "client:" للتمييز، ومعها اسم المستخدم (الخادم وحده لا يعرفه).
+ * التجميع يحدث كل 10 دقائق في CacheService فقط (بدون أي كتابة شيت لكل نداء عادي)،
+ * ثم يُفرَّغ لشيتَي Perf/PerfSlow الدائمين عبر مشغّل زمني كل 10 دقائق.
  */
-var _PERF_AGG_TTL_SEC = 10800; // 3 ساعات - يكفي لضمان بقاء بيانات الساعة حتى يُشغَّل مشغّل التفريغ
+var _PERF_BUCKET_MIN = 10;      // حجم نافذة التجميع بالدقائق
+var _PERF_AGG_TTL_SEC = 1200;   // 20 دقيقة - أكثر من كافٍ لبقاء بيانات النافذة حتى يُشغَّل مشغّل التفريغ
 
-function _perfHourKey_(d) {
-  return Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyyMMddHH");
+// قراءة كاش خام بدون المرور بعدّاد CACHEOP - نظام القياس نفسه لا يجب أن يُضخِّم مؤشر استهلاكه هو ذاته
+// (لو استخدم _getFromCache_ العادية هنا، كل نداء مُقاس سيُسجِّل أيضاً 2-3 عمليات Properties إضافية
+// لعدّاد الكاش، فيُبطئ بالضبط ما يُفترض أن يقيسه بأقل أثر ممكن)
+function _perfCacheGet_(key) {
+  try { var raw = CacheService.getScriptCache().get(key); return raw ? JSON.parse(raw) : null; } catch(e) { return null; }
+}
+
+function _perfBucketKey_(d) {
+  var tz = Session.getScriptTimeZone();
+  var ymdH = Utilities.formatDate(d, tz, "yyyyMMddHH");
+  var min = Number(Utilities.formatDate(d, tz, "mm"));
+  var bucketMin = Math.floor(min/_PERF_BUCKET_MIN)*_PERF_BUCKET_MIN;
+  return ymdH + (bucketMin<10?"0":"") + bucketMin;
+}
+
+// يُسجِّل عينة أداء واحدة في الكاش فقط (بدون أي كتابة شيت) - رخيص وآمن للمسار الحرج تماماً.
+// user اختياري: يُمرَّر فقط من القياس المُرسَل من المتصفح (الذي يعرف المستخدم)، فارغ من قياس الخادم مباشرة
+function _recordPerfSample_(name, ms, ok, user) {
+  try {
+    name = String(name||"").slice(0,100);
+    if (!name) return;
+    ms = Math.max(0, Math.round(Number(ms)||0));
+    var cache = CacheService.getScriptCache();
+    var bucket = _perfBucketKey_(new Date());
+
+    var aggKey = "PERF_AGG::" + name + "::" + bucket;
+    var agg = _perfCacheGet_(aggKey) || { count:0, sum:0, max:0, fails:0 };
+    agg.count++; agg.sum += ms; if (ms > agg.max) agg.max = ms; if (ok===false) agg.fails++;
+    cache.put(aggKey, JSON.stringify(agg), _PERF_AGG_TTL_SEC);
+
+    var activeKey = "PERF_ACTIVE::" + bucket;
+    var active = _perfCacheGet_(activeKey) || [];
+    if (active.indexOf(name) === -1) { active.push(name); cache.put(activeKey, JSON.stringify(active), _PERF_AGG_TTL_SEC); }
+
+    if (ms > 3000) {
+      var slowKey = "PERF_SLOWBUF::" + bucket;
+      var slow = _perfCacheGet_(slowKey) || [];
+      if (slow.length < 200) { // سقف أمان يمنع تضخم حجم قيمة الكاش الواحدة
+        slow.push([new Date().toISOString(), name, ms, String(user||""), ok!==false]);
+        cache.put(slowKey, JSON.stringify(slow), _PERF_AGG_TTL_SEC);
+      }
+    }
+  } catch(e) {} // فشل القياس لا يجب أبداً أن يكسر شيئاً
+}
+
+// أسماء دوال مُشغَّلة فعلياً عبر Trigger (بعضها بادئتها "_" فلا يشملها التحويل البنائي تلقائياً،
+// فأُضيفت هنا صراحةً) - تُستخدم فقط لتحديد ما يُحتسَب ضمن حصة "وقت تشغيل المشغّلات اليومية"
+var _TRIGGER_HANDLER_NAMES_ = {
+  trigger_checkDuePayments:1, trigger_checkWaitlist:1, trigger_telegramReminders:1,
+  trigger_checkOptionDates:1, _flushTelegramQueue_:1, _flushPerfBuckets_:1
+};
+
+// غلاف موحّد لكل دالة خادم عامة: يقيس المدة والنجاح/الفشل دون أي تأثير على القيمة المُعادة
+// أو الخطأ المرمي - يُستدعى تلقائياً فقط عبر التحويل البنائي وقت النشر، وليس يدوياً من الكود المصدري
+function _perfCall_(name, args, fn) {
+  var start = Date.now();
+  var ok = true;
+  try {
+    return fn.apply(null, args);
+  } catch(e) {
+    ok = false;
+    throw e; // يُعاد رمي الخطأ الأصلي تماماً كما هو - القياس لا يُغيّر سلوك الدالة الحقيقية إطلاقاً
+  } finally {
+    try {
+      var dur = Date.now()-start;
+      _recordPerfSample_(name, dur, ok);
+      if (_TRIGGER_HANDLER_NAMES_[name]) _incrementDailyQuota_("TRIGGERMS", dur);
+    } catch(e2) {}
+  }
 }
 
 // تستقبل دفعة {fn,ms,ok} مجمَّعة من المتصفح - لا ترمي خطأ أبداً (قياس الأداء لا يجب أن يكسر شيئاً)
@@ -5149,99 +5245,217 @@ function flushClientPerfMetrics(entries, currentUser) {
   var _fn="[flushClientPerfMetrics]";
   try {
     if (!entries || !entries.length) return { success:true, recorded:0 };
-    var cache = CacheService.getScriptCache();
-    var hourKey = _perfHourKey_(new Date());
-    var activeCacheKey = "PERF_ACTIVE::" + hourKey;
-    var active = _getFromCache_(activeCacheKey) || [];
-    var activeSet = {}; active.forEach(function(n){ activeSet[n]=true; });
-    var slowRows = [];
     entries.forEach(function(e) {
       if (!e || !e.fn || typeof e.ms !== "number") return;
-      var fn = String(e.fn).slice(0,80), ms = Math.max(0, Math.round(e.ms)), ok = e.ok !== false;
-      var aggKey = "PERF_AGG::" + fn + "::" + hourKey;
-      var agg = _getFromCache_(aggKey) || { count:0, sum:0, max:0 };
-      agg.count++; agg.sum += ms; if (ms > agg.max) agg.max = ms;
-      try { cache.put(aggKey, JSON.stringify(agg), _PERF_AGG_TTL_SEC); } catch(err) {}
-      if (!activeSet[fn]) { activeSet[fn]=true; active.push(fn); }
-      if (ms > 3000) slowRows.push([new Date(), fn, ms, String(currentUser||""), ok ? "نجاح" : "فشل"]);
+      _recordPerfSample_("client:" + String(e.fn).slice(0,90), e.ms, e.ok !== false, currentUser);
     });
-    try { cache.put(activeCacheKey, JSON.stringify(active), _PERF_AGG_TTL_SEC); } catch(err) {}
-    if (slowRows.length) {
-      var sheet = _getOrCreateSheet_("Performance_Log");
-      sheet.getRange(sheet.getLastRow()+1, 1, slowRows.length, 5).setValues(slowRows);
-    }
     return { success:true, recorded: entries.length };
   } catch(e) { _logError_(_fn, e); return { success:false }; }
 }
 
-// يُشغَّل مرة كل ساعة عبر مشغّل زمني: يُفرِّغ تجميع الساعة التي انتهت للتو من الكاش إلى شيت دائم
-function flushPerfHourlyAggregates_() {
-  var _fn="[flushPerfHourlyAggregates_]";
+// يُشغَّل كل 10 دقائق عبر مشغّل زمني: يُفرِّغ تجميع النافذة التي انتهت للتو من الكاش إلى شيتَي Perf/PerfSlow
+function _flushPerfBuckets_() {
+  var _fn="[_flushPerfBuckets_]";
   try {
-    var prevHourDate = new Date(Date.now() - 60*60*1000); // الساعة التي انتهت للتو، وليس الساعة الجارية
-    var hourKey = _perfHourKey_(prevHourDate);
-    var active = _getFromCache_("PERF_ACTIVE::" + hourKey) || [];
-    if (!active.length) return;
-    var rows = [];
-    active.forEach(function(fn) {
-      var agg = _getFromCache_("PERF_AGG::" + fn + "::" + hourKey);
-      if (!agg || !agg.count) return;
-      rows.push([hourKey, fn, agg.count, Math.round(agg.sum/agg.count), agg.max]);
-    });
-    if (!rows.length) return;
-    var sheet = _getOrCreateSheet_("Performance_Hourly");
-    sheet.getRange(sheet.getLastRow()+1, 1, rows.length, 5).setValues(rows);
+    var prevBucketDate = new Date(Date.now() - _PERF_BUCKET_MIN*60*1000); // النافذة التي انتهت للتو، وليست الجارية
+    var bucket = _perfBucketKey_(prevBucketDate);
+
+    var active = _perfCacheGet_("PERF_ACTIVE::" + bucket) || [];
+    if (active.length) {
+      var rows = [];
+      active.forEach(function(name) {
+        var agg = _perfCacheGet_("PERF_AGG::" + name + "::" + bucket);
+        if (!agg || !agg.count) return;
+        rows.push([bucket.slice(0,8), bucket.slice(8,10), name, agg.count, agg.sum, agg.max, agg.fails||0, APP_VERSION]);
+      });
+      if (rows.length) {
+        var sheet = _getOrCreateSheet_("Perf");
+        sheet.getRange(sheet.getLastRow()+1, 1, rows.length, 8).setValues(rows);
+      }
+    }
+
+    var slow = _perfCacheGet_("PERF_SLOWBUF::" + bucket) || [];
+    if (slow.length) {
+      var slowRows = slow.map(function(s) { return [new Date(s[0]), s[1], s[2], s[3], s[4] ? "نجاح" : "فشل", APP_VERSION]; });
+      var slowSheet = _getOrCreateSheet_("PerfSlow");
+      slowSheet.getRange(slowSheet.getLastRow()+1, 1, slowRows.length, 6).setValues(slowRows);
+    }
+
+    _cleanupStaleQuotaKeys_(); // بنفس تردد هذا المشغّل - تنظيف دوري كافٍ لمفاتيح الحصص الأقدم من 35 يوماً
   } catch(e) { _logError_(_fn, e); }
 }
 
-// يُثبّت مشغّل التفريغ الساعي مرة واحدة فقط إن لم يكن مثبّتاً - يُستدعى من ضمن خطوات الإعداد الشاملة
-function _ensurePerfHourlyTrigger_() {
+// يُثبّت مشغّل التفريغ كل 10 دقائق مرة واحدة فقط إن لم يكن مثبّتاً - يُستدعى من ضمن خطوات الإعداد الشاملة
+function _ensurePerfFlushTrigger_() {
   var exists = false;
   ScriptApp.getProjectTriggers().forEach(function(t) {
-    if (t.getHandlerFunction() === "flushPerfHourlyAggregates_") exists = true;
+    if (t.getHandlerFunction() === "_flushPerfBuckets_") exists = true;
   });
-  if (!exists) ScriptApp.newTrigger("flushPerfHourlyAggregates_").timeBased().everyHours(1).create();
-  return exists ? "المشغّل مثبّت مسبقاً" : "تم تثبيت مشغّل تفريغ إحصاءات الأداء الساعية";
+  if (!exists) ScriptApp.newTrigger("_flushPerfBuckets_").timeBased().everyMinutes(10).create();
+  return exists ? "المشغّل مثبّت مسبقاً" : "تم تثبيت مشغّل تفريغ إحصاءات الأداء كل 10 دقائق";
 }
 
-// تقرير الأداء للوحة الإدارة (Admin فقط): أبطأ النداءات الفردية + أعلى الدوال استهلاكاً للوقت الكلي
-function getPerformanceReport(currentUser) {
-  var _fn="[getPerformanceReport]";
-  try {
-  if (!_isAdmin_(currentUser)) throw new Error("غير مصرح — تقرير الأداء لمدير النظام فقط.");
+/**
+ * ======================================================================
+ * عدّادات استهلاك حصص جوجل اليومية (Google Apps Script Quotas)
+ * ======================================================================
+ * UrlFetch ووقت تشغيل المشغّلات حصتان يوميتان حقيقيتان منشورتان من جوجل.
+ * أما قراءة الشيتات/عمليات الكاش/القفل فمؤشرات استخدام فقط (لا حصة يومية منشورة
+ * لها) - عدّادها تقريبي حسب نقاط العبور الفعلية في الكود (_getSheetValues_ عند
+ * القراءة الفعلية من الشيت، _getFromCache_/_putInCache_، _withLock_)، وليس شاملاً
+ * لأي استدعاء مباشر لهذه الخدمات يتجاوز هذه الدوال المساعدة - هذا تقدير، وليس دقيقاً 100%.
+ * PropertiesService لا يوجد له نقطة عبور واحدة مماثلة حالياً (استدعاءات مباشرة متفرقة
+ * بكل الملف)، فلم يُضَف له عدّاد تجنّباً لتعديلات واسعة مقابل مؤشر غير حرج.
+ */
+function _quotaDateKey_() { return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyyMMdd"); }
 
-  // أبطأ النداءات الفردية المسجَّلة (فقط ما تجاوز 3 ثوانٍ أصلاً) - آخر 200 سطر، مرتبة تنازلياً بالمدة
-  var logData = _getOrCreateSheet_("Performance_Log").getDataRange().getValues();
+function _incrementDailyQuota_(name, amount) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var key = "QUOTA_" + name + "_" + _quotaDateKey_();
+    var cur = Number(props.getProperty(key) || 0);
+    props.setProperty(key, String(cur + (amount||1)));
+  } catch(e) {}
+}
+
+function _getDailyQuotaCounters_(dateKey) {
+  try {
+    var all = PropertiesService.getScriptProperties().getProperties();
+    var names = ["URLFETCH","TRIGGERMS","SHEETREAD","CACHEOP","LOCK"];
+    var out = {};
+    names.forEach(function(n) { out[n] = Number(all["QUOTA_"+n+"_"+dateKey] || 0); });
+    return out;
+  } catch(e) { return {}; }
+}
+
+// تخمين نوع الحساب من نطاق بريد المستخدم الفعلي - حساب شخصي (gmail.com) له حصة UrlFetch أقل (20,000)
+// من حساب Workspace (100,000). تخمين وليس يقيناً، لذا نُسمّيه بوضوح في الواجهة "تقديري"
+function _urlFetchDailyLimit_() {
+  try {
+    var email = Session.getEffectiveUser().getEmail() || "";
+    return /@gmail\.com$/i.test(email) ? 20000 : 100000;
+  } catch(e) { return 20000; }
+}
+
+// حذف مفاتيح الحصص اليومية الأقدم من 35 يوماً - PropertiesService له سقف تخزين إجمالي، وليس لكل مفتاح فقط
+function _cleanupStaleQuotaKeys_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var all = props.getProperties();
+    var cutoff = Date.now() - 35*24*60*60*1000;
+    Object.keys(all).forEach(function(k) {
+      var m = k.match(/^QUOTA_[A-Z]+_(\d{8})$/);
+      if (!m) return;
+      var d = m[1];
+      var keyDate = new Date(Number(d.slice(0,4)), Number(d.slice(4,6))-1, Number(d.slice(6,8))).getTime();
+      if (keyDate < cutoff) props.deleteProperty(k);
+    });
+  } catch(e) {}
+}
+
+/**
+ * ======================================================================
+ * لوحة أداء الإدارة (Admin فقط): تجميع بيانات Perf/PerfSlow + الحصص اليومية
+ * ======================================================================
+ */
+// يُجمِّع كل بيانات لوحة الأداء دفعة واحدة - تستخدمه كل من التقرير المباشر للوحة، وزر التصدير،
+// ونقطة doGet المحمية بمفتاح سرّي لسحب التقرير آلياً عبر GitHub Actions (مصدر حقيقة واحد للثلاثة)
+function _gatherPerfDashboardData_(filters) {
+  filters = filters || {};
+  var fromDay = filters.fromDate ? String(filters.fromDate).replace(/-/g,"") : null; // "yyyy-MM-dd" -> "yyyyMMdd"
+  var toDay   = filters.toDate   ? String(filters.toDate).replace(/-/g,"")   : null;
+  var onlyVersion = filters.version ? String(filters.version) : null;
+
+  var perfData = _getOrCreateSheet_("Perf").getDataRange().getValues();
+  var versionsSeen = {};
+  var byFnVer = {};
+  for (var i=1; i<perfData.length; i++) {
+    var row = perfData[i];
+    var day = String(row[0]||""), hour=String(row[1]||""), fn=String(row[2]||""),
+        count=Number(row[3])||0, sumMs=Number(row[4])||0, maxMs=Number(row[5])||0,
+        fails=Number(row[6])||0, ver=String(row[7]||"");
+    if (ver) versionsSeen[ver]=true;
+    if (fromDay && day < fromDay) continue;
+    if (toDay && day > toDay) continue;
+    if (onlyVersion && ver !== onlyVersion) continue;
+    var key = fn + "::" + ver;
+    if (!byFnVer[key]) byFnVer[key] = { fn:fn, version:ver, totalCount:0, totalTimeMs:0, max:0, fails:0 };
+    byFnVer[key].totalCount += count;
+    byFnVer[key].totalTimeMs += sumMs;
+    byFnVer[key].fails += fails;
+    if (maxMs > byFnVer[key].max) byFnVer[key].max = maxMs;
+  }
+  var topByVolume = Object.keys(byFnVer).map(function(k) {
+    var e = byFnVer[k];
+    return { fn:e.fn, version:e.version, totalCount:e.totalCount,
+             avgMs: e.totalCount?Math.round(e.totalTimeMs/e.totalCount):0,
+             maxMs:e.max, totalTimeMs: Math.round(e.totalTimeMs), fails:e.fails };
+  }).sort(function(a,b){ return b.totalTimeMs - a.totalTimeMs; });
+
+  var slowData = _getOrCreateSheet_("PerfSlow").getDataRange().getValues();
   var slowCalls = [];
-  for (var i = Math.max(1, logData.length-200); i < logData.length; i++) {
-    var r = logData[i];
-    slowCalls.push({ time: Utilities.formatDate(r[0] instanceof Date?r[0]:new Date(r[0]), Session.getScriptTimeZone(), "dd/MM HH:mm:ss"), fn: r[1], ms: r[2], user: r[3], ok: r[4] });
+  for (var j = Math.max(1, slowData.length-300); j < slowData.length; j++) {
+    var r = slowData[j];
+    var ver2 = String(r[5]||"");
+    if (onlyVersion && ver2 !== onlyVersion) continue;
+    var ts = r[0] instanceof Date ? r[0] : new Date(r[0]);
+    var dayStr = Utilities.formatDate(ts, Session.getScriptTimeZone(), "yyyyMMdd");
+    if (fromDay && dayStr < fromDay) continue;
+    if (toDay && dayStr > toDay) continue;
+    slowCalls.push({ time: Utilities.formatDate(ts, Session.getScriptTimeZone(), "dd/MM HH:mm:ss"),
+                      fn: r[1], ms: r[2], user: r[3], ok: r[4], version: ver2 });
   }
   slowCalls.sort(function(a,b){ return b.ms - a.ms; });
   slowCalls = slowCalls.slice(0, 30);
 
-  // أعلى الدوال استهلاكاً للوقت الكلي (عدد النداءات × متوسط مدتها) خلال آخر 48 ساعة - وليس أبطأ نداء منفرد
-  var hourlyData = _getOrCreateSheet_("Performance_Hourly").getDataRange().getValues();
-  var cutoff = Date.now() - 48*60*60*1000;
-  var byFn = {};
-  for (var j = 1; j < hourlyData.length; j++) {
-    var row = hourlyData[j];
-    var hk = String(row[0]);
-    if (hk.length < 10) continue;
-    var hourDate = new Date(Number(hk.slice(0,4)), Number(hk.slice(4,6))-1, Number(hk.slice(6,8)), Number(hk.slice(8,10)));
-    if (hourDate.getTime() < cutoff) continue;
-    var fn = String(row[1]), count = Number(row[2])||0, avg = Number(row[3])||0, max = Number(row[4])||0;
-    if (!byFn[fn]) byFn[fn] = { fn:fn, totalCount:0, totalTimeMs:0, max:0 };
-    byFn[fn].totalCount += count;
-    byFn[fn].totalTimeMs += count*avg;
-    if (max > byFn[fn].max) byFn[fn].max = max;
+  var todayKey = _quotaDateKey_();
+  var quota = _getDailyQuotaCounters_(todayKey);
+  var todayDay = todayKey;
+  var todayTotals = { totalCalls:0, sumMs:0, fails:0 };
+  topByVolume.forEach(function(){}); // (الإجمالي اليومي يُحسَب من صفوف اليوم مباشرة أدناه، لا من topByVolume المُجمَّع عبر الفلاتر)
+  for (var k=1; k<perfData.length; k++) {
+    if (String(perfData[k][0]) !== todayDay) continue;
+    todayTotals.totalCalls += Number(perfData[k][3])||0;
+    todayTotals.sumMs += Number(perfData[k][4])||0;
+    todayTotals.fails += Number(perfData[k][6])||0;
   }
-  var topByVolume = Object.keys(byFn).map(function(k) {
-    var e = byFn[k];
-    return { fn:e.fn, totalCount:e.totalCount, avgMs: e.totalCount?Math.round(e.totalTimeMs/e.totalCount):0, maxMs:e.max, totalTimeMs: Math.round(e.totalTimeMs) };
-  }).sort(function(a,b){ return b.totalTimeMs - a.totalTimeMs; }).slice(0, 20);
 
-  return { slowCalls: slowCalls, topByVolume: topByVolume };
+  return {
+    generatedAt: new Date().toISOString(),
+    version: APP_VERSION,
+    versions: Object.keys(versionsSeen).sort(),
+    topByVolume: topByVolume.slice(0, 50),
+    slowCalls: slowCalls,
+    today: {
+      totalCalls: todayTotals.totalCalls,
+      avgMs: todayTotals.totalCalls ? Math.round(todayTotals.sumMs/todayTotals.totalCalls) : 0,
+      failRatePct: todayTotals.totalCalls ? Math.round(todayTotals.fails/todayTotals.totalCalls*1000)/10 : 0
+    },
+    quotas: {
+      urlFetch: { used: quota.URLFETCH||0, limit: _urlFetchDailyLimit_() },
+      triggerMinutes: { used: Math.round((quota.TRIGGERMS||0)/60000*10)/10, limit: 90 },
+      sheetReadsToday: quota.SHEETREAD||0, cacheOpsToday: quota.CACHEOP||0, lockAcquisitionsToday: quota.LOCK||0
+    }
+  };
+}
+
+// تقرير الأداء للوحة الإدارة (Admin فقط)
+function getPerformanceReport(currentUser, filters) {
+  var _fn="[getPerformanceReport]";
+  try {
+  if (!_isAdmin_(currentUser)) throw new Error("غير مصرح — تقرير الأداء لمدير النظام فقط.");
+  return _gatherPerfDashboardData_(filters);
+  } catch(e) { _logError_(_fn, e); throw e; }
+}
+
+// تصدير بيانات لوحة الأداء الحالية كـ JSON (Admin فقط) - لزر "تصدير للتحليل" في الواجهة
+function getPerfExportJson(currentUser, filters) {
+  var _fn="[getPerfExportJson]";
+  try {
+  if (!_isAdmin_(currentUser)) throw new Error("غير مصرح — تصدير بيانات الأداء لمدير النظام فقط.");
+  var data = _gatherPerfDashboardData_(filters);
+  data.exportedAt = new Date().toISOString();
+  return data;
   } catch(e) { _logError_(_fn, e); throw e; }
 }
 
@@ -5264,6 +5478,7 @@ function _withLock_(fn) {
   } catch(e) {
     throw new Error("النظام مشغول بمعالجة حفظ متزامن. يرجى إعادة المحاولة بعد لحظات.");
   }
+  try { _incrementDailyQuota_("LOCK"); } catch(e) {} // نقطة عبور شاملة لكل استخدامات القفل في المشروع
   try { return fn(); }
   finally { try { lock.releaseLock(); } catch(e) {} }
 }

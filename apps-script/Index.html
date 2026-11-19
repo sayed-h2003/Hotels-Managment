@@ -1686,11 +1686,21 @@ body.sb-collapsed #availHScrollProxy { right: 0; }
 // للسلوك الحقيقي)، فلا يحتاج أي نداء موجود حالياً أي تعديل. أي خلل هنا داخل try/catch صامت
 // تماماً - فشل القياس لا يجب أبداً أن يكسر نداءً حقيقياً واحداً في التطبيق.
 var _perfBuffer = [];
-var _PERF_EXCLUDE_FNS = { flushClientPerfMetrics:1, getPerformanceReport:1 };
+var _PERF_EXCLUDE_FNS = { flushClientPerfMetrics:1, getPerformanceReport:1, getPerfExportJson:1 };
+// v3.44 — يُستهلَك مرة واحدة فقط بأول نداء خادم يكتمل بعد فتح شاشة: تقدير معقول (وليس مثالياً)
+// لـ"زمن فتح الشاشة من الضغط حتى اكتمال الرسم" دون الحاجة لتعديل كل دالة تحميل شاشة على حدة
+var _screenOpenCtx = null;
+function _markScreenOpenStart_(screenId) {
+  try { _screenOpenCtx = { screenId: screenId, t0: performance.now() }; } catch(e) {}
+}
 function _recordServerCallTiming_(fn, ms, ok) {
   try {
     if (!fn || _PERF_EXCLUDE_FNS[fn]) return;
     _perfBuffer.push({ fn: fn, ms: Math.round(ms), ok: ok !== false });
+    if (_screenOpenCtx) {
+      _perfBuffer.push({ fn: 'screen:' + _screenOpenCtx.screenId, ms: Math.round(performance.now() - _screenOpenCtx.t0), ok: true });
+      _screenOpenCtx = null;
+    }
     if (_perfBuffer.length >= 25) _flushPerfBuffer_();
   } catch(e) {}
 }
@@ -1701,8 +1711,19 @@ function _flushPerfBuffer_() {
     google.script.run.flushClientPerfMetrics(batch, (typeof sessionUser !== 'undefined' && sessionUser) ? sessionUser.username : '');
   } catch(e) {}
 }
-setInterval(_flushPerfBuffer_, 30000);
+setInterval(_flushPerfBuffer_, 180000); // كل 3 دقائق - إضافة لعتبة الـ25 نداءً وحدث beforeunload أدناه
 window.addEventListener('beforeunload', _flushPerfBuffer_);
+
+// زمن الإقلاع: من لحظة الضغط على "دخول" حتى اكتمال تجهيز الواجهة الرئيسية بعد النداء المجمّع
+var _bootT0 = null;
+function _markBootStart_() { try { _bootT0 = performance.now(); } catch(e) {} }
+function _recordBootReady_() {
+  try {
+    if (_bootT0 == null) return;
+    _perfBuffer.push({ fn: 'boot:ready', ms: Math.round(performance.now() - _bootT0), ok: true });
+    _bootT0 = null;
+  } catch(e) {}
+}
 
 (function() {
   try {
@@ -1772,6 +1793,7 @@ document.addEventListener('click', function(e) {
 
 // ═══ تسجيل الدخول ═══
 function doLogin() {
+  _markBootStart_(); // v3.44 — بداية قياس زمن الإقلاع (حتى اكتمال تجهيز الواجهة الرئيسية بعد الدخول)
   var username = document.getElementById('login_username').value.trim();
   var password = document.getElementById('login_password').value;
   var errEl    = document.getElementById('login_error');
@@ -3242,10 +3264,12 @@ function _applyAppBootstrap() {
     _pushFreshNotifsToBrowser(_myNotifications); // v3.0 — إشعارات متصفح فورية
     _renderConnectedUsers(boot.activeUsers || []);
     _applyServerVersion(boot.systemVersion); // v3.0 — رقم نسخة من الخادم
+    _recordBootReady_(); // v3.44 — نهاية قياس زمن الإقلاع
   }).withFailureHandler(function() {
     // احتياطي آمن: عند فشل النداء المجمّع نرجع تلقائياً للنداءات المنفصلة القديمة
     loadUsernameFullNameMap(); loadCompanyBranding(); _loadSessionTimeoutSetting();
     loadMyNotifications(); pingAndRefreshConnected();
+    _recordBootReady_();
   }).getAppBootstrap(sessionUser.username, sessionUser.fullName || sessionUser.username);
 }
 // تُرجع الاسم الكامل لاسم مستخدم معيّن، أو اسم المستخدم نفسه إن لم يكن معروفاً (احتياطي آمن)
@@ -3655,6 +3679,7 @@ function switchScreen(screenId) {
   var lastLoad = _screenCacheTime[screenId] || 0;
   if (Date.now() - lastLoad < SCREEN_CACHE_TTL_MS) return;
   _screenCacheTime[screenId] = Date.now();
+  _markScreenOpenStart_(screenId); // v3.44 — بداية قياس زمن فتح هذه الشاشة (جلب حقيقي وليس من الكاش)
 
   // تحميل بيانات الشاشة عند الدخول إليها لأول مرة أو بعد انتهاء صلاحية ذاكرة التخزين المؤقت
   if (screenId === 'Dashboard_Screen')         loadDashboard();
@@ -6362,62 +6387,193 @@ function loadTriggersManager() {
   }).getSystemTriggers(sessionUser.username);
 }
 
-// ═══ تقرير أداء الخادم ═══
+// ═══ لوحة أداء الخادم (v3.44 — بطاقات + جدول قابل للفرز + فلاتر إصدار/فترة + مقارنة إصدارين + تصدير) ═══
+var _perfLastReport = null;
+var _perfSortState = { col: 'totalTimeMs', dir: -1 };
+
 function openPerformanceReportModal() {
   document.getElementById('PerformanceReport_Modal').classList.add('open');
+  document.getElementById('perf_compare_box').style.display = 'none';
   loadPerformanceReport();
 }
+function _perfCurrentFilters() {
+  return {
+    fromDate: document.getElementById('perf_filter_from').value || null,
+    toDate: document.getElementById('perf_filter_to').value || null,
+    version: document.getElementById('perf_filter_version').value || null
+  };
+}
+function _perfFillVersionDropdowns(versions) {
+  [ 'perf_filter_version', 'perf_cmp_a', 'perf_cmp_b' ].forEach(function(id) {
+    var sel = document.getElementById(id);
+    var cur = sel.value;
+    var opts = (id === 'perf_filter_version' ? '<option value="">كل الإصدارات</option>' : '<option value="">اختر إصداراً</option>')
+      + versions.map(function(v){ return '<option value="'+escapeHtmlAttr(v)+'">'+escapeHtml(v)+'</option>'; }).join('');
+    sel.innerHTML = opts;
+    if (cur && versions.indexOf(cur) !== -1) sel.value = cur;
+  });
+}
 function loadPerformanceReport() {
+  var cardsEl = document.getElementById('perfCards');
   var volBody = document.getElementById('perfTopVolumeBody');
   var slowBody = document.getElementById('perfSlowCallsBody');
-  volBody.innerHTML = slowBody.innerHTML = '<div style="text-align:center;padding:16px;color:var(--clr-muted);font-size:8.5pt;">جاري التحميل...</div>';
+  cardsEl.innerHTML = volBody.innerHTML = slowBody.innerHTML = '<div style="text-align:center;padding:16px;color:var(--clr-muted);font-size:8.5pt;">جاري التحميل...</div>';
   google.script.run.withSuccessHandler(function(rep) {
     rep = rep || {};
-    var topByVolume = rep.topByVolume || [], slowCalls = rep.slowCalls || [];
-    volBody.innerHTML = !topByVolume.length
-      ? '<div style="text-align:center;padding:14px;color:var(--clr-muted);font-size:8.3pt;">لا توجد بيانات كافية بعد (تُجمَّع تلقائياً مع استخدام البرنامج).</div>'
-      : '<table style="width:100%;border-collapse:collapse;font-size:8.2pt;">'
-        + '<thead><tr style="background:var(--clr-primary-dark);color:#fff;">'
-        +   '<th style="text-align:right;padding:8px 10px;">الدالة</th>'
-        +   '<th style="padding:8px;text-align:center;">عدد النداءات</th>'
-        +   '<th style="padding:8px;text-align:center;">المتوسط (ms)</th>'
-        +   '<th style="padding:8px;text-align:center;">الأقصى (ms)</th>'
-        +   '<th style="padding:8px;text-align:center;">إجمالي الوقت التقديري</th>'
-        + '</tr></thead><tbody>'
-        + topByVolume.map(function(r) {
-            var totalSec = (r.totalTimeMs/1000).toFixed(1);
-            return '<tr style="border-bottom:1px solid var(--clr-border);">'
-              + '<td style="padding:8px 10px;font-family:monospace;font-size:7.8pt;">'+escapeHtml(r.fn)+'</td>'
-              + '<td style="padding:8px;text-align:center;">'+r.totalCount+'</td>'
-              + '<td style="padding:8px;text-align:center;">'+r.avgMs+'</td>'
-              + '<td style="padding:8px;text-align:center;">'+r.maxMs+'</td>'
-              + '<td style="padding:8px;text-align:center;font-weight:700;">'+totalSec+' ثانية</td>'
-              + '</tr>';
-          }).join('')
-        + '</tbody></table>';
-    slowBody.innerHTML = !slowCalls.length
-      ? '<div style="text-align:center;padding:14px;color:var(--clr-muted);font-size:8.3pt;">لا يوجد نداء تجاوز 3 ثوانٍ حتى الآن — ممتاز.</div>'
-      : '<table style="width:100%;border-collapse:collapse;font-size:8.2pt;">'
-        + '<thead><tr style="background:var(--clr-primary-dark);color:#fff;">'
-        +   '<th style="padding:8px;text-align:center;">الوقت</th>'
-        +   '<th style="text-align:right;padding:8px 10px;">الدالة</th>'
-        +   '<th style="padding:8px;text-align:center;">المدة (ms)</th>'
-        +   '<th style="padding:8px;text-align:center;">المستخدم</th>'
-        +   '<th style="padding:8px;text-align:center;">الحالة</th>'
-        + '</tr></thead><tbody>'
-        + slowCalls.map(function(r) {
-            return '<tr style="border-bottom:1px solid var(--clr-border);">'
-              + '<td style="padding:8px;text-align:center;font-size:7.5pt;">'+escapeHtml(r.time)+'</td>'
-              + '<td style="padding:8px 10px;font-family:monospace;font-size:7.8pt;">'+escapeHtml(r.fn)+'</td>'
-              + '<td style="padding:8px;text-align:center;">'+r.ms+'</td>'
-              + '<td style="padding:8px;text-align:center;">'+escapeHtml(_uname(r.user))+'</td>'
-              + '<td style="padding:8px;text-align:center;">'+(r.ok===false?'<span style="color:#dc2626;">❌ فشل</span>':'✅')+'</td>'
-              + '</tr>';
-          }).join('')
-        + '</tbody></table>';
+    _perfLastReport = rep;
+    _perfFillVersionDropdowns(rep.versions || []);
+    _perfRenderCards(rep);
+    _perfRenderTable();
+    _perfRenderSlowCalls(rep.slowCalls || []);
   }).withFailureHandler(function(e) {
+    cardsEl.innerHTML = '';
     volBody.innerHTML = slowBody.innerHTML = '<div style="color:#dc2626;padding:16px;font-size:8.5pt;">تعذّر التحميل: '+escapeHtml(e.message||e)+'</div>';
-  }).getPerformanceReport(sessionUser.username);
+  }).getPerformanceReport(sessionUser.username, _perfCurrentFilters());
+}
+function _perfBar(used, limit) {
+  var pct = limit ? Math.min(100, Math.round(used/limit*100)) : 0;
+  var color = pct>=90?'#dc2626':(pct>=70?'#d97706':'#16a34a');
+  return '<div style="background:#eee;border-radius:5px;height:7px;margin-top:5px;overflow:hidden;">'
+    + '<div style="background:'+color+';width:'+pct+'%;height:100%;"></div></div>'
+    + '<div style="font-size:7.3pt;color:var(--clr-muted);margin-top:3px;">'+used.toLocaleString('en-US')+' / '+limit.toLocaleString('en-US')+' ('+pct+'%)</div>';
+}
+function _perfRenderCards(rep) {
+  var t = rep.today || {}, q = rep.quotas || {};
+  var top10 = (rep.topByVolume||[]).slice().sort(function(a,b){ return b.avgMs - a.avgMs; }).slice(0,10);
+  function card(title, valueHtml) {
+    return '<div style="background:#fff;border:1px solid var(--clr-border);border-radius:8px;padding:10px 12px;min-width:140px;flex:1;">'
+      + '<div style="font-size:7.5pt;color:var(--clr-muted);margin-bottom:4px;">'+title+'</div>'
+      + '<div style="font-size:10pt;font-weight:800;">'+valueHtml+'</div></div>';
+  }
+  document.getElementById('perfCards').innerHTML =
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;">'
+    + card('📞 إجمالي النداءات اليوم', (t.totalCalls||0).toLocaleString('en-US'))
+    + card('⏱️ المتوسط اليوم', (t.avgMs||0)+' ms')
+    + card('❌ نسبة الفشل اليوم', (t.failRatePct||0)+'%')
+    + card('🌐 حصة UrlFetch اليوم', _perfBar(q.urlFetch?q.urlFetch.used:0, q.urlFetch?q.urlFetch.limit:20000))
+    + card('⚙️ وقت المشغّلات اليوم (دقيقة)', _perfBar(q.triggerMinutes?q.triggerMinutes.used:0, q.triggerMinutes?q.triggerMinutes.limit:90))
+    + '</div>'
+    + '<div style="margin-top:10px;background:#fff;border:1px solid var(--clr-border);border-radius:8px;padding:10px 12px;">'
+    +   '<div style="font-size:7.8pt;font-weight:800;margin-bottom:6px;">🔟 أبطأ 10 دوال (بالمتوسط)</div>'
+    +   (top10.length ? top10.map(function(r){ return '<div style="display:flex;justify-content:space-between;font-size:7.6pt;padding:2px 0;border-bottom:1px dashed var(--clr-border);"><span style="font-family:monospace;">'+escapeHtml(r.fn)+' <small style="color:var(--clr-muted);">('+escapeHtml(r.version||'')+')</small></span><b>'+r.avgMs+' ms</b></div>'; }).join('')
+         : '<span style="color:var(--clr-muted);font-size:7.8pt;">لا توجد بيانات كافية بعد.</span>')
+    + '</div>';
+}
+var _PERF_COLS = [
+  { key:'fn', label:'الدالة' }, { key:'totalCount', label:'العدد' }, { key:'avgMs', label:'المتوسط' },
+  { key:'maxMs', label:'الأقصى' }, { key:'totalTimeMs', label:'الإجمالي' }, { key:'fails', label:'الفشل' }, { key:'version', label:'الإصدار' }
+];
+function _perfSortBy(col) {
+  if (_perfSortState.col === col) _perfSortState.dir *= -1; else { _perfSortState.col = col; _perfSortState.dir = (col==='fn'||col==='version') ? 1 : -1; }
+  _perfRenderTable();
+}
+function _perfRenderTable() {
+  var rows = ((_perfLastReport && _perfLastReport.topByVolume) || []).slice();
+  var col = _perfSortState.col, dir = _perfSortState.dir;
+  rows.sort(function(a,b) {
+    var av=a[col], bv=b[col];
+    if (typeof av === 'string') return dir * String(av).localeCompare(String(bv));
+    return dir * ((av||0) - (bv||0));
+  });
+  var head = '<tr style="background:var(--clr-primary-dark);color:#fff;">' + _PERF_COLS.map(function(c) {
+    var arrow = (_perfSortState.col===c.key) ? (_perfSortState.dir===1?' ▲':' ▼') : '';
+    return '<th style="padding:8px;text-align:center;cursor:pointer;user-select:none;" onclick="_perfSortBy(\''+c.key+'\')">'+c.label+arrow+'</th>';
+  }).join('') + '</tr>';
+  var body = !rows.length
+    ? '<div style="text-align:center;padding:14px;color:var(--clr-muted);font-size:8.3pt;">لا توجد بيانات كافية بعد (تُجمَّع تلقائياً مع استخدام البرنامج).</div>'
+    : '<table style="width:100%;border-collapse:collapse;font-size:8.2pt;"><thead>'+head+'</thead><tbody>'
+      + rows.map(function(r) {
+          return '<tr style="border-bottom:1px solid var(--clr-border);">'
+            + '<td style="padding:8px 10px;font-family:monospace;font-size:7.8pt;">'+escapeHtml(r.fn)+'</td>'
+            + '<td style="padding:8px;text-align:center;">'+r.totalCount+'</td>'
+            + '<td style="padding:8px;text-align:center;">'+r.avgMs+'</td>'
+            + '<td style="padding:8px;text-align:center;">'+r.maxMs+'</td>'
+            + '<td style="padding:8px;text-align:center;font-weight:700;">'+(r.totalTimeMs/1000).toFixed(1)+' ث</td>'
+            + '<td style="padding:8px;text-align:center;'+(r.fails?'color:#dc2626;':'')+'">'+r.fails+'</td>'
+            + '<td style="padding:8px;text-align:center;font-size:7.5pt;">'+escapeHtml(r.version||'')+'</td>'
+            + '</tr>';
+        }).join('')
+      + '</tbody></table>';
+  document.getElementById('perfTopVolumeBody').innerHTML = body;
+}
+function _perfRenderSlowCalls(slowCalls) {
+  document.getElementById('perfSlowCallsBody').innerHTML = !slowCalls.length
+    ? '<div style="text-align:center;padding:14px;color:var(--clr-muted);font-size:8.3pt;">لا يوجد نداء تجاوز 3 ثوانٍ حتى الآن — ممتاز.</div>'
+    : '<table style="width:100%;border-collapse:collapse;font-size:8.2pt;">'
+      + '<thead><tr style="background:var(--clr-primary-dark);color:#fff;">'
+      +   '<th style="padding:8px;text-align:center;">الوقت</th>'
+      +   '<th style="text-align:right;padding:8px 10px;">الدالة</th>'
+      +   '<th style="padding:8px;text-align:center;">المدة (ms)</th>'
+      +   '<th style="padding:8px;text-align:center;">المستخدم</th>'
+      +   '<th style="padding:8px;text-align:center;">الحالة</th>'
+      +   '<th style="padding:8px;text-align:center;">الإصدار</th>'
+      + '</tr></thead><tbody>'
+      + slowCalls.map(function(r) {
+          return '<tr style="border-bottom:1px solid var(--clr-border);">'
+            + '<td style="padding:8px;text-align:center;font-size:7.5pt;">'+escapeHtml(r.time)+'</td>'
+            + '<td style="padding:8px 10px;font-family:monospace;font-size:7.8pt;">'+escapeHtml(r.fn)+'</td>'
+            + '<td style="padding:8px;text-align:center;">'+r.ms+'</td>'
+            + '<td style="padding:8px;text-align:center;">'+escapeHtml(_uname(r.user))+'</td>'
+            + '<td style="padding:8px;text-align:center;">'+(r.ok===false?'<span style="color:#dc2626;">❌ فشل</span>':'✅')+'</td>'
+            + '<td style="padding:8px;text-align:center;font-size:7.5pt;">'+escapeHtml(r.version||'')+'</td>'
+            + '</tr>';
+        }).join('')
+      + '</tbody></table>';
+}
+
+// ═══ مقارنة إصدارين جنباً إلى جنب ═══
+function _perfToggleCompare() {
+  var box = document.getElementById('perf_compare_box');
+  box.style.display = (box.style.display === 'none') ? '' : 'none';
+}
+function loadPerfCompare() {
+  var vA = document.getElementById('perf_cmp_a').value, vB = document.getElementById('perf_cmp_b').value;
+  var out = document.getElementById('perf_compare_result');
+  if (!vA || !vB) { out.innerHTML = '<span style="color:#dc2626;font-size:8pt;">اختر إصدارَين للمقارنة.</span>'; return; }
+  out.innerHTML = '<div style="text-align:center;padding:10px;color:var(--clr-muted);font-size:8.3pt;">جاري التحميل...</div>';
+  google.script.run.withSuccessHandler(function(repA) {
+    google.script.run.withSuccessHandler(function(repB) {
+      _perfRenderCompare(vA, repA.topByVolume||[], vB, repB.topByVolume||[]);
+    }).withFailureHandler(function(e){ out.innerHTML = '<span style="color:#dc2626;">'+escapeHtml(e.message||e)+'</span>'; })
+    .getPerformanceReport(sessionUser.username, { version: vB });
+  }).withFailureHandler(function(e){ out.innerHTML = '<span style="color:#dc2626;">'+escapeHtml(e.message||e)+'</span>'; })
+  .getPerformanceReport(sessionUser.username, { version: vA });
+}
+function _perfRenderCompare(vA, rowsA, vB, rowsB) {
+  var mapA = {}; rowsA.forEach(function(r){ mapA[r.fn]=r; });
+  var mapB = {}; rowsB.forEach(function(r){ mapB[r.fn]=r; });
+  var fns = Object.keys(mapA).concat(Object.keys(mapB)).filter(function(v,i,a){ return a.indexOf(v)===i; });
+  fns.sort(function(fa,fb){ return ((mapB[fb]||mapA[fb]||{}).totalTimeMs||0) - ((mapA[fa]||mapB[fa]||{}).totalTimeMs||0); });
+  fns = fns.slice(0, 25);
+  document.getElementById('perf_compare_result').innerHTML =
+    '<table style="width:100%;border-collapse:collapse;font-size:8pt;">'
+    + '<thead><tr style="background:var(--clr-primary-dark);color:#fff;">'
+    +   '<th style="padding:7px;text-align:right;">الدالة</th>'
+    +   '<th style="padding:7px;" colspan="3">'+escapeHtml(vA)+'</th>'
+    +   '<th style="padding:7px;" colspan="3">'+escapeHtml(vB)+'</th>'
+    + '</tr><tr style="background:var(--clr-bg-soft);font-size:7.2pt;">'
+    +   '<th></th><th>عدد</th><th>متوسط</th><th>إجمالي</th><th>عدد</th><th>متوسط</th><th>إجمالي</th>'
+    + '</tr></thead><tbody>'
+    + fns.map(function(fn) {
+        var a = mapA[fn], b = mapB[fn];
+        function cell(r){ return r ? ['<td style="text-align:center;">'+r.totalCount+'</td>','<td style="text-align:center;">'+r.avgMs+'</td>','<td style="text-align:center;">'+(r.totalTimeMs/1000).toFixed(1)+'ث</td>'].join('') : '<td colspan="3" style="text-align:center;color:var(--clr-muted);">—</td>'; }
+        return '<tr style="border-bottom:1px solid var(--clr-border);"><td style="padding:7px;font-family:monospace;font-size:7.5pt;">'+escapeHtml(fn)+'</td>'+cell(a)+cell(b)+'</tr>';
+      }).join('')
+    + '</tbody></table>';
+}
+
+// ═══ تصدير بيانات اللوحة الحالية (بنفس الفلاتر المطبَّقة) كملف JSON للتحليل ═══
+function exportPerfReport() {
+  google.script.run.withSuccessHandler(function(data) {
+    var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8;' });
+    var link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'perf_' + (data.version||'unknown') + '_' + new Date().toISOString().slice(0,10) + '.json';
+    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    showToast('تم تصدير بيانات الأداء.', 'success');
+  }).withFailureHandler(function(e) {
+    showToast('تعذّر التصدير: ' + (e.message||e), 'error');
+  }).getPerfExportJson(sessionUser.username, _perfCurrentFilters());
 }
 
 function enableSystemTrigger(key) {
@@ -9515,13 +9671,13 @@ function loadAuditLogPaginated() {
 function gotoAuditPage(p) { _alServerPageState.page = p; loadAuditLogPaginated(); }
 
 // ═══════════════════════════════════════════════════════════════
-// v3.0 — رقم النسخة يأتي من الخادم (SYSTEM_VERSION في Code.gs)
+// v3.0 — رقم النسخة يأتي من الخادم (APP_VERSION في Code.gs)
 // ═══════════════════════════════════════════════════════════════
 function _applyServerVersion(v) {
   if (!v) return;
-  APP_VERSION = v;
-  var lv = document.getElementById('login_app_version'); if (lv) lv.innerText = 'الإصدار ' + APP_VERSION;
-  var sv = document.getElementById('sb_app_version');    if (sv) sv.innerText = APP_VERSION;
+  CLIENT_APP_VERSION = v;
+  var lv = document.getElementById('login_app_version'); if (lv) lv.innerText = 'الإصدار ' + CLIENT_APP_VERSION;
+  var sv = document.getElementById('sb_app_version');    if (sv) sv.innerText = CLIENT_APP_VERSION;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -9585,7 +9741,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var APP_VERSION = 'v3.43';
+var CLIENT_APP_VERSION = 'v3.44';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {
@@ -9661,8 +9817,8 @@ function submitHotelPurge() {
 }
 
 (function() {
-  var lv = document.getElementById('login_app_version'); if (lv) lv.innerText = 'الإصدار ' + APP_VERSION;
-  var sv = document.getElementById('sb_app_version');    if (sv) sv.innerText = APP_VERSION;
+  var lv = document.getElementById('login_app_version'); if (lv) lv.innerText = 'الإصدار ' + CLIENT_APP_VERSION;
+  var sv = document.getElementById('sb_app_version');    if (sv) sv.innerText = CLIENT_APP_VERSION;
 })();
 
 
@@ -10229,14 +10385,36 @@ function submitHotelPurge() {
   </div>
 </div>
 
-<!-- v3.42 — نافذة تقرير أداء الخادم (أبطأ العمليات وأكثرها استهلاكاً للوقت الكلي) -->
+<!-- v3.44 — لوحة أداء الخادم: بطاقات + فلاتر إصدار/فترة + جدول قابل للفرز + مقارنة إصدارين + تصدير -->
 <div id="PerformanceReport_Modal" class="modal-overlay">
-  <div class="modal-box" style="max-width:900px;">
+  <div class="modal-box" style="max-width:980px;">
     <div class="modal-header"><span>⏱️ أداء الخادم</span><button class="modal-close-btn" onclick="document.getElementById('PerformanceReport_Modal').classList.remove('open')">×</button></div>
     <div class="modal-body">
-      <p style="font-size:8pt;color:var(--clr-muted);margin-bottom:12px;">يُقاس زمن كل نداء من المتصفح (الرحلة الكاملة ذهاباً وإياباً). الجدول الأول يُرتِّب حسب إجمالي الوقت المستهلَك فعلياً (عدد النداءات × متوسط مدتها) — وهو الأهم للبدء منه، وليس أبطأ نداء منفرد.</p>
-      <div style="font-size:9pt;font-weight:800;margin-bottom:6px;">🔝 أعلى العمليات استهلاكاً للوقت الكلي (آخر 48 ساعة)</div>
-      <div id="perfTopVolumeBody" style="margin-bottom:18px;">
+      <p style="font-size:8pt;color:var(--clr-muted);margin-bottom:10px;">يُقاس زمن تنفيذ كل دالة خادم تلقائياً + زمن الرحلة الكاملة لكل نداء من المتصفح. الجدول الأساسي يُرتِّب افتراضياً حسب إجمالي الوقت المستهلَك فعلياً (عدد النداءات × متوسط مدتها) — وهو الأهم للبدء منه، وليس أبطأ نداء منفرد. اضغط رأس أي عمود لإعادة الفرز به.</p>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;background:var(--clr-bg-soft);padding:8px 10px;border-radius:8px;">
+        <label style="font-size:7.8pt;">الإصدار: <select id="perf_filter_version" style="font-size:7.8pt;padding:3px;"><option value="">كل الإصدارات</option></select></label>
+        <label style="font-size:7.8pt;">من: <input type="date" id="perf_filter_from" style="font-size:7.8pt;padding:3px;"></label>
+        <label style="font-size:7.8pt;">إلى: <input type="date" id="perf_filter_to" style="font-size:7.8pt;padding:3px;"></label>
+        <button class="btn-secondary" style="font-size:7.8pt;padding:4px 10px;" onclick="loadPerformanceReport()">🔍 تطبيق الفلتر</button>
+        <button class="btn-secondary" style="font-size:7.8pt;padding:4px 10px;" onclick="_perfToggleCompare()">⚖️ مقارنة إصدارين</button>
+      </div>
+
+      <div id="perf_compare_box" style="display:none;margin-bottom:12px;background:var(--clr-bg-soft);padding:8px 10px;border-radius:8px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <label style="font-size:7.8pt;">الإصدار A: <select id="perf_cmp_a" style="font-size:7.8pt;padding:3px;"><option value="">اختر إصداراً</option></select></label>
+          <label style="font-size:7.8pt;">الإصدار B: <select id="perf_cmp_b" style="font-size:7.8pt;padding:3px;"><option value="">اختر إصداراً</option></select></label>
+          <button class="btn-secondary" style="font-size:7.8pt;padding:4px 10px;" onclick="loadPerfCompare()">قارن</button>
+        </div>
+        <div id="perf_compare_result" style="margin-top:8px;"></div>
+      </div>
+
+      <div id="perfCards" style="margin-bottom:14px;">
+        <div style="text-align:center;padding:16px;color:var(--clr-muted);font-size:8.5pt;">جاري التحميل...</div>
+      </div>
+
+      <div style="font-size:9pt;font-weight:800;margin-bottom:6px;">📊 كل الدوال (مرتبة حسب الإجمالي افتراضياً)</div>
+      <div id="perfTopVolumeBody" style="margin-bottom:18px;overflow-x:auto;">
         <div style="text-align:center;padding:16px;color:var(--clr-muted);font-size:8.5pt;">جاري التحميل...</div>
       </div>
       <div style="font-size:9pt;font-weight:800;margin-bottom:6px;">🐌 أبطأ النداءات الفردية المسجَّلة (أبطأ من 3 ثوانٍ)</div>
@@ -10245,6 +10423,7 @@ function submitHotelPurge() {
       </div>
     </div>
     <div class="modal-footer">
+      <button class="btn-secondary" onclick="exportPerfReport()">📤 تصدير للتحليل</button>
       <button class="btn-secondary" onclick="loadPerformanceReport()">🔄 تحديث</button>
       <button class="btn-secondary" onclick="document.getElementById('PerformanceReport_Modal').classList.remove('open')">إغلاق</button>
     </div>

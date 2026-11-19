@@ -1,0 +1,79 @@
+name: Pull performance report
+
+# يسحب تقرير أداء الخادم يومياً من التطبيق المنشور ويحفظه كملف JSON في المستودع، ليُحلَّل لاحقاً
+# دون أي لصق يدوي لأي بيانات. لا يعمل هذا الـ workflow فعلياً إلا بعد ضبط سرَّين من واجهة GitHub:
+#   - APPS_SCRIPT_WEB_APP_URL: رابط /exec الحالي لتطبيق الويب المنشور
+#   - PERF_REPORT_SECRET: مفتاح سرّي عشوائي، يُضبط بنفس القيمة هنا وفي Script Properties
+#     لمشروع Apps Script الفعلي (Project Settings ← Script Properties) تحت نفس الاسم
+# قبل ضبطهما، تفشل هذه الخطوة بأدب برسالة "secret not configured" من الخادم نفسه — وليس بعطل.
+on:
+  workflow_dispatch: {}
+  schedule:
+    # 02:17 UTC يومياً - خارج ساعات الذروة المتوقعة، ودقيقة غير مستديرة لتفادي ازدحام الجدولة العام
+    - cron: '17 2 * * *'
+
+jobs:
+  pull-report:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # السرّ يُمرَّر عبر متغيّر بيئة وُيستخدَم فقط داخل --form-string/curl بملف ناتج مباشر - لا يُطبع
+      # أبداً، ولا يُبنى رابط كامل يحتوي المفتاح يُطبع في السجل بأي خطوة
+      - name: Fetch performance report from the deployed app
+        env:
+          APPS_SCRIPT_WEB_APP_URL: ${{ secrets.APPS_SCRIPT_WEB_APP_URL }}
+          PERF_REPORT_SECRET: ${{ secrets.PERF_REPORT_SECRET }}
+        run: |
+          if [ -z "$APPS_SCRIPT_WEB_APP_URL" ] || [ -z "$PERF_REPORT_SECRET" ]; then
+            echo "::error::لم يُضبط بعد السرّان المطلوبان (APPS_SCRIPT_WEB_APP_URL وPERF_REPORT_SECRET) في إعدادات المستودع — أضفهما من Settings ← Secrets and variables ← Actions، وأضف PERF_REPORT_SECRET بنفس القيمة في Script Properties لمشروع Apps Script."
+            exit 1
+          fi
+          curl -sS --fail-with-body \
+            -G "$APPS_SCRIPT_WEB_APP_URL" \
+            --data-urlencode "action=perfReport" \
+            --data-urlencode "key=$PERF_REPORT_SECRET" \
+            -o raw_response.json
+
+      - name: Validate response is well-formed JSON with success:true
+        run: |
+          node -e "
+            const fs = require('fs');
+            const raw = fs.readFileSync('raw_response.json', 'utf8');
+            let parsed;
+            try { parsed = JSON.parse(raw); } catch (e) {
+              console.error('الرد ليس JSON صالحاً.');
+              process.exit(1);
+            }
+            if (!parsed.success) {
+              console.error('الخادم رفض الطلب: ' + (parsed.error || 'سبب غير معروف') + ' — تأكد أن PERF_REPORT_SECRET مطابق تماماً في GitHub وScript Properties معاً.');
+              process.exit(1);
+            }
+            if (!parsed.data || !parsed.data.version) {
+              console.error('الرد صالح لكن بلا حقل version داخل data.');
+              process.exit(1);
+            }
+            fs.writeFileSync('report_data.json', JSON.stringify(parsed.data, null, 2));
+            console.log('✅ تقرير صالح لإصدار ' + parsed.data.version);
+          "
+
+      - name: Commit report under ops/perf/<version>/<date>.json
+        run: |
+          VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('report_data.json','utf8')).version)")
+          DATE=$(date -u +%Y-%m-%d)
+          DEST="ops/perf/$VERSION/$DATE.json"
+          mkdir -p "ops/perf/$VERSION"
+          mv report_data.json "$DEST"
+          rm -f raw_response.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$DEST"
+          if git diff --cached --quiet; then
+            echo "لا تغيير (نفس بيانات اليوم مسبقاً) - لا حاجة لـ commit."
+            exit 0
+          fi
+          git commit -m "ops/perf: pull performance report for $VERSION @ $DATE"
+          git push
