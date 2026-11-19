@@ -57,9 +57,15 @@ for (const t of targets) {
   // استبدال اسم الدالة في موضعه الدقيق فقط ضمن نص الدالة المأخوذ حرفياً - وليس باستبدال كل
   // ظهور للاسم (لتفادي إصابة متغيّر محلي أو نص بنفس الاسم مصادفة داخل جسم الدالة)
   const renamed = original.slice(0, relIdStart) + t.name + '__impl' + original.slice(relIdEnd);
-  const wrapper = renamed + '\nfunction ' + t.name + '() { return _perfCall_(' + JSON.stringify(t.name) + ', arguments, ' + t.name + '__impl); }\n';
+  // يُقاس النداء الخارجي فقط (القادم من الواجهة أو المشغّل). النداءات الداخلية بين الدوال الملفوفة
+  // تُنفَّذ مباشرة بلا أي تكلفة: تسجيل كل نداء داخلي في الكاش (مثل formatHijriDisplay لكل صف حجز،
+  // 331 مرة في نداء واحد) جعل getBookings يستغرق 72 ثانية بسبب القياس نفسه.
+  const n = JSON.stringify(t.name);
+  const wrapper = renamed + '\nfunction ' + t.name + '() { if (__PERF_DEPTH__ > 0) return ' + t.name + '__impl.apply(this, arguments); '
+    + '__PERF_DEPTH__++; try { return _perfCall_(' + n + ', arguments, ' + t.name + '__impl); } finally { __PERF_DEPTH__--; } }\n';
   out = out.slice(0, t.start) + wrapper + out.slice(t.end);
 }
+out = 'var __PERF_DEPTH__ = 0; // عمق النداءات الملفوفة داخل التنفيذ الواحد (أُضيف وقت النشر)\n' + out;
 
 fs.writeFileSync(targetPath, out);
 console.log('✅ تحويل القياس: لُفّت ' + targets.length + ' دالة من أصل ' + allTopLevelFns.length + ' دالة عليا.');
