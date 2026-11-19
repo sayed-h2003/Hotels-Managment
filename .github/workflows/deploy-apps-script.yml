@@ -23,12 +23,13 @@ jobs:
         with:
           node-version: '20'
 
-      # v4 — مُثبَّتة نسخة 2.x تحديداً (وليس أحدث إصدار): نسخة clasp الأحدث (3.x) غيّرت طريقة
-      # تخزين/قراءة بيانات الدخول بالكامل، فلا تتوافق مع ملف ~/.clasprc.json القديم الذي أنشأه
-      # clasp login بالنسخة 2.x — وهذا غالباً سبب "Unexpected error" غير الواضحة عند clasp pull
+      # v5 — تبيّن من خطوة التشخيص (أسماء المفاتيح فقط) أن ~/.clasprc.json الفعلي شكله:
+      # { "tokens": { "default": { client_id, client_secret, refresh_token, access_token, type } } }
+      # وهذا هو شكل بيانات الدخول في clasp 3.x تحديداً (وليس شكل 2.x القديم { "token": {...},
+      # "oauth2ClientSettings": {...} }) — لذلك نُثبِّت 3.x لتتوافق مع شكل السرّ الفعلي، بدل تثبيت 2.x
       - name: Install clasp
         run: |
-          npm install -g @google/clasp@2
+          npm install -g @google/clasp@3
           clasp --version
 
       # v3 — يُمرَّر السرّ عبر متغيّر بيئة (أكثر أماناً من تضمينه مباشرة داخل run:)، ثم يُصلَح عبر
