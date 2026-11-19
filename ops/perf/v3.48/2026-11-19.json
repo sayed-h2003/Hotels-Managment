@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-19T22:45:34.029Z",
+  "generatedAt": "2026-11-19T22:52:37.921Z",
   "version": "v3.48",
   "versions": [],
   "topByVolume": [],
@@ -18,18 +18,15 @@
       "used": 0,
       "limit": 90
     },
-    "sheetReadsToday": 35,
-    "cacheOpsToday": 6,
-    "lockAcquisitionsToday": 0
+    "sheetReadsToday": 117,
+    "cacheOpsToday": 20,
+    "lockAcquisitionsToday": 1
   },
   "health": {
-    "flushTrigger": "تم تثبيت مشغّل تفريغ إحصاءات الأداء كل 10 دقائق",
+    "flushTrigger": "المشغّل مثبّت مسبقاً",
     "flush": {
-      "flushed": 12,
-      "rows": 0,
-      "slowRows": 0,
-      "lastBucket": "202611200030"
+      "error": "Service Spreadsheets failed while accessing document with id 110Uv4ELO4tcegfzes7Gz9Jluljrgh3GyFQjX2Nau2qM."
     }
   },
-  "exportedAt": "2026-11-19T22:45:34.032Z"
+  "exportedAt": "2026-11-19T22:52:37.923Z"
 }
