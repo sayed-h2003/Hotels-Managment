@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-19T23:11:22.455Z",
+  "generatedAt": "2026-11-19T23:21:39.795Z",
   "version": "v3.50",
   "versions": [
     "v3.48",
@@ -44,6 +44,15 @@
       "fails": 0
     },
     {
+      "fn": "client:getMyNotifications",
+      "version": "v3.50",
+      "totalCount": 10,
+      "avgMs": 4184,
+      "maxMs": 6187,
+      "totalTimeMs": 41838,
+      "fails": 0
+    },
+    {
       "fn": "getMyNotifications",
       "version": "v3.48",
       "totalCount": 17,
@@ -59,6 +68,15 @@
       "avgMs": 4550,
       "maxMs": 7119,
       "totalTimeMs": 27301,
+      "fails": 0
+    },
+    {
+      "fn": "getMyNotifications",
+      "version": "v3.50",
+      "totalCount": 13,
+      "avgMs": 2017,
+      "maxMs": 3641,
+      "totalTimeMs": 26221,
       "fails": 0
     },
     {
@@ -116,12 +134,21 @@
       "fails": 0
     },
     {
-      "fn": "getMyNotifications",
+      "fn": "client:getAvailabilityVersion",
       "version": "v3.50",
-      "totalCount": 8,
-      "avgMs": 2091,
-      "maxMs": 3641,
-      "totalTimeMs": 16728,
+      "totalCount": 7,
+      "avgMs": 2086,
+      "maxMs": 2622,
+      "totalTimeMs": 14599,
+      "fails": 0
+    },
+    {
+      "fn": "client:boot:ready",
+      "version": "v3.50",
+      "totalCount": 1,
+      "avgMs": 14140,
+      "maxMs": 14140,
+      "totalTimeMs": 14140,
       "fails": 0
     },
     {
@@ -152,6 +179,15 @@
       "fails": 0
     },
     {
+      "fn": "client:pingHeartbeatAndGetActiveUsers",
+      "version": "v3.50",
+      "totalCount": 2,
+      "avgMs": 4866,
+      "maxMs": 4978,
+      "totalTimeMs": 9731,
+      "fails": 0
+    },
+    {
       "fn": "client:getAvailabilityVersion",
       "version": "v3.49",
       "totalCount": 5,
@@ -170,12 +206,30 @@
       "fails": 0
     },
     {
+      "fn": "client:getAppBootstrap",
+      "version": "v3.50",
+      "totalCount": 1,
+      "avgMs": 8058,
+      "maxMs": 8058,
+      "totalTimeMs": 8058,
+      "fails": 0
+    },
+    {
       "fn": "getAvailabilityData",
       "version": "v3.48",
       "totalCount": 6,
       "avgMs": 1341,
       "maxMs": 2390,
       "totalTimeMs": 8044,
+      "fails": 0
+    },
+    {
+      "fn": "client:getUserPreference",
+      "version": "v3.50",
+      "totalCount": 3,
+      "avgMs": 2653,
+      "maxMs": 2877,
+      "totalTimeMs": 7960,
       "fails": 0
     },
     {
@@ -206,6 +260,15 @@
       "fails": 0
     },
     {
+      "fn": "_flushPerfBuckets_",
+      "version": "v3.50",
+      "totalCount": 2,
+      "avgMs": 3451,
+      "maxMs": 6564,
+      "totalTimeMs": 6902,
+      "fails": 0
+    },
+    {
       "fn": "getDistinctHotelNames",
       "version": "v3.48",
       "totalCount": 4,
@@ -224,21 +287,21 @@
       "fails": 0
     },
     {
-      "fn": "_flushPerfBuckets_",
-      "version": "v3.50",
-      "totalCount": 1,
-      "avgMs": 6564,
-      "maxMs": 6564,
-      "totalTimeMs": 6564,
-      "fails": 0
-    },
-    {
       "fn": "client:getOverCapacityNotifications",
       "version": "v3.48",
       "totalCount": 1,
       "avgMs": 6443,
       "maxMs": 6443,
       "totalTimeMs": 6443,
+      "fails": 0
+    },
+    {
+      "fn": "pingHeartbeatAndGetActiveUsers",
+      "version": "v3.50",
+      "totalCount": 4,
+      "avgMs": 1602,
+      "maxMs": 2172,
+      "totalTimeMs": 6406,
       "fails": 0
     },
     {
@@ -293,6 +356,15 @@
       "avgMs": 48,
       "maxMs": 94,
       "totalTimeMs": 5037,
+      "fails": 0
+    },
+    {
+      "fn": "client:getAvailabilityData",
+      "version": "v3.50",
+      "totalCount": 1,
+      "avgMs": 4726,
+      "maxMs": 4726,
+      "totalTimeMs": 4726,
       "fails": 0
     },
     {
@@ -384,78 +456,6 @@
       "maxMs": 3256,
       "totalTimeMs": 3256,
       "fails": 0
-    },
-    {
-      "fn": "pingHeartbeatAndGetActiveUsers",
-      "version": "v3.50",
-      "totalCount": 2,
-      "avgMs": 1590,
-      "maxMs": 2172,
-      "totalTimeMs": 3179,
-      "fails": 0
-    },
-    {
-      "fn": "pingHeartbeatAndGetActiveUsers",
-      "version": "v3.49",
-      "totalCount": 2,
-      "avgMs": 1396,
-      "maxMs": 1589,
-      "totalTimeMs": 2792,
-      "fails": 0
-    },
-    {
-      "fn": "saveContract",
-      "version": "v3.48",
-      "totalCount": 1,
-      "avgMs": 2780,
-      "maxMs": 2780,
-      "totalTimeMs": 2780,
-      "fails": 0
-    },
-    {
-      "fn": "pingUserHeartbeat",
-      "version": "v3.48",
-      "totalCount": 5,
-      "avgMs": 553,
-      "maxMs": 702,
-      "totalTimeMs": 2767,
-      "fails": 0
-    },
-    {
-      "fn": "getActiveUsersList",
-      "version": "v3.48",
-      "totalCount": 5,
-      "avgMs": 526,
-      "maxMs": 872,
-      "totalTimeMs": 2628,
-      "fails": 0
-    },
-    {
-      "fn": "getAvailabilityData",
-      "version": "v3.50",
-      "totalCount": 1,
-      "avgMs": 2510,
-      "maxMs": 2510,
-      "totalTimeMs": 2510,
-      "fails": 0
-    },
-    {
-      "fn": "getUsernameFullNameMap",
-      "version": "v3.48",
-      "totalCount": 2,
-      "avgMs": 1238,
-      "maxMs": 1778,
-      "totalTimeMs": 2475,
-      "fails": 0
-    },
-    {
-      "fn": "getBookingModalBootstrap",
-      "version": "v3.48",
-      "totalCount": 1,
-      "avgMs": 2418,
-      "maxMs": 2418,
-      "totalTimeMs": 2418,
-      "fails": 0
     }
   ],
   "slowCalls": [
@@ -516,6 +516,14 @@
       "version": "v3.48"
     },
     {
+      "time": "20/11 01:12:04",
+      "fn": "client:boot:ready",
+      "ms": 14140,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.50"
+    },
+    {
       "time": "20/11 00:48:09",
       "fn": "client:boot:ready",
       "ms": 10385,
@@ -530,6 +538,14 @@
       "user": "",
       "ok": "نجاح",
       "version": "v3.48"
+    },
+    {
+      "time": "20/11 01:12:04",
+      "fn": "client:getAppBootstrap",
+      "ms": 8058,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.50"
     },
     {
       "time": "20/11 00:51:08",
@@ -570,6 +586,22 @@
       "user": "",
       "ok": "نجاح",
       "version": "v3.48"
+    },
+    {
+      "time": "20/11 01:12:05",
+      "fn": "client:getMyNotifications",
+      "ms": 6187,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.50"
+    },
+    {
+      "time": "20/11 01:12:03",
+      "fn": "client:loginUser",
+      "ms": 6052,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.50"
     },
     {
       "time": "20/11 00:45:07",
@@ -628,12 +660,28 @@
       "version": "v3.48"
     },
     {
+      "time": "20/11 01:12:40",
+      "fn": "client:getMyNotifications",
+      "ms": 4993,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.50"
+    },
+    {
       "time": "20/11 00:45:07",
       "fn": "client:getMyNotifications",
       "ms": 4982,
       "user": "",
       "ok": "نجاح",
       "version": "v3.48"
+    },
+    {
+      "time": "20/11 01:12:39",
+      "fn": "client:pingHeartbeatAndGetActiveUsers",
+      "ms": 4978,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.50"
     },
     {
       "time": "20/11 00:45:06",
@@ -644,75 +692,179 @@
       "version": "v3.48"
     },
     {
-      "time": "20/11 00:48:09",
-      "fn": "client:getDistinctHotelNames",
-      "ms": 4624,
+      "time": "20/11 01:12:05",
+      "fn": "client:pingHeartbeatAndGetActiveUsers",
+      "ms": 4753,
       "user": "",
       "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:49:38",
-      "fn": "client:getContractModalBootstrap",
-      "ms": 4529,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:49:36",
-      "fn": "client:getMyNotifications",
-      "ms": 4496,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:49:40",
-      "fn": "client:getMyNotifications",
-      "ms": 4488,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:50:04",
-      "fn": "getMyNotifications",
-      "ms": 4488,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.49"
-    },
-    {
-      "time": "20/11 00:49:39",
-      "fn": "client:getMyNotifications",
-      "ms": 4412,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
-      "time": "20/11 00:51:07",
-      "fn": "client:getBookingModalBootstrap",
-      "ms": 4306,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.49"
+      "version": "v3.50"
     }
   ],
   "logHours": 24,
-  "log": [],
+  "log": [
+    {
+      "time": "2026-11-20 01:14:32",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 338,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:13:02",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 104,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:13:02",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 2424,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:13:01",
+      "src": "server",
+      "kind": "exec",
+      "name": "pingHeartbeatAndGetActiveUsers",
+      "ms": 1311,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:46",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1412,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:42",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 25,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:32",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1658,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:21",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 11,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:16",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1399,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:03",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 10,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:03",
+      "src": "server",
+      "kind": "exec",
+      "name": "pingHeartbeatAndGetActiveUsers",
+      "ms": 1916,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:02",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 2600,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:11:18",
+      "src": "web",
+      "kind": "exec",
+      "name": "doGet:perfReport",
+      "ms": 3611,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    }
+  ],
   "logSummary": {
-    "total": 0,
-    "byKind": {},
-    "bySource": {},
-    "byStatus": {},
+    "total": 13,
+    "byKind": {
+      "exec": 13
+    },
+    "bySource": {
+      "trigger": 1,
+      "server": 11,
+      "web": 1
+    },
+    "byStatus": {
+      "ok": 13
+    },
     "topConsole": [],
     "topNetworkByResp": []
   },
   "today": {
-    "totalCalls": 710,
-    "avgMs": 1138,
+    "totalCalls": 759,
+    "avgMs": 1227,
     "failRatePct": 0
   },
   "quotas": {
@@ -721,11 +873,11 @@
       "limit": 20000
     },
     "triggerMinutes": {
-      "used": 0.1,
+      "used": 0.2,
       "limit": 90
     },
-    "sheetReadsToday": 148,
-    "cacheOpsToday": 22,
+    "sheetReadsToday": 192,
+    "cacheOpsToday": 34,
     "lockAcquisitionsToday": 1
   },
   "health": {
@@ -733,35 +885,40 @@
     "flush": {
       "flushed": 1,
       "rows": 17,
-      "slowRows": 4,
-      "logRows": 0,
+      "slowRows": 16,
+      "logRows": 13,
       "logDropped": 0,
       "pruned": 0,
-      "lastBucket": "202611200100",
+      "lastBucket": "202611200110",
       "attempts": {
         "Perf": 1,
-        "PerfSlow": 1
+        "PerfSlow": 1,
+        "PerfLog": 1
       }
     },
     "diag": {
-      "sheetCount": 25,
-      "totalCells": 641888,
+      "sheetCount": 26,
+      "totalCells": 667940,
       "cellLimit": 10000000,
       "Perf": {
-        "lastRow": 84,
+        "lastRow": 101,
         "maxRows": 1000,
         "maxCols": 26
       },
       "PerfSlow": {
-        "lastRow": 65,
+        "lastRow": 81,
         "maxRows": 1000,
         "maxCols": 26
       },
-      "PerfLog": null,
-      "lastFlushedBucket": "202611200100",
+      "PerfLog": {
+        "lastRow": 14,
+        "maxRows": 1000,
+        "maxCols": 26
+      },
+      "lastFlushedBucket": "202611200110",
       "lastFlushError": ""
     }
   },
-  "exportedAt": "2026-11-19T23:11:22.457Z",
+  "exportedAt": "2026-11-19T23:21:39.807Z",
   "detail": "redacted"
 }
