@@ -36,10 +36,9 @@
   وتُعرض بلوحة "أداء الخادم" في شاشة الإعدادات (Admin فقط).
 - سحب تلقائي يومي للتقرير عبر workflow منفصل `perf-report.yml` إلى `ops/perf/<إصدار>/<تاريخ>.json` —
   رابط التطبيق يُبنى تلقائياً من `APPS_SCRIPT_DEPLOYMENT_ID` الموجود أصلاً، والسرّ الجديد الوحيد:
-  - `PERF_REPORT_SECRET`: قيمة عشوائية واحدة، تُضبط **في مكانين معاً** بنفس القيمة الحرفية:
-    1) GitHub ← Settings ← Secrets and variables ← Actions ← New repository secret.
-    2) Apps Script Editor ← Project Settings ← Script Properties ← Add property (نفس الاسم
-       `PERF_REPORT_SECRET`، ونفس القيمة بالحرف).
+  - `PERF_REPORT_SECRET`: قيمة عشوائية واحدة في GitHub فقط (Settings ← Secrets and variables ←
+    Actions)؛ خطوة النشر تحقنها في نسخة النشر تلقائياً. ضبطها في Script Properties اختياري (يتقدّم إن وُجد).
+    بعد إضافة السرّ أو تغييره لأول مرة يلزم نشر جديد (عدّل `ops/deploy/apps-script.txt`).
   - يشترط أن يكون النشر مضبوطاً على Who has access = Anyone (وإلا يرجع لصفحة تسجيل دخول جوجل).
   - ⚠️ ملاحظة مهمة: المجدول اليومي (`schedule`) في GitHub Actions لا يعمل إلا على الفرع
     الافتراضي للمستودع. طالما هذا العمل كله على فرع `claude/google-apps-script-review-oaojxq`
@@ -139,3 +138,8 @@
 - مفتاح تقرير الأداء: اسم الخاصية في Script Properties يُطابَق بعد تجاهل المسافات وحالة الأحرف،
   ورسالة "not_configured" صارت تذكر عدد الخصائص في المشروع وأي أسماء تشبه PERF (أسماء فقط، بلا قيم)
   لتمييز: خاصية لم تُحفظ، أم محفوظة باسم مختلف، أم في مشروع آخر.
+
+## v3.47 — 2026-11-19
+- سرّ تقرير الأداء يكفي ضبطه في GitHub فقط: خطوة النشر (`inject-perf-secret.js`) تحقن قيمته في
+  نسخة النشر وقت البناء، والمستودع يبقى بقيمة فارغة دائماً. Script Properties صارت اختيارية
+  (لو وُجدت تتقدّم على القيمة المحقونة). القيمة لا تُطبع في السجل أبداً.

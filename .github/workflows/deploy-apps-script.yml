@@ -91,6 +91,13 @@ jobs:
       - name: Instrument server functions for performance measurement
         run: node .github/scripts/instrument-functions.js .clasp-deploy/Hotelapp_code.js
 
+      # يحقن سرّ تقرير الأداء من أسرار GitHub في نسخة النشر فقط — فلا حاجة لضبطه يدوياً في
+      # Script Properties. لا تُطبع القيمة في السجل، ولا تُكتب في المستودع أبداً.
+      - name: Inject perf report secret into the deploy copy
+        env:
+          PERF_REPORT_SECRET: ${{ secrets.PERF_REPORT_SECRET }}
+        run: node .github/scripts/inject-perf-secret.js .clasp-deploy/Hotelapp_code.js
+
       # بوابة أمان إضافية خاصة بالكود المُولَّد: لو أنتج التحويل كوداً غير صالح لأي سبب، تفشل
       # هذه الخطوة ويتوقف النشر هنا بدل رفع كود معطوب لمشروع Apps Script الفعلي
       - name: Verify instrumented file is still valid JavaScript
