@@ -41,6 +41,7 @@ jobs:
                   "https://api.github.com/repos/$GITHUB_REPOSITORY" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).private===true?'private':'public')}catch(e){console.log('public')}})" || echo public)
           if [ "$VIS" = "private" ]; then DETAIL=full; else DETAIL=redacted; fi
           echo "visibility: $VIS, detail: $DETAIL"
+          echo "PERF_DETAIL=$DETAIL" >> "$GITHUB_ENV"
           if [ -z "$PERF_REPORT_SECRET" ]; then
             echo "::error::لم يُضبط بعد السرّ PERF_REPORT_SECRET — أضفه من Settings ← Secrets and variables ← Actions، وبنفس القيمة في Script Properties لمشروع Apps Script."
             exit 1
@@ -81,6 +82,8 @@ jobs:
             fs.writeFileSync('report_data.json', JSON.stringify(parsed.data, null, 2));
             console.log('✅ تقرير صالح لإصدار ' + parsed.data.version);
           "
+          # تنقيح مستقل عن الخادم ما دام المستودع غير خاص (لا نثق بأن الإصدار المنشور الحالي ينقّح)
+          if [ "$PERF_DETAIL" != "full" ]; then node .github/scripts/redact-perf-report.js report_data.json; fi
 
       - name: Commit report under ops/perf/<version>/<date>.json
         run: |

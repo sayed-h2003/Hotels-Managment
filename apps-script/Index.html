@@ -1686,7 +1686,7 @@ body.sb-collapsed #availHScrollProxy { right: 0; }
 // للسلوك الحقيقي)، فلا يحتاج أي نداء موجود حالياً أي تعديل. أي خلل هنا داخل try/catch صامت
 // تماماً - فشل القياس لا يجب أبداً أن يكسر نداءً حقيقياً واحداً في التطبيق.
 var _perfBuffer = [];
-var _PERF_EXCLUDE_FNS = { flushClientPerfMetrics:1, getPerformanceReport:1, getPerfExportJson:1, getPerfLog:1 };
+var _PERF_EXCLUDE_FNS = { flushClientPerfMetrics:1, getPerformanceReport:1, getPerfExportJson:1, getPerfLog:1, getPerfCopyAllJson:1 };
 // v3.50 — سجل network/console/الموارد يُرسَل مع نفس الدفعة المجمّعة (بلا نداء إضافي لكل عملية)
 var _perfNet = [], _perfCon = [], _perfConDropped = 0, _perfResPending = null;
 function _perfJsonLen_(x) { try { var s = JSON.stringify(x); return s ? s.length : 0; } catch(e) { return 0; } }
@@ -6473,6 +6473,77 @@ function openPerformanceReportModal() {
   loadPerfLog();
 }
 
+// ═══ نسخ كل بيانات الأداء للحافظة (v3.50) — بديل للصق البيانات كاملة في المحادثة ═══
+// إطار Apps Script معزول وكثيراً ما يمنع navigator.clipboard، والجلب من الخادم يُضيّع "إيماءة النقر"
+// التي يشترطها execCommand؛ لذلك: الحافظة الحديثة ← execCommand ← نافذة نص محدَّد مسبقاً بزر نسخ بإيماءة جديدة
+var _PERF_COPY_WARN_BYTES = 900 * 1024;
+function _perfCopyExecCommand_(text) {
+  var ta = document.createElement('textarea');
+  ta.value = text; ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select(); ta.setSelectionRange(0, text.length);
+  var ok = false;
+  try { ok = document.execCommand('copy'); } catch(e) { ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+function _perfCopyToast_(sizeBytes, logRows) {
+  var kb = Math.round(sizeBytes / 1024);
+  showToast('تم نسخ كل بيانات الأداء (' + kb + ' KB، ' + logRows + ' سجل).', 'success');
+  if (sizeBytes > _PERF_COPY_WARN_BYTES) {
+    showConfirm('حجم البيانات ' + kb + ' KB — قد تُقتطع رسالة محادثة بهذا الحجم.\n\nهل تريد تنزيلها كملف JSON بدلاً من ذلك؟', function() { exportPerfReport(); });
+  }
+}
+function _perfShowCopyModal_(text, sizeBytes, logRows, reason) {
+  document.getElementById('perf_copy_text').value = text;
+  document.getElementById('perf_copy_info').innerText = 'الحجم: ' + Math.round(sizeBytes/1024) + ' KB — ' + logRows + ' سجل. '
+    + (reason || '') + (sizeBytes > _PERF_COPY_WARN_BYTES ? ' ⚠️ الحجم كبير وقد تُقتطع رسالة المحادثة؛ يُفضَّل "تنزيل كملف".' : '');
+  document.getElementById('PerfCopy_Modal').classList.add('open');
+  setTimeout(_perfCopySelectAll, 50);
+}
+function _perfCopySelectAll() {
+  var ta = document.getElementById('perf_copy_text');
+  ta.focus(); ta.select(); try { ta.setSelectionRange(0, ta.value.length); } catch(e) {}
+}
+function _perfCopyFromModal() {
+  var ta = document.getElementById('perf_copy_text'), text = ta.value;
+  var size = new Blob([text]).size, rows = 0;
+  try { rows = (JSON.parse(text).log || []).length; } catch(e) {}
+  var done = function() { _perfCopyToast_(size, rows); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, function() {
+      _perfCopySelectAll();
+      if (document.execCommand('copy')) done(); else showToast('اضغط Ctrl+C (أو نسخ من القائمة) — النص محدَّد بالكامل.', 'error');
+    });
+  } else {
+    _perfCopySelectAll();
+    if (document.execCommand('copy')) done(); else showToast('اضغط Ctrl+C (أو نسخ من القائمة) — النص محدَّد بالكامل.', 'error');
+  }
+}
+function copyAllPerfData() {
+  if ((sessionUser.role||'').toLowerCase() !== 'admin') { showToast('هذا الإجراء لمدير النظام فقط.', 'error'); return; }
+  var btn = document.getElementById('perf_copy_all_btn');
+  if (btn) { btn.disabled = true; btn.innerText = '⏳ جاري التجهيز...'; }
+  var reset = function() { if (btn) { btn.disabled = false; btn.innerText = '📋 نسخ كل البيانات'; } };
+  google.script.run.withSuccessHandler(function(data) {
+    reset();
+    data = data || {};
+    var text = JSON.stringify(data, null, 1);
+    var size = new Blob([text]).size, rows = (data.log || []).length;
+    var viaExec = function() {
+      if (_perfCopyExecCommand_(text)) _perfCopyToast_(size, rows);
+      else _perfShowCopyModal_(text, size, rows, 'المتصفح منع النسخ التلقائي — اضغط "📋 نسخ" أو انسخ يدوياً.');
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function() { _perfCopyToast_(size, rows); }, viaExec);
+    } else viaExec();
+  }).withFailureHandler(function(e) {
+    reset();
+    showToast('تعذّر تجهيز البيانات: ' + (e.message || e), 'error');
+  }).getPerfCopyAllJson(sessionUser.username, _perfCurrentFilters());
+}
+
 // ═══ سجل التنفيذ (v3.50) ═══
 var _PLOG_KIND_LABEL = { exec:'تنفيذ', network:'شبكة', console:'console', resource:'مورد', nav:'تحميل الصفحة', dropped:'فاقد' };
 var _PLOG_SRC_LABEL = { server:'الخادم', client:'المتصفح', trigger:'مشغّل', web:'doGet', system:'النظام' };
@@ -10590,9 +10661,27 @@ function submitHotelPurge() {
       </div>
     </div>
     <div class="modal-footer">
+      <button class="btn-secondary" id="perf_copy_all_btn" onclick="copyAllPerfData()">📋 نسخ كل البيانات</button>
       <button class="btn-secondary" onclick="exportPerfReport()">📤 تصدير للتحليل</button>
       <button class="btn-secondary" onclick="loadPerformanceReport()">🔄 تحديث</button>
       <button class="btn-secondary" onclick="document.getElementById('PerformanceReport_Modal').classList.remove('open')">إغلاق</button>
+    </div>
+  </div>
+</div>
+
+<!-- v3.50 — بديل يدوي للنسخ حين يمنع إطار Apps Script المعزول الوصول للحافظة -->
+<div id="PerfCopy_Modal" class="modal-overlay">
+  <div class="modal-box" style="max-width:760px;">
+    <div class="modal-header"><span>📋 كل بيانات الأداء (JSON)</span><button class="modal-close-btn" onclick="document.getElementById('PerfCopy_Modal').classList.remove('open')">×</button></div>
+    <div class="modal-body">
+      <div id="perf_copy_info" style="font-size:8pt;color:var(--clr-muted);margin-bottom:6px;"></div>
+      <textarea id="perf_copy_text" readonly dir="ltr" style="width:100%;height:340px;font-family:monospace;font-size:7.5pt;padding:6px;border:1px solid var(--clr-border);border-radius:6px;"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="_perfCopySelectAll()">تحديد الكل</button>
+      <button class="btn-primary-dark" onclick="_perfCopyFromModal()">📋 نسخ</button>
+      <button class="btn-secondary" onclick="exportPerfReport()">📥 تنزيل كملف</button>
+      <button class="btn-secondary" onclick="document.getElementById('PerfCopy_Modal').classList.remove('open')">إغلاق</button>
     </div>
   </div>
 </div>

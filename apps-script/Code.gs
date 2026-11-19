@@ -5548,6 +5548,26 @@ function _perfRedactReport_(data) {
   return data;
 }
 
+// زر "نسخ كل البيانات" (Admin فقط): كل أقسام التقرير + الصحة + سجل آخر 24 ساعة بتفاصيل كاملة غير منقّحة،
+// لأن الوجهة حافظة المدير نفسه (للصقها في المحادثة) وليست المستودع العام
+function getPerfCopyAllJson(currentUser, filters) {
+  var _fn = "[getPerfCopyAllJson]";
+  try {
+    if (!_isAdmin_(currentUser)) throw new Error("غير مصرح — نسخ بيانات الأداء لمدير النظام فقط.");
+    filters = filters || {};
+    var health = { flushTrigger: _ensurePerfFlushTriggerThrottled_(false) };
+    try { health.flush = _flushPerfBucketsCore_(); } catch (fe) { health.flush = { error: String(fe && fe.message || fe) }; }
+    health.diag = _perfDiag_();
+    var data = _gatherPerfDashboardData_({ fromDate: filters.fromDate || null, toDate: filters.toDate || null,
+                                            version: filters.version || null, hours: 24 });
+    data.health = health;
+    data.filters = { fromDate: filters.fromDate || null, toDate: filters.toDate || null, version: filters.version || null, logHours: 24 };
+    data.detail = "full";
+    data.exportedAt = new Date().toISOString();
+    return data;
+  } catch (e) { _logError_(_fn, e); throw e; }
+}
+
 // سجل التنفيذ لشاشة الإدارة (Admin فقط، تفاصيل كاملة)
 function getPerfLog(currentUser, filters) {
   var _fn = "[getPerfLog]";

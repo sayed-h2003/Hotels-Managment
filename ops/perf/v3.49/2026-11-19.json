@@ -462,7 +462,7 @@
       "time": "20/11 00:51:09",
       "fn": "client:getBookingsPage",
       "ms": 75153,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.49"
     },
@@ -486,7 +486,7 @@
       "time": "20/11 00:51:09",
       "fn": "client:getBookingsPage",
       "ms": 35683,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.49"
     },
@@ -510,7 +510,7 @@
       "time": "20/11 00:45:05",
       "fn": "client:boot:ready",
       "ms": 15478,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -518,7 +518,7 @@
       "time": "20/11 00:48:09",
       "fn": "client:boot:ready",
       "ms": 10385,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -526,7 +526,7 @@
       "time": "20/11 00:45:05",
       "fn": "client:getAppBootstrap",
       "ms": 10310,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -534,7 +534,7 @@
       "time": "20/11 00:51:08",
       "fn": "client:getMyNotifications",
       "ms": 7119,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.49"
     },
@@ -550,7 +550,7 @@
       "time": "20/11 00:48:09",
       "fn": "client:getAppBootstrap",
       "ms": 6476,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -558,7 +558,7 @@
       "time": "20/11 00:49:40",
       "fn": "client:getOverCapacityNotifications",
       "ms": 6443,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -566,7 +566,7 @@
       "time": "20/11 00:45:07",
       "fn": "client:getMyNotifications",
       "ms": 5533,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -574,7 +574,7 @@
       "time": "20/11 00:49:39",
       "fn": "client:saveContract",
       "ms": 5338,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -582,7 +582,7 @@
       "time": "20/11 00:51:08",
       "fn": "client:screen:Settings_Screen",
       "ms": 5306,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.49"
     },
@@ -590,7 +590,7 @@
       "time": "20/11 00:51:08",
       "fn": "client:getMyNotifications",
       "ms": 5147,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.49"
     },
@@ -598,7 +598,7 @@
       "time": "20/11 00:45:03",
       "fn": "client:loginUser",
       "ms": 5128,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -606,7 +606,7 @@
       "time": "20/11 00:45:05",
       "fn": "client:getMyNotifications",
       "ms": 5125,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -614,7 +614,7 @@
       "time": "20/11 00:45:07",
       "fn": "client:getMyNotifications",
       "ms": 4982,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -622,7 +622,7 @@
       "time": "20/11 00:45:06",
       "fn": "client:getMyNotifications",
       "ms": 4813,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -630,7 +630,7 @@
       "time": "20/11 00:48:09",
       "fn": "client:getDistinctHotelNames",
       "ms": 4624,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -638,7 +638,7 @@
       "time": "20/11 00:49:38",
       "fn": "client:getContractModalBootstrap",
       "ms": 4529,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -646,7 +646,7 @@
       "time": "20/11 00:49:36",
       "fn": "client:getMyNotifications",
       "ms": 4496,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -654,7 +654,7 @@
       "time": "20/11 00:49:40",
       "fn": "client:getMyNotifications",
       "ms": 4488,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -670,7 +670,7 @@
       "time": "20/11 00:49:39",
       "fn": "client:getMyNotifications",
       "ms": 4412,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -678,7 +678,7 @@
       "time": "20/11 00:51:07",
       "fn": "client:getBookingModalBootstrap",
       "ms": 4306,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.49"
     },
@@ -686,7 +686,7 @@
       "time": "20/11 00:45:06",
       "fn": "client:getMyNotifications",
       "ms": 4252,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.48"
     },
@@ -694,7 +694,7 @@
       "time": "20/11 00:51:09",
       "fn": "client:getMyNotifications",
       "ms": 4236,
-      "user": "sayed",
+      "user": "",
       "ok": "نجاح",
       "version": "v3.49"
     }
@@ -741,5 +741,6 @@
       "lastFlushError": ""
     }
   },
-  "exportedAt": "2026-11-19T23:06:49.824Z"
+  "exportedAt": "2026-11-19T23:06:49.824Z",
+  "detail": "redacted"
 }
