@@ -101,6 +101,7 @@ const ALL_SCREENS = [
   { id: "availability_finance",       label: "💰 الجانب المالي (التوافر + الحجوزات)", group:"sub" },
   { id: "availability_booking_data",  label: "📋 التوافر — بيانات الحجز", group:"sub" },
   { id: "overcapacity_notifications", label: "⚠️ تنبيهات تجاوز الطاقة (قديم)", group:"sub" },
+  { id: "booking_confirmation",       label: "📧 إصدار تأكيد الحجز", group:"sub" },
   { id: "financial_report",           label: "📊 التقرير المالي", group:"report" },
   { id: "daily_statement",            label: "📋 البيان اليومي (مبيعات وتكلفة يومية)", group:"sub" },
   { id: "audit_log",                  label: "🕓 سجل التعديلات العام", group:"audit" },
@@ -3669,6 +3670,7 @@ function getBookingForConfirmation(bookingId, currentUser) {
   var _fn="[getBookingForConfirmation]"; _logInfo_(_fn, "START | "+"bookingId:"+String(JSON.stringify(bookingId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser, "bookings", "canView");
+  _requirePermission_(currentUser, "booking_confirmation", "canView"); // v3.40 — صلاحية مستقلة خاصة بإصدار تأكيد الحجز
   var data = _getOrCreateSheet_("Bookings_Master").getDataRange().getValues();
   var tz = Session.getScriptTimeZone();
   var hotelMap = _buildContractHotelMap_(), collMap = _buildCollectionAccountMap_();
@@ -3725,7 +3727,10 @@ function saveBookingConfirmation(bookingId, confType, manager, clientOptionDate,
   try {
   return _withLock_(function() {
   _invalidateSheetCache_("Bookings_Master"); // ضمان قراءة حديثة بعد أي كتابة ضمن نفس التنفيذ
-  _requirePermission_(currentUser, "bookings", "canEdit");
+  // v3.40 — إصدار تأكيد الحجز أصبح صلاحية مستقلة (booking_confirmation) بدل اشتراطه بصلاحية
+  // تعديل الحجوزات العامة؛ هكذا يمكن منح مستخدم إصدار التأكيدات فقط دون صلاحية تعديل الحجوزات
+  _requirePermission_(currentUser, "bookings", "canView");
+  _requirePermission_(currentUser, "booking_confirmation", "canView");
   var sheet = _getOrCreateSheet_("Bookings_Master");
   var data = sheet.getDataRange().getValues();
   for (var i=1; i<data.length; i++) {
@@ -4118,7 +4123,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var SYSTEM_VERSION = "v3.39";
+var SYSTEM_VERSION = "v3.40";
 
 // ═══════════════════════════════════════════════════════════════
 // طبقة تشفير كلمات المرور (SHA-256 + Salt) — متوافقة مع الحسابات القديمة

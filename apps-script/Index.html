@@ -2077,7 +2077,9 @@ function confirmExcelImport() {
 var _bcCurrentBooking = null;
 
 // نقطة الانطلاق: تُستدعى من زر 📄 في جدول الحجوزات أو نافذة عرض الحجز
+// v3.40 — إصدار تأكيد الحجز أصبح صلاحية مستقلة (booking_confirmation) يمكن تخصيصها للمستخدمين
 function printBookingConfirmation(bookingId) {
+  if (!_permCan('booking_confirmation','canView')) { showToast('ليس لديك صلاحية إصدار تأكيد الحجز.', 'error'); return; }
   google.script.run.withSuccessHandler(function(b) {
     if (!b) { showToast('لم يتم العثور على الحجز.', 'error'); return; }
     google.script.run.withSuccessHandler(function(managers) { _openBookingConfirmModal(b, managers); })
@@ -4590,11 +4592,13 @@ function renderBookingsTable(list) {
       // v3.21 — زر يدوي يظهر فقط للحجوزات المسجَّلة (أوفر): يتحقق الخادم هل يتوفر هذا الحجز بمفرده مقابل الحجوزات
       // "الصلبة" فقط (مستبعِداً الحجوزات الأخرى أوفر)؛ فإن كان يتوفر يُزال عنه الأوفر، وإلا يُرفض التأكيد (تجاوز مشترك فعلياً)
       var resolveBtn = (b.overCapacity && canEditBk) ? '<button class="action-icon-btn lock" title="تأكيد الحجز بدون أوفر (بعد التحقق: هل يتوفر بمفرده مستثنياً الحجوزات الأخرى أوفر؟)" onclick="manualClearOverCapacityClick(\''+b.bookingId+'\')">✅</button>' : '';
+      // v3.40 — زر "تأكيد الحجز" (📄) أصبح بصلاحية مستقلة (booking_confirmation) عن صلاحية تعديل الحجوزات
+      var confirmBtn = _permCan('booking_confirmation','canView') ? '<button class="action-icon-btn perms" title="تأكيد الحجز (طباعة/PDF/مشاركة)" onclick="printBookingConfirmation(\''+b.bookingId+'\')">📄</button>' : '';
       // overflow:visible/max-width:none لضمان عدم قصّ الأزرار الإضافية (القاعدة العامة لبقية الأعمدة تُخفي أي تجاوز)
       return '<td style="white-space:nowrap;overflow:visible;max-width:none;">'
         +'<button class="action-icon-btn view" title="عرض" onclick="openBookingViewModal(\''+b.bookingId+'\')">👁️</button>'
         +editBtn
-        +'<button class="action-icon-btn perms" title="تأكيد الحجز (طباعة/PDF/مشاركة)" onclick="printBookingConfirmation(\''+b.bookingId+'\')">📄</button>'
+        +confirmBtn
         +resolveBtn
         +delBtn
       +'</td>';
@@ -4807,6 +4811,8 @@ function openBookingViewModal(bookingId) {
   if(hBtn) hBtn.style.display=_canViewAuditFor&&_canViewAuditFor('bookings')?'':'none';
   var eBtn=document.getElementById('bv_edit_btn'); // v3.39 — إخفاء زر "تعديل الحجز" أيضاً لمن لا يملك صلاحية التعديل
   if(eBtn) eBtn.style.display=_bkCanEdit()?'':'none';
+  var cBtn=document.getElementById('bv_confirm_btn'); // v3.40 — إخفاء زر "تأكيد الحجز" لمن لا يملك صلاحية booking_confirmation المستقلة
+  if(cBtn) cBtn.style.display=_permCan('booking_confirmation','canView')?'':'none';
   _bvCurrentBookingId=bookingId;
   document.getElementById('bookingViewBody').innerHTML='<div style="text-align:center;padding:24px;color:var(--clr-muted);">جاري التحميل...</div>';
   document.getElementById('BookingView_Modal').classList.add('open');
@@ -9427,7 +9433,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var APP_VERSION = 'v3.39';
+var APP_VERSION = 'v3.40';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {
@@ -9764,7 +9770,7 @@ function repairArabicDigitsSubmit() {
     <div class="modal-body" id="bookingViewBody" style="max-height:70vh;overflow-y:auto;"></div>
     <div class="modal-footer">
       <button class="btn-secondary" id="bv_history_btn" onclick="bvHistoryFromView()">🕓 سجلات التعديل</button>
-      <button class="btn-secondary" onclick="printBookingConfirmation(_bvCurrentBookingId)">📄 تأكيد الحجز</button>
+      <button class="btn-secondary" id="bv_confirm_btn" onclick="printBookingConfirmation(_bvCurrentBookingId)">📄 تأكيد الحجز</button>
       <button class="btn-primary-dark" id="bv_edit_btn" onclick="bvEditFromView()">✏️ تعديل الحجز</button>
     </div>
   </div>
