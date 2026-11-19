@@ -1,0 +1,57 @@
+name: Deploy to Google Apps Script
+
+# ينشر apps-script/Code.gs و apps-script/Index.html تلقائياً إلى مشروع Apps Script الفعلي
+# ويُحدِّث نفس النشر الحالي (Deployment ID) فيبقى رابط التطبيق كما هو دون تغيير.
+on:
+  push:
+    branches:
+      - claude/google-apps-script-review-oaojxq
+    paths:
+      - 'apps-script/**'
+      - '.github/workflows/deploy-apps-script.yml'
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install clasp
+        run: npm install -g @google/clasp
+
+      - name: Write clasp credentials
+        run: echo '${{ secrets.CLASPRC_JSON }}' > ~/.clasprc.json
+
+      - name: Prepare clasp project directory
+        run: |
+          mkdir -p .clasp-deploy
+          echo '{"scriptId":"${{ secrets.APPS_SCRIPT_ID }}","rootDir":"."}' > .clasp-deploy/.clasp.json
+
+      # يجلب appsscript.json الحالي (والملفات الأخرى إن وُجدت) من المشروع الفعلي أولاً،
+      # حتى لا تحتاج متابعة إعدادات الـ manifest يدوياً هنا — هي تبقى كما ضُبطت بمحرر Apps Script
+      - name: Pull current manifest from Apps Script
+        working-directory: .clasp-deploy
+        run: clasp pull
+
+      # الآن نستبدل Code.gs و Index.html بالنسخة المعتمدة من المستودع (مصدر الحقيقة الوحيد)
+      - name: Apply repo source files
+        run: |
+          cp apps-script/Code.gs .clasp-deploy/Code.gs
+          cp apps-script/Index.html .clasp-deploy/Index.html
+
+      - name: Push to Apps Script
+        working-directory: .clasp-deploy
+        run: clasp push --force
+
+      - name: Deploy (update existing deployment — same URL)
+        working-directory: .clasp-deploy
+        run: |
+          clasp deploy --deploymentId "${{ secrets.APPS_SCRIPT_DEPLOYMENT_ID }}" \
+            --description "Auto-deploy $(date -u +%Y-%m-%dT%H:%M:%SZ) — ${{ github.sha }}"
