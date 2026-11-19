@@ -2141,8 +2141,9 @@ function _createNotification_(type, bookingId, hotelName, message, details, crea
       var _tgSourceTail = hotelName ? ("\n\nالمصدر : شارت " + _escapeTelegramHtml_(hotelName)) : "";
       var tgText = "🔔 <b>" + _escapeTelegramHtml_(_notifTypeLabel_(type)) + "</b>\n" + _escapeTelegramHtml_(message)
         + (details ? "\n" + _escapeTelegramHtml_(details) : "") + _tgSourceTail;
-      var tgRes = _sendTelegramMessage_(tgText);
-      if (!tgRes || !tgRes.success) _logError_("[_createNotification_→Telegram]", new Error("فشل إرسال تنبيه تليجرام لنوع "+type+" (حجز "+bookingId+"): "+((tgRes&&tgRes.error)||"سبب غير معروف")));
+      // v3.43 — إرسال غير متزامن: لا ننتظر استجابة تليجرام هنا (قد تتأخر وتُبطئ حفظ الحجز/التعاقد على المستخدم)،
+      // بل نُجدولها لتُرسَل فعلياً خلال ثانية عبر مشغّل زمني لمرة واحدة (انظر _sendTelegramMessageAsync_)
+      _sendTelegramMessageAsync_(tgText);
     } catch(tgErr) { _logError_("[_createNotification_→Telegram]", tgErr); }
   }
   } catch(genErr) { _logError_("[_createNotification_]", genErr); }
@@ -3464,6 +3465,38 @@ function _sendTelegramMessage_(text) {
   }
 }
 
+// v3.43 — إرسال غير متزامن: بدل انتظار استجابة تليجرام أثناء حفظ حجز/تعاقد (قد تُبطئ الحفظ على المستخدم
+// إن كانت تليجرام بطيئة أو معلّقة)، نُضيف النص لطابور مؤقت ونُجدول مشغّلاً زمنياً لمرة واحدة (يُحذف تلقائياً
+// بعد تنفيذه) يُرسل كل ما تراكم في الطابور فعلياً خلال ثانية تقريباً — فيعود المستخدم لحالة "تم الحفظ" فوراً
+function _sendTelegramMessageAsync_(text) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var raw = props.getProperty("TG_ASYNC_QUEUE") || "[]";
+    var queue; try { queue = JSON.parse(raw); } catch(e) { queue = []; }
+    queue.push(text);
+    props.setProperty("TG_ASYNC_QUEUE", JSON.stringify(queue));
+    ScriptApp.newTrigger("_flushTelegramQueue_").timeBased().after(1000).create();
+  } catch (e) { _logError_("[_sendTelegramMessageAsync_]", e); }
+}
+
+// يُنفَّذ تلقائياً عبر المشغّل أعلاه: يُرسل كل الرسائل المتراكمة في الطابور فعلياً ثم يُفرغه. آمن للتكرار
+// (لو استُدعي أكثر من مرة متقاربة بسبب عدة حفظات متتالية، كل تنفيذ يُفرغ ما وجده فقط تحت القفل فلا تكرار إرسال)
+function _flushTelegramQueue_() {
+  return _withLock_(function() {
+    var props = PropertiesService.getScriptProperties();
+    var raw = props.getProperty("TG_ASYNC_QUEUE") || "[]";
+    var queue; try { queue = JSON.parse(raw); } catch(e) { queue = []; }
+    if (!queue.length) return;
+    props.deleteProperty("TG_ASYNC_QUEUE"); // نُفرغ الطابور أولاً لتفادي إرسال نفس الرسائل مرتين لو تداخل مشغّلان
+    queue.forEach(function(text) {
+      try {
+        var res = _sendTelegramMessage_(text);
+        if (!res || !res.success) _logError_("[_flushTelegramQueue_]", new Error("فشل إرسال رسالة تليجرام مؤجَّلة: "+((res&&res.error)||"سبب غير معروف")));
+      } catch(e) { _logError_("[_flushTelegramQueue_]", e); }
+    });
+  });
+}
+
 // اختبار الاتصال ببوت تليجرام (زر "اختبار الإرسال" في شاشة الإعدادات)
 function testTelegramConnection(currentUser) {
   var _fn="[testTelegramConnection]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
@@ -4132,7 +4165,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var SYSTEM_VERSION = "v3.42";
+var SYSTEM_VERSION = "v3.43";
 
 // ═══════════════════════════════════════════════════════════════
 // طبقة تشفير كلمات المرور (SHA-256 + Salt) — متوافقة مع الحسابات القديمة
