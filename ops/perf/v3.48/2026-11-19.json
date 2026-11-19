@@ -25,7 +25,7 @@
   "health": {
     "flushTrigger": "المشغّل مثبّت مسبقاً",
     "flush": {
-      "error": "Service Spreadsheets failed while accessing document with id 110Uv4ELO4tcegfzes7Gz9Jluljrgh3GyFQjX2Nau2qM."
+      "error": "Service Spreadsheets failed while accessing document with id [id]."
     }
   },
   "exportedAt": "2026-11-19T22:52:37.923Z"

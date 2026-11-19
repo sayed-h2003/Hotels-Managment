@@ -33,7 +33,14 @@ jobs:
         env:
           DEPLOYMENT_ID_RAW: ${{ secrets.APPS_SCRIPT_DEPLOYMENT_ID }}
           PERF_REPORT_SECRET: ${{ secrets.PERF_REPORT_SECRET }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          # التقرير يُحفَظ في المستودع: لو كان عاماً يُطلب منقّحاً (بلا مستخدمين/نصوص/معرّفات)، وكاملاً فقط لو خاصاً.
+          # أي فشل في معرفة الرؤية يُعامَل كمستودع عام (الأكثر أماناً).
+          VIS=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                  "https://api.github.com/repos/$GITHUB_REPOSITORY" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).private===true?'private':'public')}catch(e){console.log('public')}})" || echo public)
+          if [ "$VIS" = "private" ]; then DETAIL=full; else DETAIL=redacted; fi
+          echo "visibility: $VIS, detail: $DETAIL"
           if [ -z "$PERF_REPORT_SECRET" ]; then
             echo "::error::لم يُضبط بعد السرّ PERF_REPORT_SECRET — أضفه من Settings ← Secrets and variables ← Actions، وبنفس القيمة في Script Properties لمشروع Apps Script."
             exit 1
@@ -49,6 +56,8 @@ jobs:
             -G "https://script.google.com/macros/s/${DEPLOYMENT_ID}/exec" \
             --data-urlencode "action=perfReport" \
             --data-urlencode "key=$PERF_REPORT_SECRET" \
+            --data-urlencode "hours=24" \
+            --data-urlencode "detail=$([ "$DETAIL" = full ] && echo full || echo redacted)" \
             -o raw_response.json
 
       - name: Validate response is well-formed JSON with success:true

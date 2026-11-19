@@ -90,7 +90,9 @@ const SHEET_SCHEMAS = {
   "Perf":     ["Day", "Hour", "Function", "Count", "Sum_Duration_Ms", "Max_Ms", "Fails", "Version"],
   // تفاصيل كل نداء أبطأ من 3 ثوانٍ تحديداً (دالة خادم مقاسة من الخادم نفسه بدون مستخدم معروف،
   // أو دالة بادئتها "client:" مقاسة من المتصفح لرحلة كاملة وفيها اسم المستخدم)
-  "PerfSlow": ["Timestamp", "Function", "Duration_Ms", "User", "Success", "Version"]
+  "PerfSlow": ["Timestamp", "Function", "Duration_Ms", "User", "Success", "Version"],
+  // v3.50 — سجل تفصيلي لكل تنفيذ + console + network من الخادم والمتصفح (يُحتفَظ بآخر 7 أيام فقط)
+  "PerfLog":  ["Timestamp", "Source", "Kind", "Name", "Duration_Ms", "Status", "User", "Version", "Details"]
 };
 
 // المصدر الوحيد والموحّد لقائمة الشاشات/الصلاحيات في كامل النظام (خادم + واجهة)
@@ -197,7 +199,26 @@ function _logError_(fn, e) {
 // يبقى فارغاً في المستودع دائماً؛ تحقن خطوة النشر (inject-perf-secret.js) قيمة السرّ من GitHub في نسخة النشر فقط
 var PERF_REPORT_SECRET_BUILD = "";
 
+// v3.50 — doGet خارج تحويل القياس البنائي، فيُسجَّل تنفيذه هنا يدوياً في سجل التنفيذ دون تغيير ناتجه
 function doGet(e) {
+  var start = Date.now(), ok = true, name = "doGet:index";
+  try {
+    var p = (e && e.parameter) || {};
+    name = p.action === "perfReport" ? "doGet:perfReport" : (p.page === "guide" ? "doGet:guide" : "doGet:index");
+    __EXEC_CONSOLE = [];
+  } catch (e0) {}
+  __PERF_DEPTH++;
+  try {
+    return _doGetCore_(e);
+  } catch (err) {
+    ok = false; throw err;
+  } finally {
+    __PERF_DEPTH = Math.max(0, __PERF_DEPTH - 1);
+    try { _perfLogPush_({ t: new Date(start).toISOString(), src: "web", kind: "exec", name: name, ms: Date.now() - start, ok: ok, err: "", v: APP_VERSION, con: __EXEC_CONSOLE.slice(0, 30) }); } catch (e1) {}
+  }
+}
+
+function _doGetCore_(e) {
   var page = e && e.parameter && e.parameter.page;
   var action = e && e.parameter && e.parameter.action;
   // نقطة سحب تقرير الأداء آلياً (GitHub Actions) - محمية بمفتاح سرّي في Script Properties فقط،
@@ -230,9 +251,12 @@ function doGet(e) {
       var health = { flushTrigger: _ensurePerfFlushTriggerThrottled_(true) };
       try { health.flush = _flushPerfBucketsCore_(); } catch(fe) { health.flush = { error: String(fe && fe.message || fe) }; }
       health.diag = _perfDiag_();
-      var data = _gatherPerfDashboardData_({});
+      var data = _gatherPerfDashboardData_({ hours: e.parameter.hours });
       data.health = health;
       data.exportedAt = new Date().toISOString();
+      // التقرير يُحفَظ في مستودع قد يكون عاماً: إخفاء المستخدمين والنصوص والمعرّفات إلا بطلب صريح detail=full
+      data.detail = (e.parameter.detail === 'full') ? 'full' : 'redacted';
+      if (data.detail !== 'full') data = _perfRedactReport_(data);
       return ContentService.createTextOutput(JSON.stringify({ success:true, data:data }))
         .setMimeType(ContentService.MimeType.JSON);
     } catch(err) {
@@ -4213,7 +4237,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "v3.49";
+var APP_VERSION = "v3.50";
 
 // ═══════════════════════════════════════════════════════════════
 // طبقة تشفير كلمات المرور (SHA-256 + Salt) — متوافقة مع الحسابات القديمة
@@ -5250,33 +5274,287 @@ var _TRIGGER_HANDLER_NAMES_ = {
 // أو الخطأ المرمي - يُستدعى تلقائياً فقط عبر التحويل البنائي وقت النشر، وليس يدوياً من الكود المصدري
 function _perfCall_(name, args, fn) {
   var start = Date.now();
-  var ok = true;
+  var ok = true, errMsg = "";
+  // سجل التنفيذ يُكتب للنداء الخارجي فقط: دالة عامة تنادي أخرى عامة = تنفيذ واحد لا اثنان
+  var outer = (__PERF_DEPTH === 0);
+  if (outer) { try { __EXEC_CONSOLE = []; } catch(e0) {} }
+  __PERF_DEPTH++;
   try {
     return fn.apply(null, args);
   } catch(e) {
     ok = false;
+    try { errMsg = String(e && e.message || e).slice(0, 300); } catch(e1) {}
     throw e; // يُعاد رمي الخطأ الأصلي تماماً كما هو - القياس لا يُغيّر سلوك الدالة الحقيقية إطلاقاً
   } finally {
+    __PERF_DEPTH = Math.max(0, __PERF_DEPTH - 1);
     try {
       var dur = Date.now()-start;
       _recordPerfSample_(name, dur, ok);
       if (_TRIGGER_HANDLER_NAMES_[name]) _incrementDailyQuota_("TRIGGERMS", dur);
+      if (outer) _perfLogPush_({ t: new Date(start).toISOString(), src: _TRIGGER_HANDLER_NAMES_[name] ? "trigger" : "server",
+        kind: "exec", name: name, ms: dur, ok: ok, err: errMsg, v: APP_VERSION, con: __EXEC_CONSOLE.slice(0, 30) });
     } catch(e2) {}
   }
 }
 
 // تستقبل دفعة {fn,ms,ok} مجمَّعة من المتصفح - لا ترمي خطأ أبداً (قياس الأداء لا يجب أن يكسر شيئاً)
-function flushClientPerfMetrics(entries, currentUser) {
+// v3.50 — extra (اختياري، متوافق مع المتصفحات القديمة): {network, console, resources, nav, v} لسجل التنفيذ
+function flushClientPerfMetrics(entries, currentUser, extra) {
   var _fn="[flushClientPerfMetrics]";
   try {
     _ensurePerfFlushTriggerThrottled_(false); // يثبّت مشغّل التفريغ تلقائياً من أول استخدام فعلي للتطبيق
-    if (!entries || !entries.length) return { success:true, recorded:0 };
-    entries.forEach(function(e) {
+    (entries || []).forEach(function(e) {
       if (!e || !e.fn || typeof e.ms !== "number") return;
       _recordPerfSample_("client:" + String(e.fn).slice(0,90), e.ms, e.ok !== false, currentUser);
     });
-    return { success:true, recorded: entries.length };
+    var logged = 0;
+    try { logged = _perfLogPush_(_perfClientExtraToItems_(extra, currentUser)); } catch(e2) {}
+    return { success:true, recorded: (entries || []).length, logged: logged };
   } catch(e) { _logError_(_fn, e); return { success:false }; }
+}
+
+/**
+ * ======================================================================
+ * v3.50 — سجل التنفيذ الكامل + console + network
+ * ======================================================================
+ * كل تنفيذ (دالة عامة/مشغّل/doGet) وما طبعه على console، وكل نداء شبكة من المتصفح وأخطاء
+ * console فيه، تُجمَّع في كاش مُقسَّم على 20 مفتاحاً لكل نافذة (يقلّل تعارض القراءة-التعديل-الكتابة
+ * بين التنفيذات المتزامنة، فالكاش لا يدعم إلحاقاً ذرّياً)، ثم تُفرَّغ دفعة واحدة لشيت PerfLog.
+ */
+var _PERF_LOG_SHARDS = 20;
+var _PERF_LOG_SHARD_CAP = 300;
+var __EXEC_CONSOLE = [];
+var __PERF_DEPTH = 0;
+
+function _perfSafeStr_(a) {
+  try {
+    if (typeof a === "string") return a;
+    if (a && a.message) return String(a.message);
+    var s = JSON.stringify(a);
+    return s === undefined ? String(a) : s;
+  } catch (e) { try { return String(a); } catch (e2) { return ""; } }
+}
+
+// التقاط console على الخادم: يُرفَق بسجل التنفيذ الجاري، والدالة الأصلية تُستدعى دائماً كما هي
+(function() {
+  try {
+    if (typeof console === "undefined" || !console) return;
+    ["log", "info", "warn", "error"].forEach(function(level) {
+      var orig = console[level];
+      if (typeof orig !== "function" || orig.__perfWrapped) return;
+      var wrapped = function() {
+        try {
+          if (__EXEC_CONSOLE.length < 30) {
+            var parts = [];
+            for (var i = 0; i < arguments.length; i++) parts.push(_perfSafeStr_(arguments[i]));
+            __EXEC_CONSOLE.push({ level: level, msg: parts.join(" ").slice(0, 500) });
+          }
+        } catch (e) {}
+        return orig.apply(console, arguments);
+      };
+      wrapped.__perfWrapped = true;
+      console[level] = wrapped;
+    });
+  } catch (e) {}
+})();
+
+// يُلحق عنصراً أو مصفوفة عناصر بالكاش المُقسَّم للنافذة الحالية؛ يُرجع عدد ما حُفظ. لا يرمي أبداً.
+function _perfLogPush_(items) {
+  try {
+    if (!items) return 0;
+    if (!Array.isArray(items)) items = [items];
+    if (!items.length) return 0;
+    var cache = CacheService.getScriptCache(), bucket = _perfBucketKey_(new Date()), saved = 0;
+    for (var off = 0; off < items.length; off += 100) { // دفعات صغيرة على مفاتيح عشوائية مختلفة
+      var key = "PERF_LOGBUF::" + bucket + "::" + Math.floor(Math.random() * _PERF_LOG_SHARDS);
+      var buf = _perfCacheGet_(key) || { items: [], dropped: 0 };
+      items.slice(off, off + 100).forEach(function(it) {
+        if (buf.items.length < _PERF_LOG_SHARD_CAP) { buf.items.push(it); saved++; } else buf.dropped++;
+      });
+      var s = JSON.stringify(buf), guard = 0;
+      while (s.length > 95000 && buf.items.length && guard++ < 400) { buf.items.pop(); buf.dropped++; saved--; s = JSON.stringify(buf); } // حد قيمة الكاش 100KB
+      cache.put(key, s, _PERF_AGG_TTL_SEC);
+    }
+    return Math.max(0, saved);
+  } catch (e) { return 0; }
+}
+
+function _perfIso_(t) {
+  var d = (typeof t === "number") ? new Date(t) : new Date(String(t || ""));
+  return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+}
+
+// يحوّل حمولة المتصفح الإضافية لعناصر سجل بعد التحقق والقص من جهة الخادم (لا ثقة في أي حقل وارد)
+function _perfClientExtraToItems_(extra, currentUser) {
+  if (!extra || typeof extra !== "object") return [];
+  var out = [], u = String(currentUser || "").slice(0, 100), v = String(extra.v || "").slice(0, 20);
+  function cap(a) { return Array.isArray(a) ? a.slice(0, 200) : []; }
+  function str(x, n) { return String(x == null ? "" : x).slice(0, n); }
+  function num(x) { var n = Number(x); return isFinite(n) ? Math.max(0, Math.round(n)) : 0; }
+  cap(extra.network).forEach(function(n) {
+    if (!n || typeof n !== "object") return;
+    out.push({ t: _perfIso_(n.t), src: "client", kind: "network", name: str(n.fn, 100), ms: num(n.ms), ok: n.ok !== false,
+               err: str(n.err, 300), req: num(n.reqBytes), resp: num(n.respBytes), user: u, v: v });
+  });
+  cap(extra.console).forEach(function(c) {
+    if (!c || typeof c !== "object") return;
+    var lvl = ["log", "info", "warn", "error"].indexOf(c.level) >= 0 ? c.level : "log";
+    out.push({ t: _perfIso_(c.t), src: "client", kind: "console", name: str(c.screen, 60) || "-", ms: 0, ok: lvl !== "error",
+               lvl: lvl, msg: str(c.msg, 500), count: num(c.count) || 1, user: u, v: v });
+  });
+  cap(extra.resources).forEach(function(r) {
+    if (!r || typeof r !== "object") return;
+    out.push({ t: _perfIso_(r.t), src: "client", kind: "resource", name: str(r.name, 300).split("?")[0].split("#")[0], ms: num(r.duration),
+               ok: true, init: str(r.initiatorType, 30), size: num(r.transferSize), user: u, v: v });
+  });
+  if (extra.nav && typeof extra.nav === "object") {
+    out.push({ t: _perfIso_(extra.nav.t), src: "client", kind: "nav", name: "page-load", ms: num(extra.nav.load), ok: true,
+               dcl: num(extra.nav.domContentLoaded), ttfb: num(extra.nav.ttfb), user: u, v: v });
+  }
+  return out;
+}
+
+function _perfBytes_(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + "B";
+  if (n < 1048576) return (n / 1024).toFixed(1) + "KB";
+  return (n / 1048576).toFixed(1) + "MB";
+}
+function _perfParseBytes_(s) {
+  var m = /^([\d.]+)(B|KB|MB)$/.exec(String(s || ""));
+  if (!m) return 0;
+  return Math.round(Number(m[1]) * (m[2] === "MB" ? 1048576 : m[2] === "KB" ? 1024 : 1));
+}
+// نص يبدأ بـ = + - @ قد يُفسَّر صيغةً عند setValues، فيُسبق بفاصلة عليا تجعله نصاً
+function _perfCellText_(s) {
+  s = String(s == null ? "" : s);
+  return /^[=+\-@]/.test(s) ? "'" + s : s;
+}
+
+// عنصر سجل → صف PerfLog: Timestamp | Source | Kind | Name | Duration_Ms | Status | User | Version | Details
+function _perfLogRow_(it) {
+  var details = "", status = it.ok === false ? "fail" : "ok";
+  if (it.kind === "exec") {
+    details = [it.err ? ("خطأ: " + it.err) : ""].concat((it.con || []).map(function(c) { return c.level + ": " + c.msg; }))
+      .filter(Boolean).join(" ⏎ ");
+  } else if (it.kind === "network") {
+    details = "req=" + _perfBytes_(it.req) + " resp=" + _perfBytes_(it.resp) + (it.err ? (" ⏎ خطأ: " + it.err) : "");
+  } else if (it.kind === "console") {
+    status = it.lvl || "log";
+    details = (it.count > 1 ? ("×" + it.count + " ") : "") + (it.msg || "");
+  } else if (it.kind === "resource") {
+    details = (it.init || "") + " size=" + _perfBytes_(it.size);
+  } else if (it.kind === "nav") {
+    details = "dcl=" + (it.dcl || 0) + "ms ttfb=" + (it.ttfb || 0) + "ms";
+  } else if (it.kind === "dropped") {
+    status = "warn"; details = it.msg || "";
+  }
+  var ts = new Date(it.t); if (isNaN(ts.getTime())) ts = new Date();
+  return [ts, String(it.src || ""), String(it.kind || ""), _perfCellText_(String(it.name || "").slice(0, 200)), Number(it.ms) || 0,
+          status, String(it.user || ""), String(it.v || APP_VERSION), _perfCellText_(details.slice(0, 2000))];
+}
+
+// يحذف صفوف PerfLog الأقدم من 7 أيام (مرة كل ساعة على الأكثر) — الصفوف مُلحَقة زمنياً فيكفي حذف مقطع واحد من الأعلى
+function _perfPruneLog_(props) {
+  try {
+    var lastP = Number(props.getProperty("PERF_LOG_PRUNED_AT")) || 0;
+    if (Date.now() - lastP < 3600 * 1000) return 0;
+    props.setProperty("PERF_LOG_PRUNED_AT", String(Date.now()));
+    var sh = _getSS_().getSheetByName("PerfLog"); if (!sh) return 0;
+    var last = sh.getLastRow(); if (last < 2) return 0;
+    var col = sh.getRange(2, 1, last - 1, 1).getValues(), cutoff = Date.now() - 7 * 24 * 3600 * 1000, n = 0;
+    for (var i = 0; i < col.length; i++) {
+      var d = col[i][0] instanceof Date ? col[i][0] : new Date(col[i][0]);
+      if (!isNaN(d.getTime()) && d.getTime() < cutoff) n++; else break;
+    }
+    if (n <= 0) return 0;
+    if (n >= last - 1 && sh.getMaxRows() <= last) sh.insertRowsAfter(last, 1); // لا يُسمح بحذف كل الصفوف غير المجمَّدة
+    sh.deleteRows(2, n);
+    return n;
+  } catch (e) { return -1; }
+}
+
+// يقرأ آخر صفوف PerfLog (من الأسفل، بحد أقصى 6000 صف) ويُطبّق الفلاتر — للتقرير ولشاشة السجل
+function _perfReadLog_(filters) {
+  filters = filters || {};
+  var hours = Math.min(168, Math.max(1, Number(filters.hours) || 24));
+  var cutoff = Date.now() - hours * 3600 * 1000;
+  var rows = [];
+  var sh = _getSS_().getSheetByName("PerfLog");
+  if (sh) {
+    var last = sh.getLastRow();
+    if (last >= 2) {
+      var first = Math.max(2, last - 5999);
+      rows = sh.getRange(first, 1, last - first + 1, 9).getValues();
+    }
+  }
+  var tz = Session.getScriptTimeZone(), out = [];
+  var fKind = filters.kind ? String(filters.kind) : "", fSrc = filters.source ? String(filters.source) : "",
+      fStatus = filters.status ? String(filters.status) : "", fName = filters.nameContains ? String(filters.nameContains).toLowerCase() : "";
+  for (var i = rows.length - 1; i >= 0 && out.length < 5000; i--) { // الأحدث أولاً
+    var r = rows[i], ts = r[0] instanceof Date ? r[0] : new Date(r[0]);
+    if (isNaN(ts.getTime()) || ts.getTime() < cutoff) continue;
+    if (fKind && r[2] !== fKind) continue;
+    if (fSrc && r[1] !== fSrc) continue;
+    if (fStatus && r[5] !== fStatus) continue;
+    if (fName && String(r[3]).toLowerCase().indexOf(fName) === -1) continue;
+    out.push({ time: Utilities.formatDate(ts, tz, "yyyy-MM-dd HH:mm:ss"), src: r[1], kind: r[2], name: String(r[3]), ms: Number(r[4]) || 0,
+               status: r[5], user: String(r[6] || ""), version: String(r[7] || ""), details: String(r[8] || "") });
+  }
+  return { rows: out, summary: _perfLogSummary_(out), hours: hours };
+}
+
+function _perfLogSummary_(rows) {
+  var s = { total: rows.length, byKind: {}, bySource: {}, byStatus: {}, topConsole: [], topNetworkByResp: [] };
+  var con = {}, net = [];
+  rows.forEach(function(r) {
+    s.byKind[r.kind] = (s.byKind[r.kind] || 0) + 1;
+    s.bySource[r.src] = (s.bySource[r.src] || 0) + 1;
+    s.byStatus[r.status] = (s.byStatus[r.status] || 0) + 1;
+    if (r.kind === "console") {
+      var m = /^×(\d+) /.exec(r.details), cnt = m ? Number(m[1]) : 1, msg = m ? r.details.slice(m[0].length) : r.details;
+      var k = r.status + "|" + msg;
+      if (!con[k]) con[k] = { level: r.status, msg: msg, count: 0 };
+      con[k].count += cnt;
+    } else if (r.kind === "network") {
+      var mr = /resp=([\d.]+(?:B|KB|MB))/.exec(r.details);
+      net.push({ name: r.name, time: r.time, ms: r.ms, respBytes: mr ? _perfParseBytes_(mr[1]) : 0 });
+    }
+  });
+  s.topConsole = Object.keys(con).map(function(k) { return con[k]; }).sort(function(a, b) { return b.count - a.count; }).slice(0, 10);
+  s.topNetworkByResp = net.sort(function(a, b) { return b.respBytes - a.respBytes; }).slice(0, 10);
+  return s;
+}
+
+// إخفاء ما قد يكشف بيانات العمل في تقرير يُحفَظ بمستودع عام: المستخدمون، نصوص الأخطاء/console، والمعرّفات الطويلة
+function _perfRedactReport_(data) {
+  var ID_RE = /[A-Za-z0-9_-]{25,}/g;
+  function scrub(x) {
+    if (typeof x === "string") return x.replace(ID_RE, "[id]");
+    if (Array.isArray(x)) return x.map(scrub);
+    if (x && typeof x === "object") { var o = {}; Object.keys(x).forEach(function(k) { o[k] = scrub(x[k]); }); return o; }
+    return x;
+  }
+  if (data.health) data.health = scrub(data.health);
+  (data.slowCalls || []).forEach(function(c) { c.user = ""; });
+  (data.log || []).forEach(function(r) {
+    r.user = "";
+    if (r.kind === "resource" || r.kind === "nav") { r.name = scrub(r.name); r.details = scrub(r.details); }
+    else r.details = "";
+  });
+  if (data.logSummary) {
+    (data.logSummary.topConsole || []).forEach(function(c) { c.msg = ""; });
+  }
+  return data;
+}
+
+// سجل التنفيذ لشاشة الإدارة (Admin فقط، تفاصيل كاملة)
+function getPerfLog(currentUser, filters) {
+  var _fn = "[getPerfLog]";
+  try {
+    if (!_isAdmin_(currentUser)) throw new Error("غير مصرح — سجل التنفيذ لمدير النظام فقط.");
+    return _perfReadLog_(filters);
+  } catch (e) { _logError_(_fn, e); throw e; }
 }
 
 // يُشغَّل كل 10 دقائق عبر مشغّل زمني (يُقاس وقته ضمن حصة المشغّلات) — المنطق الفعلي في _flushPerfBucketsCore_
@@ -5301,30 +5579,66 @@ function _flushPerfBucketsCore_() {
     }
     if (!buckets.length) return { flushed: 0, rows: 0 };
 
-    var rows = [], slowRows = [];
-    buckets.forEach(function(bucket) {
+    // ما كُتب فعلاً لكل نافذة في كل شيت (يمنع تكرار الصفوف حين ينجح شيت ويفشل آخر ثم يُعاد التفريغ)
+    var partial = {};
+    try { partial = JSON.parse(props.getProperty("PERF_FLUSH_PARTIAL") || "{}") || {}; } catch (pe0) { partial = {}; }
+    function isDone(bucket, sheet) { return (partial[bucket] || []).indexOf(sheet) !== -1; }
+
+    var cache = CacheService.getScriptCache();
+    var perBucket = buckets.map(function(bucket) {
+      var b = { bucket: bucket, rows: [], slowRows: [], logItems: [], logDropped: 0 };
       (_perfCacheGet_("PERF_ACTIVE::" + bucket) || []).forEach(function(name) {
         var agg = _perfCacheGet_("PERF_AGG::" + name + "::" + bucket);
         if (!agg || !agg.count) return;
-        rows.push([bucket.slice(0,8), bucket.slice(8,10), name, agg.count, agg.sum, agg.max, agg.fails||0, APP_VERSION]);
+        b.rows.push([bucket.slice(0,8), bucket.slice(8,10), name, agg.count, agg.sum, agg.max, agg.fails||0, APP_VERSION]);
       });
       (_perfCacheGet_("PERF_SLOWBUF::" + bucket) || []).forEach(function(s) {
-        slowRows.push([new Date(s[0]), s[1], s[2], s[3], s[4] ? "نجاح" : "فشل", APP_VERSION]);
+        b.slowRows.push([new Date(s[0]), s[1], s[2], s[3], s[4] ? "نجاح" : "فشل", APP_VERSION]);
       });
+      var keys = [];
+      for (var sh = 0; sh < _PERF_LOG_SHARDS; sh++) keys.push("PERF_LOGBUF::" + bucket + "::" + sh);
+      var got = {};
+      try { got = cache.getAll(keys) || {}; } catch (ge) {}
+      keys.forEach(function(k) {
+        if (!got[k]) return;
+        try { var lb = JSON.parse(got[k]); (lb.items || []).forEach(function(it) { b.logItems.push(it); }); b.logDropped += Number(lb.dropped) || 0; } catch (pe) {}
+      });
+      return b;
     });
-    var attempts = {};
+
+    var attempts = {}, counts = { Perf: 0, PerfSlow: 0, PerfLog: 0 }, logDropped = 0;
+    function writeSheet(sheet, width, buildRows) {
+      var pending = perBucket.filter(function(b) { return !isDone(b.bucket, sheet); });
+      var rowsOut = buildRows(pending);
+      if (rowsOut.length) attempts[sheet] = _perfAppendRows_(sheet, rowsOut, width);
+      counts[sheet] = rowsOut.length;
+      pending.forEach(function(b) { (partial[b.bucket] = partial[b.bucket] || []).push(sheet); });
+      props.setProperty("PERF_FLUSH_PARTIAL", JSON.stringify(partial));
+    }
     try {
-      if (rows.length) attempts.Perf = _perfAppendRows_("Perf", rows, 8);
-      if (slowRows.length) attempts.PerfSlow = _perfAppendRows_("PerfSlow", slowRows, 6);
+      writeSheet("Perf", 8, function(bs) { return [].concat.apply([], bs.map(function(b) { return b.rows; })); });
+      writeSheet("PerfSlow", 6, function(bs) { return [].concat.apply([], bs.map(function(b) { return b.slowRows; })); });
+      writeSheet("PerfLog", 9, function(bs) {
+        var items = [].concat.apply([], bs.map(function(b) { return b.logItems; }));
+        items.sort(function(a, b) { return String(a.t) < String(b.t) ? -1 : (String(a.t) > String(b.t) ? 1 : 0); });
+        var out = items.map(_perfLogRow_);
+        logDropped = bs.reduce(function(t, b) { return t + b.logDropped; }, 0);
+        if (logDropped) out.push(_perfLogRow_({ t: new Date().toISOString(), src: "system", kind: "dropped", name: "log-buffer-overflow",
+                                                 ms: 0, ok: false, v: APP_VERSION, msg: "dropped=" + logDropped }));
+        return out;
+      });
     } catch (we) {
-      // لا يتقدّم مؤشر آخر نافذة عند الفشل: البيانات تبقى في الكاش (ساعتان) ويعيد التشغيل التالي المحاولة
+      // لا يتقدّم مؤشر آخر نافذة عند الفشل: البيانات تبقى في الكاش (ساعتان) ويعيد التشغيل التالي المحاولة لما لم يُكتب فقط
       props.setProperty("PERF_LAST_FLUSH_ERROR", new Date().toISOString() + " | " + String(we && we.message || we));
       throw we;
     }
+    props.deleteProperty("PERF_FLUSH_PARTIAL");
     props.setProperty("PERF_LAST_FLUSHED_BUCKET", buckets[buckets.length-1]);
     props.deleteProperty("PERF_LAST_FLUSH_ERROR");
     _cleanupStaleQuotaKeys_(); // تنظيف دوري لمفاتيح الحصص الأقدم من 35 يوماً
-    return { flushed: buckets.length, rows: rows.length, slowRows: slowRows.length, lastBucket: buckets[buckets.length-1], attempts: attempts };
+    var pruned = _perfPruneLog_(props);
+    return { flushed: buckets.length, rows: counts.Perf, slowRows: counts.PerfSlow, logRows: counts.PerfLog, logDropped: logDropped,
+             pruned: pruned, lastBucket: buckets[buckets.length-1], attempts: attempts };
   } finally { lock.releaseLock(); }
 }
 
@@ -5354,7 +5668,7 @@ function _perfDiag_() {
     var ss = _getSS_(), sheets = ss.getSheets(), cells = 0;
     sheets.forEach(function(s) { cells += s.getMaxRows() * s.getMaxColumns(); });
     d.sheetCount = sheets.length; d.totalCells = cells; d.cellLimit = 10000000;
-    ["Perf", "PerfSlow"].forEach(function(n) {
+    ["Perf", "PerfSlow", "PerfLog"].forEach(function(n) {
       var s = ss.getSheetByName(n);
       d[n] = s ? { lastRow: s.getLastRow(), maxRows: s.getMaxRows(), maxCols: s.getMaxColumns() } : null;
     });
@@ -5514,12 +5828,18 @@ function _gatherPerfDashboardData_(filters) {
     todayTotals.fails += Number(perfData[k][6])||0;
   }
 
+  // سجل التنفيذ (لا يُحمَّل للوحة الرئيسية لأن لها شاشة سجل مستقلة getPerfLog)
+  var lg = filters.includeLog === false ? null : _perfReadLog_({ hours: filters.hours });
+
   return {
     generatedAt: new Date().toISOString(),
     version: APP_VERSION,
     versions: Object.keys(versionsSeen).sort(),
     topByVolume: topByVolume.slice(0, 50),
     slowCalls: slowCalls,
+    logHours: lg ? lg.hours : 0,
+    log: lg ? lg.rows : [],
+    logSummary: lg ? lg.summary : null,
     today: {
       totalCalls: todayTotals.totalCalls,
       avgMs: todayTotals.totalCalls ? Math.round(todayTotals.sumMs/todayTotals.totalCalls) : 0,
@@ -5538,6 +5858,7 @@ function getPerformanceReport(currentUser, filters) {
   var _fn="[getPerformanceReport]";
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح — تقرير الأداء لمدير النظام فقط.");
+  filters = filters || {}; filters.includeLog = false;
   return _gatherPerfDashboardData_(filters);
   } catch(e) { _logError_(_fn, e); throw e; }
 }

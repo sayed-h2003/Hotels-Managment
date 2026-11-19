@@ -1686,14 +1686,72 @@ body.sb-collapsed #availHScrollProxy { right: 0; }
 // للسلوك الحقيقي)، فلا يحتاج أي نداء موجود حالياً أي تعديل. أي خلل هنا داخل try/catch صامت
 // تماماً - فشل القياس لا يجب أبداً أن يكسر نداءً حقيقياً واحداً في التطبيق.
 var _perfBuffer = [];
-var _PERF_EXCLUDE_FNS = { flushClientPerfMetrics:1, getPerformanceReport:1, getPerfExportJson:1 };
+var _PERF_EXCLUDE_FNS = { flushClientPerfMetrics:1, getPerformanceReport:1, getPerfExportJson:1, getPerfLog:1 };
+// v3.50 — سجل network/console/الموارد يُرسَل مع نفس الدفعة المجمّعة (بلا نداء إضافي لكل عملية)
+var _perfNet = [], _perfCon = [], _perfConDropped = 0, _perfResPending = null;
+function _perfJsonLen_(x) { try { var s = JSON.stringify(x); return s ? s.length : 0; } catch(e) { return 0; } }
+function _perfScreen_() {
+  try { var el = document.querySelector('.screen.active-screen'); return el ? el.id : 'login'; } catch(e) { return ''; }
+}
+function _perfPushConsole_(level, msg) {
+  try {
+    msg = String(msg == null ? '' : msg).slice(0, 500);
+    var last = _perfCon[_perfCon.length - 1];
+    if (last && last.level === level && last.msg === msg) { last.count++; return; } // دمج الرسائل المتكررة المتتالية
+    if (_perfCon.length >= 100) { _perfConDropped++; return; }
+    _perfCon.push({ t: Date.now(), level: level, msg: msg, screen: _perfScreen_(), count: 1 });
+  } catch(e) {}
+}
+// التقاط console وأخطاء الصفحة غير الملتقطة؛ الدوال الأصلية تُستدعى دائماً كما هي
+(function() {
+  try {
+    ['log','info','warn','error'].forEach(function(level) {
+      var orig = console[level];
+      if (typeof orig !== 'function') return;
+      console[level] = function() {
+        try {
+          var parts = [];
+          for (var i = 0; i < arguments.length; i++) {
+            var a = arguments[i];
+            parts.push(typeof a === 'string' ? a : (a && a.message) ? a.message : (function(){ try { return JSON.stringify(a); } catch(e) { return String(a); } })());
+          }
+          _perfPushConsole_(level, parts.join(' '));
+        } catch(e) {}
+        return orig.apply(console, arguments);
+      };
+    });
+    window.addEventListener('error', function(ev) {
+      _perfPushConsole_('error', (ev && ev.message ? ev.message : 'error')
+        + (ev && ev.filename ? (' @' + String(ev.filename).split('?')[0] + ':' + (ev.lineno||0)) : ''));
+    });
+    window.addEventListener('unhandledrejection', function(ev) {
+      var r = ev && ev.reason; _perfPushConsole_('error', 'unhandledrejection: ' + (r && r.message ? r.message : String(r)));
+    });
+  } catch(e) {}
+})();
+// توقيتات تحميل الصفحة وأبطأ 40 مورداً (مرة واحدة لكل تحميل) — الروابط بلا query string لأنها قد تحمل رموزاً
+function _perfCollectResources_() {
+  try {
+    if (!window.performance || !performance.getEntriesByType) return;
+    var nav = performance.getEntriesByType('navigation')[0];
+    var navOut = nav ? { t: Date.now(), load: Math.round(nav.loadEventEnd||0), domContentLoaded: Math.round(nav.domContentLoadedEventEnd||0), ttfb: Math.round(nav.responseStart||0) } : null;
+    var res = performance.getEntriesByType('resource').map(function(r) {
+      var name;
+      try { var u = new URL(r.name); name = u.origin + u.pathname; } catch(e) { name = String(r.name).split('?')[0].split('#')[0]; }
+      return { t: Date.now(), name: name, initiatorType: r.initiatorType, duration: Math.round(r.duration), transferSize: r.transferSize || 0 };
+    }).sort(function(a,b){ return b.duration - a.duration; }).slice(0, 40);
+    _perfResPending = { resources: res, nav: navOut };
+  } catch(e) {}
+}
+if (document.readyState === 'complete') setTimeout(_perfCollectResources_, 5000);
+else window.addEventListener('load', function(){ setTimeout(_perfCollectResources_, 5000); });
 // v3.44 — يُستهلَك مرة واحدة فقط بأول نداء خادم يكتمل بعد فتح شاشة: تقدير معقول (وليس مثالياً)
 // لـ"زمن فتح الشاشة من الضغط حتى اكتمال الرسم" دون الحاجة لتعديل كل دالة تحميل شاشة على حدة
 var _screenOpenCtx = null;
 function _markScreenOpenStart_(screenId) {
   try { _screenOpenCtx = { screenId: screenId, t0: performance.now() }; } catch(e) {}
 }
-function _recordServerCallTiming_(fn, ms, ok) {
+function _recordServerCallTiming_(fn, ms, ok, info) {
   try {
     if (!fn || _PERF_EXCLUDE_FNS[fn]) return;
     _perfBuffer.push({ fn: fn, ms: Math.round(ms), ok: ok !== false });
@@ -1701,14 +1759,30 @@ function _recordServerCallTiming_(fn, ms, ok) {
       _perfBuffer.push({ fn: 'screen:' + _screenOpenCtx.screenId, ms: Math.round(performance.now() - _screenOpenCtx.t0), ok: true });
       _screenOpenCtx = null;
     }
-    if (_perfBuffer.length >= 25) _flushPerfBuffer_();
+    if (info) {
+      // أحجام الطلب/الرد فقط — لا يُحفظ أي محتوى (loginUser مثلاً يحمل كلمة مرور)
+      var entry = { t: Date.now() - Math.round(ms), fn: fn, ms: Math.round(ms), ok: ok !== false,
+                    err: info.err ? String(info.err).slice(0, 300) : '', reqBytes: info.reqBytes || 0, respBytes: 0 };
+      if (_perfNet.length < 200) _perfNet.push(entry);
+      // حساب حجم الرد بعد أن يُنفَّذ معالج التطبيق نفسه، كي لا يتأخر عرض النتيجة على المستخدم
+      if ('result' in info) setTimeout(function() { entry.respBytes = _perfJsonLen_(info.result); }, 0);
+    }
+    if (_perfBuffer.length >= 25) setTimeout(_flushPerfBuffer_, 0);
   } catch(e) {}
 }
 function _flushPerfBuffer_() {
   try {
-    if (!_perfBuffer.length) return;
+    var hasExtra = _perfNet.length || _perfCon.length || _perfConDropped || _perfResPending;
+    if (!_perfBuffer.length && !hasExtra) return;
     var batch = _perfBuffer; _perfBuffer = [];
-    google.script.run.flushClientPerfMetrics(batch, (typeof sessionUser !== 'undefined' && sessionUser) ? sessionUser.username : '');
+    var extra = null;
+    if (hasExtra) {
+      if (_perfConDropped) { _perfCon.push({ t: Date.now(), level: 'warn', msg: 'console overflow: dropped ' + _perfConDropped, screen: _perfScreen_(), count: 1 }); _perfConDropped = 0; }
+      extra = { v: (typeof CLIENT_APP_VERSION !== 'undefined' ? CLIENT_APP_VERSION : ''), network: _perfNet, console: _perfCon };
+      if (_perfResPending) { extra.resources = _perfResPending.resources; extra.nav = _perfResPending.nav; _perfResPending = null; }
+      _perfNet = []; _perfCon = [];
+    }
+    google.script.run.flushClientPerfMetrics(batch, (typeof sessionUser !== 'undefined' && sessionUser) ? sessionUser.username : '', extra);
   } catch(e) {}
 }
 setInterval(_flushPerfBuffer_, 180000); // كل 3 دقائق - إضافة لعتبة الـ25 نداءً وحدث beforeunload أدناه
@@ -1743,7 +1817,7 @@ function _recordBootReady_() {
           if (prop === 'withSuccessHandler') {
             return function(fn) {
               var next = Reflect.apply(val, obj, [function(result) {
-                try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, true); } catch(e) {}
+                try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, true, { reqBytes: ctx.reqBytes, result: result }); } catch(e) {}
                 if (typeof fn === 'function') fn(result);
               }]);
               return wrapChain(next, ctx);
@@ -1752,7 +1826,7 @@ function _recordBootReady_() {
           if (prop === 'withFailureHandler') {
             return function(fn) {
               var next = Reflect.apply(val, obj, [function(err) {
-                try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, false); } catch(e) {}
+                try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, false, { reqBytes: ctx.reqBytes, err: (err && err.message) || String(err) }); } catch(e) {}
                 if (typeof fn === 'function') fn(err);
               }]);
               return wrapChain(next, ctx);
@@ -1768,6 +1842,7 @@ function _recordBootReady_() {
           return function() {
             ctx.fnName = String(prop);
             ctx.t0 = performance.now();
+            try { ctx.reqBytes = _PERF_EXCLUDE_FNS[ctx.fnName] ? 0 : _perfJsonLen_(Array.prototype.slice.call(arguments)); } catch(e) { ctx.reqBytes = 0; }
             return Reflect.apply(val, obj, arguments);
           };
         }
@@ -6395,6 +6470,75 @@ function openPerformanceReportModal() {
   document.getElementById('PerformanceReport_Modal').classList.add('open');
   document.getElementById('perf_compare_box').style.display = 'none';
   loadPerformanceReport();
+  loadPerfLog();
+}
+
+// ═══ سجل التنفيذ (v3.50) ═══
+var _PLOG_KIND_LABEL = { exec:'تنفيذ', network:'شبكة', console:'console', resource:'مورد', nav:'تحميل الصفحة', dropped:'فاقد' };
+var _PLOG_SRC_LABEL = { server:'الخادم', client:'المتصفح', trigger:'مشغّل', web:'doGet', system:'النظام' };
+function loadPerfLog() {
+  var body = document.getElementById('perfLogBody'), sumEl = document.getElementById('perfLogSummary');
+  body.innerHTML = '<div style="text-align:center;padding:16px;color:var(--clr-muted);font-size:8.5pt;">جاري التحميل...</div>';
+  sumEl.innerHTML = '';
+  function v(id) { return document.getElementById(id).value || ''; }
+  var f = { kind: v('plog_kind'), source: v('plog_source'), status: v('plog_status'), hours: Number(v('plog_hours')) || 24, nameContains: v('plog_name').trim() };
+  google.script.run.withSuccessHandler(function(res) {
+    res = res || {};
+    _perfRenderLogSummary(res.summary || {});
+    _perfRenderLog(res.rows || []);
+  }).withFailureHandler(function(e) {
+    body.innerHTML = '<div style="color:#dc2626;padding:16px;font-size:8.5pt;">تعذّر تحميل السجل: '+escapeHtml(e.message||e)+'</div>';
+  }).getPerfLog(sessionUser.username, f);
+}
+function _perfRenderLogSummary(s) {
+  function chips(obj, labels) {
+    return Object.keys(obj||{}).map(function(k) {
+      return '<span style="display:inline-block;background:#fff;border:1px solid var(--clr-border);border-radius:12px;padding:2px 8px;margin:2px;font-size:7.4pt;">'
+        + escapeHtml((labels && labels[k]) || k) + ': <b>' + obj[k] + '</b></span>';
+    }).join('');
+  }
+  var st = s.byStatus || {}, fails = (st.fail||0) + (st.error||0);
+  var html = '<div style="font-size:7.6pt;margin-bottom:4px;">الإجمالي: <b>' + (s.total||0) + '</b> — الفشل/الأخطاء: <b style="color:' + (fails?'#dc2626':'inherit') + ';">' + fails + '</b></div>'
+    + '<div>' + chips(s.byKind, _PLOG_KIND_LABEL) + chips(s.bySource, _PLOG_SRC_LABEL) + '</div>';
+  if ((s.topConsole||[]).length) {
+    html += '<div style="font-size:7.6pt;font-weight:800;margin-top:6px;">أكثر رسائل console تكراراً</div>'
+      + s.topConsole.map(function(c) { return '<div style="font-size:7.3pt;font-family:monospace;padding:1px 0;"><b>×' + c.count + '</b> [' + escapeHtml(c.level) + '] ' + escapeHtml(String(c.msg).slice(0,160)) + '</div>'; }).join('');
+  }
+  if ((s.topNetworkByResp||[]).length) {
+    html += '<div style="font-size:7.6pt;font-weight:800;margin-top:6px;">أكبر ردود الشبكة حجماً</div>'
+      + s.topNetworkByResp.map(function(n) { return '<div style="font-size:7.3pt;font-family:monospace;padding:1px 0;">' + escapeHtml(n.name) + ' — ' + Math.round((n.respBytes||0)/1024) + 'KB — ' + n.ms + 'ms</div>'; }).join('');
+  }
+  document.getElementById('perfLogSummary').innerHTML = html;
+}
+function _perfRenderLog(rows) {
+  var MAX = 500, shown = rows.slice(0, MAX);
+  function statusCell(s) {
+    var bad = (s === 'fail' || s === 'error'), warn = (s === 'warn');
+    return '<span style="color:' + (bad ? '#dc2626' : warn ? '#d97706' : '#16a34a') + ';font-weight:700;">' + escapeHtml(s) + '</span>';
+  }
+  document.getElementById('perfLogBody').innerHTML = !rows.length
+    ? '<div style="text-align:center;padding:14px;color:var(--clr-muted);font-size:8.3pt;">لا توجد سجلات بهذه الفلاتر (السجل يُفرَّغ كل 10 دقائق).</div>'
+    : (rows.length > MAX ? '<div style="font-size:7.4pt;color:var(--clr-muted);margin-bottom:4px;">يُعرض أحدث ' + MAX + ' من ' + rows.length + ' — ضيّق الفلاتر لرؤية الباقي.</div>' : '')
+      + '<table style="width:100%;border-collapse:collapse;font-size:7.8pt;">'
+      + '<thead><tr style="background:var(--clr-primary-dark);color:#fff;position:sticky;top:0;">'
+      +   '<th style="padding:6px;">الوقت</th><th style="padding:6px;">المصدر</th><th style="padding:6px;">النوع</th>'
+      +   '<th style="padding:6px;text-align:right;">الاسم</th><th style="padding:6px;">ms</th><th style="padding:6px;">الحالة</th>'
+      +   '<th style="padding:6px;">المستخدم</th><th style="padding:6px;text-align:right;">التفاصيل</th>'
+      + '</tr></thead><tbody>'
+      + shown.map(function(r) {
+          var d = String(r.details || '');
+          return '<tr style="border-bottom:1px solid var(--clr-border);">'
+            + '<td style="padding:5px;white-space:nowrap;font-size:7.2pt;">' + escapeHtml(r.time) + '</td>'
+            + '<td style="padding:5px;text-align:center;">' + escapeHtml(_PLOG_SRC_LABEL[r.src] || r.src) + '</td>'
+            + '<td style="padding:5px;text-align:center;">' + escapeHtml(_PLOG_KIND_LABEL[r.kind] || r.kind) + '</td>'
+            + '<td style="padding:5px;font-family:monospace;font-size:7.3pt;word-break:break-all;">' + escapeHtml(r.name) + '</td>'
+            + '<td style="padding:5px;text-align:center;">' + (r.ms||0) + '</td>'
+            + '<td style="padding:5px;text-align:center;">' + statusCell(r.status) + '</td>'
+            + '<td style="padding:5px;text-align:center;">' + escapeHtml(r.user ? _uname(r.user) : '') + '</td>'
+            + '<td style="padding:5px;font-size:7.2pt;max-width:320px;" title="' + escapeHtmlAttr(d) + '">' + escapeHtml(d.length > 120 ? d.slice(0,120) + '…' : d) + '</td>'
+            + '</tr>';
+        }).join('')
+      + '</tbody></table>';
 }
 function _perfCurrentFilters() {
   return {
@@ -9741,7 +9885,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'v3.49';
+var CLIENT_APP_VERSION = 'v3.50';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {
@@ -10419,6 +10563,29 @@ function submitHotelPurge() {
       </div>
       <div style="font-size:9pt;font-weight:800;margin-bottom:6px;">🐌 أبطأ النداءات الفردية المسجَّلة (أبطأ من 3 ثوانٍ)</div>
       <div id="perfSlowCallsBody">
+        <div style="text-align:center;padding:16px;color:var(--clr-muted);font-size:8.5pt;">جاري التحميل...</div>
+      </div>
+
+      <!-- v3.50 — سجل التنفيذ الكامل: كل تنفيذ (خادم/مشغّل/doGet) + console + network + موارد الصفحة -->
+      <div style="font-size:9pt;font-weight:800;margin:18px 0 6px;">📜 سجل التنفيذ (كل تنفيذ + console + network)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;background:var(--clr-bg-soft);padding:8px 10px;border-radius:8px;">
+        <label style="font-size:7.8pt;">النوع: <select id="plog_kind" style="font-size:7.8pt;padding:3px;">
+          <option value="">الكل</option><option value="exec">تنفيذ</option><option value="network">شبكة</option><option value="console">console</option>
+          <option value="resource">موارد الصفحة</option><option value="nav">تحميل الصفحة</option></select></label>
+        <label style="font-size:7.8pt;">المصدر: <select id="plog_source" style="font-size:7.8pt;padding:3px;">
+          <option value="">الكل</option><option value="server">الخادم</option><option value="client">المتصفح</option>
+          <option value="trigger">مشغّل</option><option value="web">doGet</option><option value="system">النظام</option></select></label>
+        <label style="font-size:7.8pt;">الحالة: <select id="plog_status" style="font-size:7.8pt;padding:3px;">
+          <option value="">الكل</option><option value="ok">نجاح</option><option value="fail">فشل</option>
+          <option value="error">error</option><option value="warn">warn</option><option value="log">log</option><option value="info">info</option></select></label>
+        <label style="font-size:7.8pt;">الفترة: <select id="plog_hours" style="font-size:7.8pt;padding:3px;">
+          <option value="1">آخر ساعة</option><option value="6">آخر 6 ساعات</option><option value="24" selected>آخر 24 ساعة</option>
+          <option value="72">آخر 3 أيام</option><option value="168">آخر 7 أيام</option></select></label>
+        <input type="text" id="plog_name" placeholder="بحث بالاسم..." style="font-size:7.8pt;padding:4px 6px;width:140px;" onkeydown="if(event.key==='Enter')loadPerfLog()">
+        <button class="btn-secondary" style="font-size:7.8pt;padding:4px 10px;" onclick="loadPerfLog()">🔍 عرض</button>
+      </div>
+      <div id="perfLogSummary" style="margin-bottom:8px;"></div>
+      <div id="perfLogBody" style="max-height:440px;overflow:auto;">
         <div style="text-align:center;padding:16px;color:var(--clr-muted);font-size:8.5pt;">جاري التحميل...</div>
       </div>
     </div>
