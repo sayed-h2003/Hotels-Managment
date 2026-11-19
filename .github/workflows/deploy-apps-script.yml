@@ -23,8 +23,13 @@ jobs:
         with:
           node-version: '20'
 
+      # v4 — مُثبَّتة نسخة 2.x تحديداً (وليس أحدث إصدار): نسخة clasp الأحدث (3.x) غيّرت طريقة
+      # تخزين/قراءة بيانات الدخول بالكامل، فلا تتوافق مع ملف ~/.clasprc.json القديم الذي أنشأه
+      # clasp login بالنسخة 2.x — وهذا غالباً سبب "Unexpected error" غير الواضحة عند clasp pull
       - name: Install clasp
-        run: npm install -g @google/clasp
+        run: |
+          npm install -g @google/clasp@2
+          clasp --version
 
       # v3 — يُمرَّر السرّ عبر متغيّر بيئة (أكثر أماناً من تضمينه مباشرة داخل run:)، ثم يُصلَح عبر
       # .github/scripts/sanitize-clasprc.js: بعض أدوات اللصق تُدخل حرف تحكّم خام داخل قيمة نصية
@@ -48,6 +53,8 @@ jobs:
       # حتى لا تحتاج متابعة إعدادات الـ manifest يدوياً هنا — هي تبقى كما ضُبطت بمحرر Apps Script
       - name: Pull current manifest from Apps Script
         working-directory: .clasp-deploy
+        env:
+          DEBUG: 'clasp:*'
         run: clasp pull
 
       # الآن نستبدل Code.gs و Index.html بالنسخة المعتمدة من المستودع (مصدر الحقيقة الوحيد)
