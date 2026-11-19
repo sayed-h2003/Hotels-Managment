@@ -13,9 +13,9 @@
    Deployment ID) — لا يتغيّر الرابط أبداً.
 3. لتشغيل نشر يدوياً دون لمس كود فعلي: عدّل أي سطر في `ops/deploy/apps-script.txt` من واجهة GitHub
    واحفظ مباشرة، أو استخدم Actions ▸ Run workflow.
-4. الأسرار (CLASPRC_JSON، APPS_SCRIPT_ID، APPS_SCRIPT_DEPLOYMENT_ID، ولاحقاً PERF_REPORT_SECRET
-   وAPPS_SCRIPT_WEB_APP_URL) تُضاف من واجهة GitHub (Settings ← Secrets and variables ← Actions) —
-   لا تُكتب أبداً في المحادثة أو في أي ملف بالمستودع.
+4. الأسرار (CLASPRC_JSON، APPS_SCRIPT_ID، APPS_SCRIPT_DEPLOYMENT_ID، وPERF_REPORT_SECRET) تُضاف من
+   واجهة GitHub (Settings ← Secrets and variables ← Actions) — لا تُكتب أبداً في المحادثة أو في أي ملف
+   بالمستودع. `APPS_SCRIPT_DEPLOYMENT_ID` يقبل المعرّف وحده أو رابط `/exec` كاملاً.
 
 ## رفع رقم إصدار جديد
 
@@ -35,12 +35,12 @@
 - النتائج تُجمَّع كل 10 دقائق في شيتي `Perf` (تجميع) و`PerfSlow` (تفاصيل النداءات الأبطأ من 3 ثوانٍ)،
   وتُعرض بلوحة "أداء الخادم" في شاشة الإعدادات (Admin فقط).
 - سحب تلقائي يومي للتقرير عبر workflow منفصل `perf-report.yml` إلى `ops/perf/<إصدار>/<تاريخ>.json` —
-  يحتاج ضبط سرّين قبل أن يعمل فعلياً:
+  رابط التطبيق يُبنى تلقائياً من `APPS_SCRIPT_DEPLOYMENT_ID` الموجود أصلاً، والسرّ الجديد الوحيد:
   - `PERF_REPORT_SECRET`: قيمة عشوائية واحدة، تُضبط **في مكانين معاً** بنفس القيمة الحرفية:
     1) GitHub ← Settings ← Secrets and variables ← Actions ← New repository secret.
     2) Apps Script Editor ← Project Settings ← Script Properties ← Add property (نفس الاسم
        `PERF_REPORT_SECRET`، ونفس القيمة بالحرف).
-  - `APPS_SCRIPT_WEB_APP_URL`: رابط `/exec` الحالي لتطبيق الويب المنشور، كسرّ GitHub عادي.
+  - يشترط أن يكون النشر مضبوطاً على Who has access = Anyone (وإلا يرجع لصفحة تسجيل دخول جوجل).
   - ⚠️ ملاحظة مهمة: المجدول اليومي (`schedule`) في GitHub Actions لا يعمل إلا على الفرع
     الافتراضي للمستودع. طالما هذا العمل كله على فرع `claude/google-apps-script-review-oaojxq`
     فقط (لم يُدمَج بعد)، فالتشغيل اليدوي (Actions ← Pull performance report ← Run workflow،

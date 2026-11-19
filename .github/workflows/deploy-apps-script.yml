@@ -103,8 +103,10 @@ jobs:
       - name: Deploy (update existing deployment — same URL)
         working-directory: .clasp-deploy
         env:
-          DEPLOYMENT_ID: ${{ secrets.APPS_SCRIPT_DEPLOYMENT_ID }}
+          DEPLOYMENT_ID_RAW: ${{ secrets.APPS_SCRIPT_DEPLOYMENT_ID }}
         run: |
+          # يقبل السرّ المعرّف وحده أو رابط /exec كاملاً
+          DEPLOYMENT_ID=$(printf '%s' "$DEPLOYMENT_ID_RAW" | tr -d '[:space:]' | sed -E 's#^.*/macros/s/([^/?]+).*$#\1#')
           clasp deploy --deploymentId "$DEPLOYMENT_ID" \
             --description "Auto-deploy $(date -u +%Y-%m-%dT%H:%M:%SZ) — ${{ github.sha }}"
 

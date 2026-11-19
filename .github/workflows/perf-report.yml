@@ -1,11 +1,10 @@
 name: Pull performance report
 
 # يسحب تقرير أداء الخادم يومياً من التطبيق المنشور ويحفظه كملف JSON في المستودع، ليُحلَّل لاحقاً
-# دون أي لصق يدوي لأي بيانات. لا يعمل هذا الـ workflow فعلياً إلا بعد ضبط سرَّين من واجهة GitHub:
-#   - APPS_SCRIPT_WEB_APP_URL: رابط /exec الحالي لتطبيق الويب المنشور
-#   - PERF_REPORT_SECRET: مفتاح سرّي عشوائي، يُضبط بنفس القيمة هنا وفي Script Properties
-#     لمشروع Apps Script الفعلي (Project Settings ← Script Properties) تحت نفس الاسم
-# قبل ضبطهما، تفشل هذه الخطوة بأدب برسالة "secret not configured" من الخادم نفسه — وليس بعطل.
+# دون أي لصق يدوي لأي بيانات. رابط التطبيق يُبنى من السرّ الموجود أصلاً APPS_SCRIPT_DEPLOYMENT_ID
+# (https://script.google.com/macros/s/<ID>/exec) — ويُقبل فيه المعرّف وحده أو الرابط كاملاً.
+# السرّ الجديد الوحيد المطلوب: PERF_REPORT_SECRET بنفس القيمة هنا وفي Script Properties لمشروع
+# Apps Script (Project Settings ← Script Properties). قبل ضبطه تفشل الخطوة برسالة واضحة، لا بعطل.
 on:
   workflow_dispatch: {}
   schedule:
@@ -25,15 +24,22 @@ jobs:
       # أبداً، ولا يُبنى رابط كامل يحتوي المفتاح يُطبع في السجل بأي خطوة
       - name: Fetch performance report from the deployed app
         env:
-          APPS_SCRIPT_WEB_APP_URL: ${{ secrets.APPS_SCRIPT_WEB_APP_URL }}
+          DEPLOYMENT_ID_RAW: ${{ secrets.APPS_SCRIPT_DEPLOYMENT_ID }}
           PERF_REPORT_SECRET: ${{ secrets.PERF_REPORT_SECRET }}
         run: |
-          if [ -z "$APPS_SCRIPT_WEB_APP_URL" ] || [ -z "$PERF_REPORT_SECRET" ]; then
-            echo "::error::لم يُضبط بعد السرّان المطلوبان (APPS_SCRIPT_WEB_APP_URL وPERF_REPORT_SECRET) في إعدادات المستودع — أضفهما من Settings ← Secrets and variables ← Actions، وأضف PERF_REPORT_SECRET بنفس القيمة في Script Properties لمشروع Apps Script."
+          if [ -z "$PERF_REPORT_SECRET" ]; then
+            echo "::error::لم يُضبط بعد السرّ PERF_REPORT_SECRET — أضفه من Settings ← Secrets and variables ← Actions، وبنفس القيمة في Script Properties لمشروع Apps Script."
             exit 1
           fi
-          curl -sS --fail-with-body \
-            -G "$APPS_SCRIPT_WEB_APP_URL" \
+          # يقبل المعرّف وحده أو رابط /exec كاملاً في السرّ نفسه
+          DEPLOYMENT_ID=$(printf '%s' "$DEPLOYMENT_ID_RAW" | tr -d '[:space:]' | sed -E 's#^.*/macros/s/([^/?]+).*$#\1#')
+          if [ -z "$DEPLOYMENT_ID" ]; then
+            echo "::error::السرّ APPS_SCRIPT_DEPLOYMENT_ID فارغ."
+            exit 1
+          fi
+          # -L ضروري: رابط /exec يُعيد توجيهاً (302) إلى script.googleusercontent.com حيث الرد الفعلي
+          curl -sS -L --fail-with-body \
+            -G "https://script.google.com/macros/s/${DEPLOYMENT_ID}/exec" \
             --data-urlencode "action=perfReport" \
             --data-urlencode "key=$PERF_REPORT_SECRET" \
             -o raw_response.json
@@ -45,7 +51,7 @@ jobs:
             const raw = fs.readFileSync('raw_response.json', 'utf8');
             let parsed;
             try { parsed = JSON.parse(raw); } catch (e) {
-              console.error('الرد ليس JSON صالحاً.');
+              console.error('الرد ليس JSON صالحاً — غالباً صفحة تسجيل دخول جوجل: تأكد أن النشر مضبوط على Who has access = Anyone.');
               process.exit(1);
             }
             if (!parsed.success) {
