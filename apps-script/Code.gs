@@ -226,7 +226,11 @@ function doGet(e) {
         return ContentService.createTextOutput(JSON.stringify({ success:false, error:authErr }))
           .setMimeType(ContentService.MimeType.JSON);
       }
+      // قبل بناء التقرير: تأكد من وجود مشغّل التفريغ، وفرّغ النوافذ المكتملة كي يشمل التقرير أحدث البيانات
+      var health = { flushTrigger: _ensurePerfFlushTriggerThrottled_(true) };
+      try { health.flush = _flushPerfBucketsCore_(); } catch(fe) { health.flush = { error: String(fe && fe.message || fe) }; }
       var data = _gatherPerfDashboardData_({});
+      data.health = health;
       data.exportedAt = new Date().toISOString();
       return ContentService.createTextOutput(JSON.stringify({ success:true, data:data }))
         .setMimeType(ContentService.MimeType.JSON);
@@ -4208,7 +4212,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "v3.47";
+var APP_VERSION = "v3.48";
 
 // ═══════════════════════════════════════════════════════════════
 // طبقة تشفير كلمات المرور (SHA-256 + Salt) — متوافقة مع الحسابات القديمة
@@ -5186,7 +5190,8 @@ function getAvailabilityVersion() {
  * ثم يُفرَّغ لشيتَي Perf/PerfSlow الدائمين عبر مشغّل زمني كل 10 دقائق.
  */
 var _PERF_BUCKET_MIN = 10;      // حجم نافذة التجميع بالدقائق
-var _PERF_AGG_TTL_SEC = 1200;   // 20 دقيقة - أكثر من كافٍ لبقاء بيانات النافذة حتى يُشغَّل مشغّل التفريغ
+var _PERF_AGG_TTL_SEC = 7200;   // ساعتان: المشغّلات الزمنية تتأخر أحياناً دقائق، فالتفريغ يعوّض النوافذ الفائتة قبل انتهاء صلاحيتها
+var _PERF_CATCHUP_WINDOWS = 12; // أقصى عدد نوافذ يعوّضها التفريغ في التشغيل الواحد (= ساعتان)
 
 // قراءة كاش خام بدون المرور بعدّاد CACHEOP - نظام القياس نفسه لا يجب أن يُضخِّم مؤشر استهلاكه هو ذاته
 // (لو استخدم _getFromCache_ العادية هنا، كل نداء مُقاس سيُسجِّل أيضاً 2-3 عمليات Properties إضافية
@@ -5263,6 +5268,7 @@ function _perfCall_(name, args, fn) {
 function flushClientPerfMetrics(entries, currentUser) {
   var _fn="[flushClientPerfMetrics]";
   try {
+    _ensurePerfFlushTriggerThrottled_(false); // يثبّت مشغّل التفريغ تلقائياً من أول استخدام فعلي للتطبيق
     if (!entries || !entries.length) return { success:true, recorded:0 };
     entries.forEach(function(e) {
       if (!e || !e.fn || typeof e.ms !== "number") return;
@@ -5272,39 +5278,66 @@ function flushClientPerfMetrics(entries, currentUser) {
   } catch(e) { _logError_(_fn, e); return { success:false }; }
 }
 
-// يُشغَّل كل 10 دقائق عبر مشغّل زمني: يُفرِّغ تجميع النافذة التي انتهت للتو من الكاش إلى شيتَي Perf/PerfSlow
+// يُشغَّل كل 10 دقائق عبر مشغّل زمني (يُقاس وقته ضمن حصة المشغّلات) — المنطق الفعلي في _flushPerfBucketsCore_
 function _flushPerfBuckets_() {
-  var _fn="[_flushPerfBuckets_]";
-  try {
-    var prevBucketDate = new Date(Date.now() - _PERF_BUCKET_MIN*60*1000); // النافذة التي انتهت للتو، وليست الجارية
-    var bucket = _perfBucketKey_(prevBucketDate);
+  try { _flushPerfBucketsCore_(); } catch(e) { _logError_("[_flushPerfBuckets_]", e); }
+}
 
-    var active = _perfCacheGet_("PERF_ACTIVE::" + bucket) || [];
-    if (active.length) {
-      var rows = [];
-      active.forEach(function(name) {
+// يُفرِّغ كل النوافذ المكتملة التي لم تُفرَّغ بعد (منذ آخر نافذة محفوظة في PERF_LAST_FLUSHED_BUCKET) دفعة واحدة:
+// المشغّلات الزمنية تتأخر/تتقدّم دقائق، فقراءة "النافذة السابقة" وحدها كانت تُضيِّع نوافذ أو تكررها
+function _flushPerfBucketsCore_() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return { skipped: "busy" }; // تشغيل آخر يفرّغ الآن
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var last = props.getProperty("PERF_LAST_FLUSHED_BUCKET") || "";
+    var now = Date.now(), buckets = [];
+    // النوافذ المكتملة فقط (تبدأ من k=1)، من الأحدث للأقدم حتى آخر نافذة فُرِّغت
+    for (var k = 1; k <= _PERF_CATCHUP_WINDOWS; k++) {
+      var key = _perfBucketKey_(new Date(now - k*_PERF_BUCKET_MIN*60*1000));
+      if (last && key <= last) break;
+      if (buckets.indexOf(key) === -1) buckets.unshift(key);
+    }
+    if (!buckets.length) return { flushed: 0, rows: 0 };
+
+    var rows = [], slowRows = [];
+    buckets.forEach(function(bucket) {
+      (_perfCacheGet_("PERF_ACTIVE::" + bucket) || []).forEach(function(name) {
         var agg = _perfCacheGet_("PERF_AGG::" + name + "::" + bucket);
         if (!agg || !agg.count) return;
         rows.push([bucket.slice(0,8), bucket.slice(8,10), name, agg.count, agg.sum, agg.max, agg.fails||0, APP_VERSION]);
       });
-      if (rows.length) {
-        var sheet = _getOrCreateSheet_("Perf");
-        sheet.getRange(sheet.getLastRow()+1, 1, rows.length, 8).setValues(rows);
-      }
+      (_perfCacheGet_("PERF_SLOWBUF::" + bucket) || []).forEach(function(s) {
+        slowRows.push([new Date(s[0]), s[1], s[2], s[3], s[4] ? "نجاح" : "فشل", APP_VERSION]);
+      });
+    });
+    if (rows.length) {
+      var sheet = _getOrCreateSheet_("Perf");
+      sheet.getRange(sheet.getLastRow()+1, 1, rows.length, 8).setValues(rows);
     }
-
-    var slow = _perfCacheGet_("PERF_SLOWBUF::" + bucket) || [];
-    if (slow.length) {
-      var slowRows = slow.map(function(s) { return [new Date(s[0]), s[1], s[2], s[3], s[4] ? "نجاح" : "فشل", APP_VERSION]; });
+    if (slowRows.length) {
       var slowSheet = _getOrCreateSheet_("PerfSlow");
       slowSheet.getRange(slowSheet.getLastRow()+1, 1, slowRows.length, 6).setValues(slowRows);
     }
-
-    _cleanupStaleQuotaKeys_(); // بنفس تردد هذا المشغّل - تنظيف دوري كافٍ لمفاتيح الحصص الأقدم من 35 يوماً
-  } catch(e) { _logError_(_fn, e); }
+    props.setProperty("PERF_LAST_FLUSHED_BUCKET", buckets[buckets.length-1]);
+    _cleanupStaleQuotaKeys_(); // تنظيف دوري لمفاتيح الحصص الأقدم من 35 يوماً
+    return { flushed: buckets.length, rows: rows.length, slowRows: slowRows.length, lastBucket: buckets[buckets.length-1] };
+  } finally { lock.releaseLock(); }
 }
 
-// يُثبّت مشغّل التفريغ كل 10 دقائق مرة واحدة فقط إن لم يكن مثبّتاً - يُستدعى من ضمن خطوات الإعداد الشاملة
+// يتأكد من وجود مشغّل التفريغ دون خطوة يدوية — بفحص مخفَّف عبر الكاش (مرة كل 6 ساعات على الأكثر)،
+// إلا عند force (نقطة سحب التقرير) فيُفحص فعلياً كل مرة. لا يرمي خطأ أبداً.
+function _ensurePerfFlushTriggerThrottled_(force) {
+  try {
+    var cache = CacheService.getScriptCache();
+    if (!force && cache.get("PERF_TRIGGER_OK")) return "ok (cached)";
+    var msg = _ensurePerfFlushTrigger_();
+    cache.put("PERF_TRIGGER_OK", "1", 21600);
+    return msg;
+  } catch(e) { return "error: " + e.message; }
+}
+
+// يُثبّت مشغّل التفريغ كل 10 دقائق مرة واحدة فقط إن لم يكن مثبّتاً
 function _ensurePerfFlushTrigger_() {
   var exists = false;
   ScriptApp.getProjectTriggers().forEach(function(t) {
