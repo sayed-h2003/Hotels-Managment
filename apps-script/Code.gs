@@ -229,6 +229,7 @@ function doGet(e) {
       // قبل بناء التقرير: تأكد من وجود مشغّل التفريغ، وفرّغ النوافذ المكتملة كي يشمل التقرير أحدث البيانات
       var health = { flushTrigger: _ensurePerfFlushTriggerThrottled_(true) };
       try { health.flush = _flushPerfBucketsCore_(); } catch(fe) { health.flush = { error: String(fe && fe.message || fe) }; }
+      health.diag = _perfDiag_();
       var data = _gatherPerfDashboardData_({});
       data.health = health;
       data.exportedAt = new Date().toISOString();
@@ -4212,7 +4213,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "v3.48";
+var APP_VERSION = "v3.49";
 
 // ═══════════════════════════════════════════════════════════════
 // طبقة تشفير كلمات المرور (SHA-256 + Salt) — متوافقة مع الحسابات القديمة
@@ -5311,18 +5312,59 @@ function _flushPerfBucketsCore_() {
         slowRows.push([new Date(s[0]), s[1], s[2], s[3], s[4] ? "نجاح" : "فشل", APP_VERSION]);
       });
     });
-    if (rows.length) {
-      var sheet = _getOrCreateSheet_("Perf");
-      sheet.getRange(sheet.getLastRow()+1, 1, rows.length, 8).setValues(rows);
-    }
-    if (slowRows.length) {
-      var slowSheet = _getOrCreateSheet_("PerfSlow");
-      slowSheet.getRange(slowSheet.getLastRow()+1, 1, slowRows.length, 6).setValues(slowRows);
+    var attempts = {};
+    try {
+      if (rows.length) attempts.Perf = _perfAppendRows_("Perf", rows, 8);
+      if (slowRows.length) attempts.PerfSlow = _perfAppendRows_("PerfSlow", slowRows, 6);
+    } catch (we) {
+      // لا يتقدّم مؤشر آخر نافذة عند الفشل: البيانات تبقى في الكاش (ساعتان) ويعيد التشغيل التالي المحاولة
+      props.setProperty("PERF_LAST_FLUSH_ERROR", new Date().toISOString() + " | " + String(we && we.message || we));
+      throw we;
     }
     props.setProperty("PERF_LAST_FLUSHED_BUCKET", buckets[buckets.length-1]);
+    props.deleteProperty("PERF_LAST_FLUSH_ERROR");
     _cleanupStaleQuotaKeys_(); // تنظيف دوري لمفاتيح الحصص الأقدم من 35 يوماً
-    return { flushed: buckets.length, rows: rows.length, slowRows: slowRows.length, lastBucket: buckets[buckets.length-1] };
+    return { flushed: buckets.length, rows: rows.length, slowRows: slowRows.length, lastBucket: buckets[buckets.length-1], attempts: attempts };
   } finally { lock.releaseLock(); }
+}
+
+// يُلحق صفوفاً بآخر الشيت مع إعادة المحاولة: خطأ "Service Spreadsheets failed" عام وغالباً عابر (الشيت
+// مشغول بعمليات متزامنة)، ويوسّع الشيت إن تجاوزت الصفوف حدوده. يرمي خطأً يذكر الخطوة الفاشلة بعد 3 محاولات.
+function _perfAppendRows_(sheetName, rows, width) {
+  var lastErr, stage = "";
+  for (var attempt = 1; attempt <= 3; attempt++) {
+    try {
+      stage = "open"; var sh = _getOrCreateSheet_(sheetName);
+      stage = "lastRow"; var start = sh.getLastRow() + 1, need = start + rows.length - 1, maxR = sh.getMaxRows();
+      if (need > maxR) { stage = "insertRows"; sh.insertRowsAfter(maxR, need - maxR); }
+      stage = "setValues"; sh.getRange(start, 1, rows.length, width).setValues(rows);
+      return attempt;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 3) Utilities.sleep(1500 * attempt);
+    }
+  }
+  throw new Error(sheetName + " [" + stage + "] فشل بعد 3 محاولات: " + String(lastErr && lastErr.message || lastErr));
+}
+
+// تشخيص بلا بيانات حساسة: حجم الملف وأبعاد شيتي الأداء، وآخر خطأ تفريغ (من أي تشغيل، بما فيه المشغّل)
+function _perfDiag_() {
+  var d = {};
+  try {
+    var ss = _getSS_(), sheets = ss.getSheets(), cells = 0;
+    sheets.forEach(function(s) { cells += s.getMaxRows() * s.getMaxColumns(); });
+    d.sheetCount = sheets.length; d.totalCells = cells; d.cellLimit = 10000000;
+    ["Perf", "PerfSlow"].forEach(function(n) {
+      var s = ss.getSheetByName(n);
+      d[n] = s ? { lastRow: s.getLastRow(), maxRows: s.getMaxRows(), maxCols: s.getMaxColumns() } : null;
+    });
+  } catch (e) { d.error = String(e && e.message || e); }
+  try {
+    var p = PropertiesService.getScriptProperties();
+    d.lastFlushedBucket = p.getProperty("PERF_LAST_FLUSHED_BUCKET") || "";
+    d.lastFlushError = p.getProperty("PERF_LAST_FLUSH_ERROR") || "";
+  } catch (e2) {}
+  return d;
 }
 
 // يتأكد من وجود مشغّل التفريغ دون خطوة يدوية — بفحص مخفَّف عبر الكاش (مرة كل 6 ساعات على الأكثر)،
