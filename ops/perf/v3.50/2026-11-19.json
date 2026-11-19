@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-19T23:21:39.795Z",
+  "generatedAt": "2026-11-19T23:24:40.537Z",
   "version": "v3.50",
   "versions": [
     "v3.48",
@@ -876,29 +876,19 @@
       "used": 0.2,
       "limit": 90
     },
-    "sheetReadsToday": 192,
-    "cacheOpsToday": 34,
-    "lockAcquisitionsToday": 1
+    "sheetReadsToday": 261,
+    "cacheOpsToday": 51,
+    "lockAcquisitionsToday": 2
   },
   "health": {
     "flushTrigger": "المشغّل مثبّت مسبقاً",
     "flush": {
-      "flushed": 1,
-      "rows": 17,
-      "slowRows": 16,
-      "logRows": 13,
-      "logDropped": 0,
-      "pruned": 0,
-      "lastBucket": "202611200110",
-      "attempts": {
-        "Perf": 1,
-        "PerfSlow": 1,
-        "PerfLog": 1
-      }
+      "flushed": 0,
+      "rows": 0
     },
     "diag": {
       "sheetCount": 26,
-      "totalCells": 667940,
+      "totalCells": 668044,
       "cellLimit": 10000000,
       "Perf": {
         "lastRow": 101,
@@ -919,6 +909,6 @@
       "lastFlushError": ""
     }
   },
-  "exportedAt": "2026-11-19T23:21:39.807Z",
+  "exportedAt": "2026-11-19T23:24:40.539Z",
   "detail": "redacted"
 }
