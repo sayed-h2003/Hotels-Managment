@@ -6,6 +6,13 @@ name: Pull performance report
 # السرّ الجديد الوحيد المطلوب: PERF_REPORT_SECRET بنفس القيمة هنا وفي Script Properties لمشروع
 # Apps Script (Project Settings ← Script Properties). قبل ضبطه تفشل الخطوة برسالة واضحة، لا بعطل.
 on:
+  # workflow_dispatch والجدولة لا يعملان إلا بعد وجود هذا الملف على الفرع الافتراضي للمستودع؛ حتى ذلك
+  # الحين: تعديل أي سطر في ops/perf/request.txt على هذا الفرع يشغّل سحب التقرير فوراً
+  push:
+    branches:
+      - claude/google-apps-script-review-oaojxq
+    paths:
+      - 'ops/perf/request.txt'
   workflow_dispatch: {}
   schedule:
     # 02:17 UTC يومياً - خارج ساعات الذروة المتوقعة، ودقيقة غير مستديرة لتفادي ازدحام الجدولة العام
