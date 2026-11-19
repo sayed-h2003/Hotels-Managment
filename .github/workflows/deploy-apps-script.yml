@@ -58,11 +58,18 @@ jobs:
           DEBUG: 'clasp:*'
         run: clasp pull
 
-      # الآن نستبدل Code.gs و Index.html بالنسخة المعتمدة من المستودع (مصدر الحقيقة الوحيد)
+      # اسم ملف الكود الفعلي في مشروع Apps Script هو "Hotelapp_code.gs" وليس "Code.gs" —
+      # محاولة سابقة كتبت المحتوى في ملف جديد باسم Code.gs بدل الكتابة فوق الملف الصحيح،
+      # فأصبح لدى المشروع نسختان من نفس المتغيرات العامة (مثل SHEET_SCHEMAS) في ملفين
+      # مختلفين، وهذا ما سبَّب "SyntaxError: Identifier ... has already been declared".
+      # الآن نكتب فوق الملف الصحيح فعلياً الذي سحبه clasp pull، ونحذف أي Code.gs زائد
+      # (سواء كان موجوداً محلياً من هذه الخطوة أو جرى سحبه لتوّه من النسخة الفعلية على
+      # جوجل بسبب الدفعة الخاطئة السابقة) حتى يُزال نهائياً في أول clasp push تالٍ.
       - name: Apply repo source files
         run: |
-          cp apps-script/Code.gs .clasp-deploy/Code.gs
+          cp apps-script/Code.gs .clasp-deploy/Hotelapp_code.gs
           cp apps-script/Index.html .clasp-deploy/Index.html
+          rm -f .clasp-deploy/Code.gs
 
       - name: Push to Apps Script
         working-directory: .clasp-deploy
