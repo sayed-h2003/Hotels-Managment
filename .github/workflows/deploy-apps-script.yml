@@ -26,15 +26,16 @@ jobs:
       - name: Install clasp
         run: npm install -g @google/clasp
 
-      # v2 — يُمرَّر السرّ عبر متغيّر بيئة (أكثر أماناً وموثوقية من تضمينه مباشرة داخل run:)،
-      # ويُزال أي حرف CR عائم (\r) قد يكون تسلل عند لصق الملف من محرر على ويندوز، فيُسبّب فشل
-      # تحليل JSON بخطأ "Bad control character in string literal" رغم أن المحتوى يبدو سليماً بصرياً
+      # v3 — يُمرَّر السرّ عبر متغيّر بيئة (أكثر أماناً من تضمينه مباشرة داخل run:)، ثم يُصلَح عبر
+      # .github/scripts/sanitize-clasprc.js: بعض أدوات اللصق تُدخل حرف تحكّم خام داخل قيمة نصية
+      # (وليس بين العناصر) فيفشل JSON.parse بخطأ "Bad control character in string literal" —
+      # تجربة tr -d '\r' وحدها لم تكن كافية لأن الحرف المسبِّب قد يكون غير \r (مثل \n خام داخل قيمة)
       - name: Write clasp credentials
         env:
           CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
         run: |
-          printf '%s' "$CLASPRC_JSON" | tr -d '\r' > ~/.clasprc.json
-          node -e "JSON.parse(require('fs').readFileSync(process.env.HOME + '/.clasprc.json','utf8')); console.log('✅ clasprc.json صالح (JSON سليم)')"
+          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
+          node .github/scripts/sanitize-clasprc.js
 
       - name: Prepare clasp project directory
         env:
