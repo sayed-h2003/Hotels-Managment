@@ -84,7 +84,11 @@ const SHEET_SCHEMAS = {
   // يشير لرقم دفعة السداد المقابلة بجانب الفندق في Contract_Payment_Receipts لتتبّع الطرفين معاً
   "Account_Payments":    ["Payment_ID", "Party_Type", "Party_Key", "Party_Name", "Amount", "Payment_Date",
                            "Method", "Notes", "Created_By", "Created_At", "Is_Deleted", "Hotel_Name",
-                           "Linked_Hotel_Receipt_ID"]
+                           "Linked_Hotel_Receipt_ID"],
+  // v3.42 — قياس أداء الخادم: تفاصيل النداءات الأبطأ من 3 ثوانٍ فقط (التجميع الساعي الكامل في الشيت التالي)
+  "Performance_Log":    ["Timestamp", "Function", "Duration_Ms", "User", "Success"],
+  // تجميع ساعي (عدد/متوسط/أقصى) لكل دالة خادم، يُفرَّغ من الكاش مرة كل ساعة عبر مشغّل زمني
+  "Performance_Hourly": ["Hour_Start", "Function", "Call_Count", "Avg_Ms", "Max_Ms"]
 };
 
 // المصدر الوحيد والموحّد لقائمة الشاشات/الصلاحيات في كامل النظام (خادم + واجهة)
@@ -3607,14 +3611,19 @@ function updateUserDetails(oldUsername, newUsername, newFullName, currentUser) {
       {name:"Account_Payments",  col:9},
       {name:"Waitlist_Master",    col:11}
     ];
+    // v3.42 — كانت تكتب كل صف مطابق بـ setValue منفصل (قد تصل لمئات نداءات الشيت لمستخدم قديم
+    // له سجلات كثيرة) - الآن تقرأ عمود المرجع مرة واحدة وتكتبه مرة واحدة فقط بغض النظر عن عدد المطابقات
     refs.forEach(function(ref) {
       var sh = _getOrCreateSheet_(ref.name);
-      var d = sh.getDataRange().getValues();
-      var updates = [];
-      for (var j=1; j<d.length; j++) {
-        if (String(d[j][ref.col-1]) === oldUsername) updates.push(j+1);
+      var lastRow = sh.getLastRow();
+      if (lastRow < 2) return;
+      var colRange = sh.getRange(2, ref.col, lastRow-1, 1);
+      var colVals = colRange.getValues();
+      var changed = false;
+      for (var j=0; j<colVals.length; j++) {
+        if (String(colVals[j][0]) === oldUsername) { colVals[j][0] = newUsername; changed = true; }
       }
-      updates.forEach(function(rowNum) { sh.getRange(rowNum, ref.col).setValue(newUsername); });
+      if (changed) colRange.setValues(colVals);
     });
   }
 
@@ -4123,7 +4132,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var SYSTEM_VERSION = "v3.41";
+var SYSTEM_VERSION = "v3.42";
 
 // ═══════════════════════════════════════════════════════════════
 // طبقة تشفير كلمات المرور (SHA-256 + Salt) — متوافقة مع الحسابات القديمة
@@ -4549,6 +4558,11 @@ var SETUP_STEPS = [
     id: "triggers",
     label: "المشغّلات الزمنية اليومية (الدفعات المستحقة / قائمة الانتظار / تذكيرات تليجرام / تواريخ الأوبشن)",
     run: function() { return _ensureDailyTriggers_(); }
+  },
+  {
+    id: "perf_trigger",
+    label: "مشغّل تفريغ إحصاءات أداء الخادم الساعي",
+    run: function() { return _ensurePerfHourlyTrigger_(); }
   },
   {
     id: "roles",
@@ -5078,6 +5092,124 @@ function getAvailabilityVersion() {
   try {
     return PropertiesService.getScriptProperties().getProperty(_AVAIL_VERSION_PROP) || "0";
   } catch(e) { _logError_(_fn, e); return "0"; }
+}
+
+/**
+ * ======================================================================
+ * قياس أداء الخادم — زمن الرحلة الكاملة لكل نداء google.script.run
+ * ======================================================================
+ * الواجهة تقيس زمن كل نداء من المتصفح نفسه (الرحلة كاملة ذهاباً وإياباً)، وتُجمِّعها
+ * في المتصفح وترسلها دفعة واحدة كل ~30 ثانية عبر flushClientPerfMetrics بدل نداء
+ * مستقل لكل عملية - لا نضيف أي حمل شبكة إضافي بسبب القياس نفسه.
+ * التجميع الساعي (عدد/متوسط/أقصى لكل دالة) يُحفَظ مؤقتاً في CacheService فقط (بدون
+ * أي كتابة شيت لكل نداء عادي)، ثم يُفرَّغ لشيت Performance_Hourly مرة كل ساعة عبر
+ * مشغّل زمني. فقط النداءات الأبطأ من 3 ثوانٍ تُسجَّل فوراً كتفصيل في Performance_Log.
+ */
+var _PERF_AGG_TTL_SEC = 10800; // 3 ساعات - يكفي لضمان بقاء بيانات الساعة حتى يُشغَّل مشغّل التفريغ
+
+function _perfHourKey_(d) {
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyyMMddHH");
+}
+
+// تستقبل دفعة {fn,ms,ok} مجمَّعة من المتصفح - لا ترمي خطأ أبداً (قياس الأداء لا يجب أن يكسر شيئاً)
+function flushClientPerfMetrics(entries, currentUser) {
+  var _fn="[flushClientPerfMetrics]";
+  try {
+    if (!entries || !entries.length) return { success:true, recorded:0 };
+    var cache = CacheService.getScriptCache();
+    var hourKey = _perfHourKey_(new Date());
+    var activeCacheKey = "PERF_ACTIVE::" + hourKey;
+    var active = _getFromCache_(activeCacheKey) || [];
+    var activeSet = {}; active.forEach(function(n){ activeSet[n]=true; });
+    var slowRows = [];
+    entries.forEach(function(e) {
+      if (!e || !e.fn || typeof e.ms !== "number") return;
+      var fn = String(e.fn).slice(0,80), ms = Math.max(0, Math.round(e.ms)), ok = e.ok !== false;
+      var aggKey = "PERF_AGG::" + fn + "::" + hourKey;
+      var agg = _getFromCache_(aggKey) || { count:0, sum:0, max:0 };
+      agg.count++; agg.sum += ms; if (ms > agg.max) agg.max = ms;
+      try { cache.put(aggKey, JSON.stringify(agg), _PERF_AGG_TTL_SEC); } catch(err) {}
+      if (!activeSet[fn]) { activeSet[fn]=true; active.push(fn); }
+      if (ms > 3000) slowRows.push([new Date(), fn, ms, String(currentUser||""), ok ? "نجاح" : "فشل"]);
+    });
+    try { cache.put(activeCacheKey, JSON.stringify(active), _PERF_AGG_TTL_SEC); } catch(err) {}
+    if (slowRows.length) {
+      var sheet = _getOrCreateSheet_("Performance_Log");
+      sheet.getRange(sheet.getLastRow()+1, 1, slowRows.length, 5).setValues(slowRows);
+    }
+    return { success:true, recorded: entries.length };
+  } catch(e) { _logError_(_fn, e); return { success:false }; }
+}
+
+// يُشغَّل مرة كل ساعة عبر مشغّل زمني: يُفرِّغ تجميع الساعة التي انتهت للتو من الكاش إلى شيت دائم
+function flushPerfHourlyAggregates_() {
+  var _fn="[flushPerfHourlyAggregates_]";
+  try {
+    var prevHourDate = new Date(Date.now() - 60*60*1000); // الساعة التي انتهت للتو، وليس الساعة الجارية
+    var hourKey = _perfHourKey_(prevHourDate);
+    var active = _getFromCache_("PERF_ACTIVE::" + hourKey) || [];
+    if (!active.length) return;
+    var rows = [];
+    active.forEach(function(fn) {
+      var agg = _getFromCache_("PERF_AGG::" + fn + "::" + hourKey);
+      if (!agg || !agg.count) return;
+      rows.push([hourKey, fn, agg.count, Math.round(agg.sum/agg.count), agg.max]);
+    });
+    if (!rows.length) return;
+    var sheet = _getOrCreateSheet_("Performance_Hourly");
+    sheet.getRange(sheet.getLastRow()+1, 1, rows.length, 5).setValues(rows);
+  } catch(e) { _logError_(_fn, e); }
+}
+
+// يُثبّت مشغّل التفريغ الساعي مرة واحدة فقط إن لم يكن مثبّتاً - يُستدعى من ضمن خطوات الإعداد الشاملة
+function _ensurePerfHourlyTrigger_() {
+  var exists = false;
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === "flushPerfHourlyAggregates_") exists = true;
+  });
+  if (!exists) ScriptApp.newTrigger("flushPerfHourlyAggregates_").timeBased().everyHours(1).create();
+  return exists ? "المشغّل مثبّت مسبقاً" : "تم تثبيت مشغّل تفريغ إحصاءات الأداء الساعية";
+}
+
+// تقرير الأداء للوحة الإدارة (Admin فقط): أبطأ النداءات الفردية + أعلى الدوال استهلاكاً للوقت الكلي
+function getPerformanceReport(currentUser) {
+  var _fn="[getPerformanceReport]";
+  try {
+  if (!_isAdmin_(currentUser)) throw new Error("غير مصرح — تقرير الأداء لمدير النظام فقط.");
+
+  // أبطأ النداءات الفردية المسجَّلة (فقط ما تجاوز 3 ثوانٍ أصلاً) - آخر 200 سطر، مرتبة تنازلياً بالمدة
+  var logData = _getOrCreateSheet_("Performance_Log").getDataRange().getValues();
+  var slowCalls = [];
+  for (var i = Math.max(1, logData.length-200); i < logData.length; i++) {
+    var r = logData[i];
+    slowCalls.push({ time: Utilities.formatDate(r[0] instanceof Date?r[0]:new Date(r[0]), Session.getScriptTimeZone(), "dd/MM HH:mm:ss"), fn: r[1], ms: r[2], user: r[3], ok: r[4] });
+  }
+  slowCalls.sort(function(a,b){ return b.ms - a.ms; });
+  slowCalls = slowCalls.slice(0, 30);
+
+  // أعلى الدوال استهلاكاً للوقت الكلي (عدد النداءات × متوسط مدتها) خلال آخر 48 ساعة - وليس أبطأ نداء منفرد
+  var hourlyData = _getOrCreateSheet_("Performance_Hourly").getDataRange().getValues();
+  var cutoff = Date.now() - 48*60*60*1000;
+  var byFn = {};
+  for (var j = 1; j < hourlyData.length; j++) {
+    var row = hourlyData[j];
+    var hk = String(row[0]);
+    if (hk.length < 10) continue;
+    var hourDate = new Date(Number(hk.slice(0,4)), Number(hk.slice(4,6))-1, Number(hk.slice(6,8)), Number(hk.slice(8,10)));
+    if (hourDate.getTime() < cutoff) continue;
+    var fn = String(row[1]), count = Number(row[2])||0, avg = Number(row[3])||0, max = Number(row[4])||0;
+    if (!byFn[fn]) byFn[fn] = { fn:fn, totalCount:0, totalTimeMs:0, max:0 };
+    byFn[fn].totalCount += count;
+    byFn[fn].totalTimeMs += count*avg;
+    if (max > byFn[fn].max) byFn[fn].max = max;
+  }
+  var topByVolume = Object.keys(byFn).map(function(k) {
+    var e = byFn[k];
+    return { fn:e.fn, totalCount:e.totalCount, avgMs: e.totalCount?Math.round(e.totalTimeMs/e.totalCount):0, maxMs:e.max, totalTimeMs: Math.round(e.totalTimeMs) };
+  }).sort(function(a,b){ return b.totalTimeMs - a.totalTimeMs; }).slice(0, 20);
+
+  return { slowCalls: slowCalls, topByVolume: topByVolume };
+  } catch(e) { _logError_(_fn, e); throw e; }
 }
 
 /**

@@ -1599,6 +1599,10 @@ body.sb-collapsed #availHScrollProxy { right: 0; }
               <span class="sb-emoji">⚡</span>
               <span class="sb-text"><b>المشغّلات التلقائية (Triggers)</b><small>عرض حالة الفحوصات اليومية وتفعيل/تعطيل يدوي</small></span>
             </button>
+            <button class="settings-btn" onclick="openPerformanceReportModal()">
+              <span class="sb-emoji">⏱️</span>
+              <span class="sb-text"><b>أداء الخادم</b><small>أبطأ العمليات وأكثرها استهلاكاً للوقت الكلي</small></span>
+            </button>
             <button class="settings-btn" onclick="openSetupGuide()">
               <span class="sb-emoji">📖</span>
               <span class="sb-text"><b>دليل الإعداد والتشغيل</b><small>خطوات النشر والإعداد للعملاء الجدد</small></span>
@@ -1677,6 +1681,85 @@ body.sb-collapsed #availHScrollProxy { right: 0; }
 </div>
 
 <script>
+// ═══ قياس زمن الرحلة الكاملة لكل نداء google.script.run (للوحة "أداء الخادم" في الإعدادات) ═══
+// v3.42 — يُغلَّف google.script.run بـ Proxy شفاف تماماً (كل تمرير عبر Reflect دون أي تغيير
+// للسلوك الحقيقي)، فلا يحتاج أي نداء موجود حالياً أي تعديل. أي خلل هنا داخل try/catch صامت
+// تماماً - فشل القياس لا يجب أبداً أن يكسر نداءً حقيقياً واحداً في التطبيق.
+var _perfBuffer = [];
+var _PERF_EXCLUDE_FNS = { flushClientPerfMetrics:1, getPerformanceReport:1 };
+function _recordServerCallTiming_(fn, ms, ok) {
+  try {
+    if (!fn || _PERF_EXCLUDE_FNS[fn]) return;
+    _perfBuffer.push({ fn: fn, ms: Math.round(ms), ok: ok !== false });
+    if (_perfBuffer.length >= 25) _flushPerfBuffer_();
+  } catch(e) {}
+}
+function _flushPerfBuffer_() {
+  try {
+    if (!_perfBuffer.length) return;
+    var batch = _perfBuffer; _perfBuffer = [];
+    google.script.run.flushClientPerfMetrics(batch, (typeof sessionUser !== 'undefined' && sessionUser) ? sessionUser.username : '');
+  } catch(e) {}
+}
+setInterval(_flushPerfBuffer_, 30000);
+window.addEventListener('beforeunload', _flushPerfBuffer_);
+
+(function() {
+  try {
+    if (!window.google || !google.script || !google.script.run) return;
+    var descriptor = Object.getOwnPropertyDescriptor(google.script, 'run');
+    if (!descriptor || !descriptor.configurable) return;
+    var getFresh = (typeof descriptor.get === 'function')
+      ? function(){ return descriptor.get.call(google.script); }
+      : function(){ return descriptor.value; };
+
+    // يُغلِّف كل حلقة withSuccessHandler/withFailureHandler بقياس زمن، ويمرر كل شيء آخر كما هو تماماً
+    function wrapChain(target, ctx) {
+      return new Proxy(target, {
+        get: function(obj, prop) {
+          var val = Reflect.get(obj, prop, obj);
+          if (typeof val !== 'function') return val;
+          if (prop === 'withSuccessHandler') {
+            return function(fn) {
+              var next = Reflect.apply(val, obj, [function(result) {
+                try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, true); } catch(e) {}
+                if (typeof fn === 'function') fn(result);
+              }]);
+              return wrapChain(next, ctx);
+            };
+          }
+          if (prop === 'withFailureHandler') {
+            return function(fn) {
+              var next = Reflect.apply(val, obj, [function(err) {
+                try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, false); } catch(e) {}
+                if (typeof fn === 'function') fn(err);
+              }]);
+              return wrapChain(next, ctx);
+            };
+          }
+          if (prop === 'withUserObject' || prop === 'withFormSubmitter') {
+            return function() {
+              var next = Reflect.apply(val, obj, arguments);
+              return wrapChain(next, ctx);
+            };
+          }
+          // أي خاصية أخرى قابلة للاستدعاء = اسم دالة الخادم الفعلي المطلوب تنفيذه الآن
+          return function() {
+            ctx.fnName = String(prop);
+            ctx.t0 = performance.now();
+            return Reflect.apply(val, obj, arguments);
+          };
+        }
+      });
+    }
+
+    Object.defineProperty(google.script, 'run', {
+      configurable: true,
+      get: function() { return wrapChain(getFresh(), { fnName: null, t0: 0 }); }
+    });
+  } catch(e) { /* فشل التهيئة لا يكسر التطبيق - فقط نفقد قياس زمن الرحلة الكاملة */ }
+})();
+
 var sessionUser = null;
 var _heartbeatInterval = null;
 
@@ -6279,6 +6362,64 @@ function loadTriggersManager() {
   }).getSystemTriggers(sessionUser.username);
 }
 
+// ═══ تقرير أداء الخادم ═══
+function openPerformanceReportModal() {
+  document.getElementById('PerformanceReport_Modal').classList.add('open');
+  loadPerformanceReport();
+}
+function loadPerformanceReport() {
+  var volBody = document.getElementById('perfTopVolumeBody');
+  var slowBody = document.getElementById('perfSlowCallsBody');
+  volBody.innerHTML = slowBody.innerHTML = '<div style="text-align:center;padding:16px;color:var(--clr-muted);font-size:8.5pt;">جاري التحميل...</div>';
+  google.script.run.withSuccessHandler(function(rep) {
+    rep = rep || {};
+    var topByVolume = rep.topByVolume || [], slowCalls = rep.slowCalls || [];
+    volBody.innerHTML = !topByVolume.length
+      ? '<div style="text-align:center;padding:14px;color:var(--clr-muted);font-size:8.3pt;">لا توجد بيانات كافية بعد (تُجمَّع تلقائياً مع استخدام البرنامج).</div>'
+      : '<table style="width:100%;border-collapse:collapse;font-size:8.2pt;">'
+        + '<thead><tr style="background:var(--clr-primary-dark);color:#fff;">'
+        +   '<th style="text-align:right;padding:8px 10px;">الدالة</th>'
+        +   '<th style="padding:8px;text-align:center;">عدد النداءات</th>'
+        +   '<th style="padding:8px;text-align:center;">المتوسط (ms)</th>'
+        +   '<th style="padding:8px;text-align:center;">الأقصى (ms)</th>'
+        +   '<th style="padding:8px;text-align:center;">إجمالي الوقت التقديري</th>'
+        + '</tr></thead><tbody>'
+        + topByVolume.map(function(r) {
+            var totalSec = (r.totalTimeMs/1000).toFixed(1);
+            return '<tr style="border-bottom:1px solid var(--clr-border);">'
+              + '<td style="padding:8px 10px;font-family:monospace;font-size:7.8pt;">'+escapeHtml(r.fn)+'</td>'
+              + '<td style="padding:8px;text-align:center;">'+r.totalCount+'</td>'
+              + '<td style="padding:8px;text-align:center;">'+r.avgMs+'</td>'
+              + '<td style="padding:8px;text-align:center;">'+r.maxMs+'</td>'
+              + '<td style="padding:8px;text-align:center;font-weight:700;">'+totalSec+' ثانية</td>'
+              + '</tr>';
+          }).join('')
+        + '</tbody></table>';
+    slowBody.innerHTML = !slowCalls.length
+      ? '<div style="text-align:center;padding:14px;color:var(--clr-muted);font-size:8.3pt;">لا يوجد نداء تجاوز 3 ثوانٍ حتى الآن — ممتاز.</div>'
+      : '<table style="width:100%;border-collapse:collapse;font-size:8.2pt;">'
+        + '<thead><tr style="background:var(--clr-primary-dark);color:#fff;">'
+        +   '<th style="padding:8px;text-align:center;">الوقت</th>'
+        +   '<th style="text-align:right;padding:8px 10px;">الدالة</th>'
+        +   '<th style="padding:8px;text-align:center;">المدة (ms)</th>'
+        +   '<th style="padding:8px;text-align:center;">المستخدم</th>'
+        +   '<th style="padding:8px;text-align:center;">الحالة</th>'
+        + '</tr></thead><tbody>'
+        + slowCalls.map(function(r) {
+            return '<tr style="border-bottom:1px solid var(--clr-border);">'
+              + '<td style="padding:8px;text-align:center;font-size:7.5pt;">'+escapeHtml(r.time)+'</td>'
+              + '<td style="padding:8px 10px;font-family:monospace;font-size:7.8pt;">'+escapeHtml(r.fn)+'</td>'
+              + '<td style="padding:8px;text-align:center;">'+r.ms+'</td>'
+              + '<td style="padding:8px;text-align:center;">'+escapeHtml(_uname(r.user))+'</td>'
+              + '<td style="padding:8px;text-align:center;">'+(r.ok===false?'<span style="color:#dc2626;">❌ فشل</span>':'✅')+'</td>'
+              + '</tr>';
+          }).join('')
+        + '</tbody></table>';
+  }).withFailureHandler(function(e) {
+    volBody.innerHTML = slowBody.innerHTML = '<div style="color:#dc2626;padding:16px;font-size:8.5pt;">تعذّر التحميل: '+escapeHtml(e.message||e)+'</div>';
+  }).getPerformanceReport(sessionUser.username);
+}
+
 function enableSystemTrigger(key) {
   google.script.run.withSuccessHandler(function(res) {
     showToast(res && res.success ? '✅ تم تفعيل المشغّل.' : (res && res.message)||'تعذّر التفعيل.', res&&res.success?'success':'error');
@@ -9444,7 +9585,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var APP_VERSION = 'v3.41';
+var APP_VERSION = 'v3.42';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {
@@ -10072,6 +10213,28 @@ function submitHotelPurge() {
     <div class="modal-footer">
       <button class="btn-secondary" onclick="loadTriggersManager()">🔄 تحديث</button>
       <button class="btn-secondary" onclick="document.getElementById('TriggersManager_Modal').classList.remove('open')">إغلاق</button>
+    </div>
+  </div>
+</div>
+
+<!-- v3.42 — نافذة تقرير أداء الخادم (أبطأ العمليات وأكثرها استهلاكاً للوقت الكلي) -->
+<div id="PerformanceReport_Modal" class="modal-overlay">
+  <div class="modal-box" style="max-width:900px;">
+    <div class="modal-header"><span>⏱️ أداء الخادم</span><button class="modal-close-btn" onclick="document.getElementById('PerformanceReport_Modal').classList.remove('open')">×</button></div>
+    <div class="modal-body">
+      <p style="font-size:8pt;color:var(--clr-muted);margin-bottom:12px;">يُقاس زمن كل نداء من المتصفح (الرحلة الكاملة ذهاباً وإياباً). الجدول الأول يُرتِّب حسب إجمالي الوقت المستهلَك فعلياً (عدد النداءات × متوسط مدتها) — وهو الأهم للبدء منه، وليس أبطأ نداء منفرد.</p>
+      <div style="font-size:9pt;font-weight:800;margin-bottom:6px;">🔝 أعلى العمليات استهلاكاً للوقت الكلي (آخر 48 ساعة)</div>
+      <div id="perfTopVolumeBody" style="margin-bottom:18px;">
+        <div style="text-align:center;padding:16px;color:var(--clr-muted);font-size:8.5pt;">جاري التحميل...</div>
+      </div>
+      <div style="font-size:9pt;font-weight:800;margin-bottom:6px;">🐌 أبطأ النداءات الفردية المسجَّلة (أبطأ من 3 ثوانٍ)</div>
+      <div id="perfSlowCallsBody">
+        <div style="text-align:center;padding:16px;color:var(--clr-muted);font-size:8.5pt;">جاري التحميل...</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="loadPerformanceReport()">🔄 تحديث</button>
+      <button class="btn-secondary" onclick="document.getElementById('PerformanceReport_Modal').classList.remove('open')">إغلاق</button>
     </div>
   </div>
 </div>
