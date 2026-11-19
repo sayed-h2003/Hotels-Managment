@@ -43,11 +43,6 @@ jobs:
           printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
           node .github/scripts/sanitize-clasprc.js
 
-      # خطوة تشخيص مؤقتة: تطبع فقط أسماء المفاتيح داخل clasprc.json (بدون أي قيم فعلية)
-      # لمعرفة البنية الحقيقية للسرّ المخزَّن ومقارنتها بما يتوقعه clasp 2.x — ستُحذف بعد التشخيص
-      - name: Diagnose clasprc structure (no secret values printed)
-        run: node .github/scripts/diagnose-clasprc.js
-
       - name: Prepare clasp project directory
         env:
           SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
