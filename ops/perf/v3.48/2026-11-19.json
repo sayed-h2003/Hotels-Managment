@@ -1,0 +1,35 @@
+{
+  "generatedAt": "2026-11-19T22:45:34.029Z",
+  "version": "v3.48",
+  "versions": [],
+  "topByVolume": [],
+  "slowCalls": [],
+  "today": {
+    "totalCalls": 0,
+    "avgMs": 0,
+    "failRatePct": 0
+  },
+  "quotas": {
+    "urlFetch": {
+      "used": 1,
+      "limit": 20000
+    },
+    "triggerMinutes": {
+      "used": 0,
+      "limit": 90
+    },
+    "sheetReadsToday": 35,
+    "cacheOpsToday": 6,
+    "lockAcquisitionsToday": 0
+  },
+  "health": {
+    "flushTrigger": "تم تثبيت مشغّل تفريغ إحصاءات الأداء كل 10 دقائق",
+    "flush": {
+      "flushed": 12,
+      "rows": 0,
+      "slowRows": 0,
+      "lastBucket": "202611200030"
+    }
+  },
+  "exportedAt": "2026-11-19T22:45:34.032Z"
+}
