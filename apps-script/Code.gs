@@ -699,18 +699,56 @@ function saveUserPreference(username, prefKey, prefValue) {
   }
   sheet.appendRow([username, prefKey, prefValue]); return {success:true};
   } catch(e) { _logError_(_fn, e); throw e; }
+  finally { _invalidateSheetCache_("User_Preferences"); } // v3.53 — أي قراءة لاحقة بنفس التنفيذ ترى القيمة الجديدة
 }
 
 // يجلب قيمة تفضيل محفوظ مسبقاً لمستخدم معيّن
 function getUserPreference(username, prefKey) {
   var _fn="[getUserPreference]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"prefKey:"+String(JSON.stringify(prefKey)||"").slice(0, 80));
   try {
-  var data = _getOrCreateSheet_("User_Preferences").getDataRange().getValues();
+  // v3.53 — قراءة الشيت مرة واحدة لكل تنفيذ (كانت تُقرأ كاملة في كل نداء، ومنها فحص الفنادق المسموح بها مراراً)
+  var data = _getSheetValues_("User_Preferences");
   for (var i=1; i<data.length; i++) {
     if (data[i][0]===username && data[i][1]===prefKey) return data[i][2];
   }
   return null;
   } catch(e) { _logError_(_fn, e); throw e; }
+}
+
+// v3.53 — كل تفضيلات مستخدم واحد كخريطة {مفتاح: قيمة} — تُرسَل مع حزمة الإقلاع ليخزّنها المتصفح
+// (allowed_hotels مستبعدة: صلاحية يطبّقها الخادم وليست تفضيل واجهة)
+function _getUserPrefsMap_(username) {
+  var out = {};
+  var data = _getSheetValues_("User_Preferences");
+  for (var i=1; i<data.length; i++) {
+    if (data[i][0]===username && data[i][1] && data[i][1]!=="allowed_hotels") {
+      var v = data[i][2];
+      out[data[i][1]] = (v instanceof Date) ? v.toISOString() : v;
+    }
+  }
+  return out;
+}
+
+// v3.53 — نطاق أشهر التعاقد لكل فندق مسموح (نفس منطق getContractDateRange) في مرور واحد على الشيت
+function _getContractDateRangesMap_(currentUser) {
+  var data = _getSheetValues_("Contracts_Master");
+  var allowed = currentUser ? _getUserAllowedHotels_(currentUser) : null;
+  var acc = {}, out = {};
+  for (var i=1; i<data.length; i++) {
+    var row = data[i];
+    if (!row[0] || row[12]===true || !row[1]) continue;
+    if (allowed && !allowed[row[1]]) continue;
+    var sd=_dateOnly_(row[3] instanceof Date?row[3]:new Date(row[3]));
+    var ed=_dateOnly_(row[4] instanceof Date?row[4]:new Date(row[4]));
+    var a = acc[row[1]] || (acc[row[1]] = { min:null, max:null });
+    if (!a.min || sd<a.min) a.min=sd;
+    if (!a.max || ed>a.max) a.max=ed;
+  }
+  Object.keys(acc).forEach(function(h) {
+    var a = acc[h];
+    out[h] = { minYear:a.min.getFullYear(), minMonth:a.min.getMonth()+1, maxYear:a.max.getFullYear(), maxMonth:a.max.getMonth()+1 };
+  });
+  return out;
 }
 
 /**
@@ -740,9 +778,11 @@ function _hijriTabularFallback_(date) {
 // يُحوّل تاريخاً ميلادياً إلى هجري باستخدام تقويم أم القرى الرسمي (عبر Intl.DateTimeFormat المدمج)
 // مع رجوع تلقائي آمن للخوارزمية الحسابية التقليدية إن لم يدعم محرك التشغيل تقويم أم القرى
 // النسخة الأساسية (بدون أي تصحيح يدوي) من التحويل الميلادي→هجري عبر تقويم أم القرى الرسمي
+// v3.53 — المُنسِّق يُنشأ مرة واحدة لكل تنفيذ (كان يُنشأ لكل تاريخ: مرتين لكل حجز بشاشة الحجوزات)
+var __HIJRI_FMT = null;
 function _gregorianToHijriRaw_(date) {
   try {
-    var fmt = Intl.DateTimeFormat('en-u-ca-islamic-umalqura', {day:'numeric', month:'numeric', year:'numeric'});
+    var fmt = __HIJRI_FMT || (__HIJRI_FMT = Intl.DateTimeFormat('en-u-ca-islamic-umalqura', {day:'numeric', month:'numeric', year:'numeric'}));
     var parts = fmt.formatToParts(date);
     var day, month, year;
     parts.forEach(function(p){
@@ -760,11 +800,17 @@ function _gregorianToHijriRaw_(date) {
 }
 
 // يجلب خريطة تصحيحات بدايات الشهور المحفوظة لسنة هجرية معيّنة: {hijriMonth: offsetDays}
+// v3.53 — محفوظة لكل تنفيذ: كانت تقرأ خصائص السكريبت عند تحويل كل تاريخ (آلاف القراءات بشاشة الحجوزات وحدها)
+var __HIJRI_CORR_MEMO = {};
 function _getHijriCorrections_(hijriYear) {
-  var props = PropertiesService.getScriptProperties();
-  var raw = props.getProperty("HIJRI_CORRECTIONS_" + hijriYear);
-  if (!raw) return {};
-  try { return JSON.parse(raw); } catch(e) { return {}; }
+  if (__HIJRI_CORR_MEMO.hasOwnProperty(hijriYear)) return __HIJRI_CORR_MEMO[hijriYear];
+  var out = {};
+  try {
+    var raw = PropertiesService.getScriptProperties().getProperty("HIJRI_CORRECTIONS_" + hijriYear);
+    if (raw) out = JSON.parse(raw) || {};
+  } catch(e) { out = {}; }
+  __HIJRI_CORR_MEMO[hijriYear] = out;
+  return out;
 }
 
 // التحويل الميلادي→هجري النهائي المُستخدَم بكل أنحاء النظام - يطبّق أي تصحيح يدوي محفوظ لبداية الشهر (من شاشة الصلاحيات)
@@ -780,12 +826,26 @@ function _gregorianToHijri_(date) {
 }
 
 // يُنسّق تاريخاً هجرياً كنص عربي جاهز للعرض (اليوم/الشهر/السنة هـ)
+// v3.53 — نتيجة كل يوم تُحفظ لكل تنفيذ (الحجوزات تتشارك نفس تواريخ الدخول/الخروج كثيراً)
+var __HIJRI_DISPLAY_MEMO = {};
 function formatHijriDisplay(dateVal) {
   if (!dateVal) return "";
   var d = (dateVal instanceof Date) ? dateVal : new Date(dateVal);
   if (isNaN(d.getTime())) return "";
+  var k = d.getFullYear()*10000 + (d.getMonth()+1)*100 + d.getDate();
+  var hit = __HIJRI_DISPLAY_MEMO[k];
+  if (hit !== undefined) return hit;
   var h = _gregorianToHijri_(d);
-  return String(h.day).padStart(2,"0")+" "+h.monthName+" "+h.year+"هـ";
+  return (__HIJRI_DISPLAY_MEMO[k] = String(h.day).padStart(2,"0")+" "+h.monthName+" "+h.year+"هـ");
+}
+// v3.53 — Utilities.formatDate نداء خدمة؛ نحفظ نتيجته لكل (لحظة، نمط) ضمن التنفيذ الواحد
+var __FMT_DATE_MEMO = {};
+function _fmtDateMemo_(d, tz, pattern) {
+  var t = d.getTime();
+  if (isNaN(t)) return Utilities.formatDate(d, tz, pattern);
+  var k = pattern + "|" + t, hit = __FMT_DATE_MEMO[k];
+  if (hit !== undefined) return hit;
+  return (__FMT_DATE_MEMO[k] = Utilities.formatDate(d, tz, pattern));
 }
 
 // ===================== 10. شاشة التعاقدات =====================
@@ -1620,6 +1680,7 @@ function _buildCollectionAccountMap_() {
 function getBookings(currentUser) {
   var _fn="[getBookings]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
+  var _tStart=Date.now();
   _requirePermission_(currentUser,"bookings","canView");
   var ss=_getSS_();
   var data=_getSheetValues_("Bookings_Master");
@@ -1635,6 +1696,7 @@ function getBookings(currentUser) {
     var perms=getUserPermissions(currentUser, role);
     canViewFinance = !!(perms.availability_finance && perms.availability_finance.canView);
   }
+  var _tRows=Date.now(), _tRead=_tRows-_tStart;
   var out=[];
   for (var i=1; i<data.length; i++) {
     var row=data[i]; if (!row[0]||row[14]===true) continue;
@@ -1649,16 +1711,18 @@ function getBookings(currentUser) {
       hotelContractLabel:labelMap[row[1]]||hotelMap[row[1]]||"(فندق محذوف)",
       clientName:row[2], collectionAccount:collMap[row[3]]||row[3], collectionAccountId:row[3],
       status:row[4], roomCount:row[5],
-      checkIn:Utilities.formatDate(ci,tz,"dd/MM/yyyy"),  checkInHijri:formatHijriDisplay(ci),
-      checkOut:Utilities.formatDate(co,tz,"dd/MM/yyyy"), checkOutHijri:formatHijriDisplay(co),
+      checkIn:_fmtDateMemo_(ci,tz,"dd/MM/yyyy"),  checkInHijri:formatHijriDisplay(ci),
+      checkOut:_fmtDateMemo_(co,tz,"dd/MM/yyyy"), checkOutHijri:formatHijriDisplay(co),
       nights:row[8],
-      createdBy:row[11], createdAt:Utilities.formatDate(ca,tz,"dd/MM/yyyy HH:mm"),
+      createdBy:row[11], createdAt:_fmtDateMemo_(ca,tz,"dd/MM/yyyy HH:mm"),
       lastEditSummary:row[13]||"",
       notes:row[15]||"", overCapacity:!!(row[16]===true||row[16]==="TRUE"||row[16]==="true"||row[16]===1), overCapacityType:row[17]||""
     };
     if (canViewFinance) { obj.salePrice=row[9]; obj.bookingValue=row[10]; }
     out.push(obj);
   }
+  // v3.53 — تفصيل زمني يظهر بلوحة الأداء: قراءة الشيت/الخرائط مقابل بناء الصفوف
+  try { _recordPerfSample_("~getBookings:read", _tRead, true); _recordPerfSample_("~getBookings:rows", Date.now()-_tRows, true); } catch(eT) {}
   out.reverse(); return out;
   } catch(e) { _logError_(_fn, e); throw e; }
 }
@@ -1950,14 +2014,16 @@ function deleteBooking(bookingId, currentUser) {
 // excludeOtherOverBookings (اختياري) — عند true، تُستبعد أيضاً أي حجوزات أخرى مسجَّلة (أوفر) بالفعل من حساب "المحجوز"
 // (تُعامَل كطلبات استثنائية غير مؤكدة السعة بعد، وليست التزاماً صلباً) — تُستخدم فقط في فحص التأكيد اليدوي العادل
 // (راجع manuallyClearOverCapacityFlag) للتحقق: هل يتوفر هذا الحجز بمفرده مقابل الحجوزات "الصلبة" فقط؟
-function _checkBookingAvailability_(contractId, checkInDate, checkOutDate, roomCount, excludeBookingId, excludeOtherOverBookings) {
+// v3.53 — preloaded (اختياري): {contractsData, bookingsData} مقروءة مسبقاً — getOverCapacityNotifications كانت تعيد
+// قراءة شيتي التعاقدات والحجوزات كاملين لكل حجز أوفر على حدة
+function _checkBookingAvailability_(contractId, checkInDate, checkOutDate, roomCount, excludeBookingId, excludeOtherOverBookings, preloaded) {
   if (roomCount<0) return {ok:true, shortfallDays:[]};
   var ss=_getSS_();
   var hotelMap=_buildContractHotelMap_();
   var hotelName=hotelMap[contractId];
   if (!hotelName) return {ok:true, shortfallDays:[]};
 
-  var contractsData=_getOrCreateSheet_("Contracts_Master").getDataRange().getValues();
+  var contractsData=(preloaded && preloaded.contractsData) || _getOrCreateSheet_("Contracts_Master").getDataRange().getValues();
   var hotelContractIds={}, hotelContracts=[];
   for (var i=1; i<contractsData.length; i++) {
     var crow=contractsData[i];
@@ -1970,7 +2036,7 @@ function _checkBookingAvailability_(contractId, checkInDate, checkOutDate, roomC
     });
   }
 
-  var bookingsData=_getOrCreateSheet_("Bookings_Master").getDataRange().getValues();
+  var bookingsData=(preloaded && preloaded.bookingsData) || _getOrCreateSheet_("Bookings_Master").getDataRange().getValues();
   var otherBookings=[];
   for (var j=1; j<bookingsData.length; j++) {
     var brow=bookingsData[j];
@@ -2019,6 +2085,7 @@ function getOverCapacityNotifications(currentUser) {
   var data=_getOrCreateSheet_("Bookings_Master").getDataRange().getValues();
   var hotelMap=_buildContractHotelMap_(), tz=Session.getScriptTimeZone();
   var allowed=_getUserAllowedHotels_(currentUser);
+  var _pre=null; // v3.53 — تُقرأ مرة واحدة فقط عند وجود أول حجز أوفر (بدل مرتين لكل حجز)
   var out=[];
   for (var i=1; i<data.length; i++) {
     var row=data[i];
@@ -2029,7 +2096,8 @@ function getOverCapacityNotifications(currentUser) {
     if (allowed && !allowed[hn]) continue;
     var ci=row[6] instanceof Date?row[6]:new Date(row[6]);
     var co=row[7] instanceof Date?row[7]:new Date(row[7]);
-    var avail=_checkBookingAvailability_(row[1], ci, co, parseFloat(row[5])||0, row[0]);
+    if (!_pre) _pre={ contractsData:_getOrCreateSheet_("Contracts_Master").getDataRange().getValues(), bookingsData:data };
+    var avail=_checkBookingAvailability_(row[1], ci, co, parseFloat(row[5])||0, row[0], false, _pre);
     if (avail.ok) {
       out.push({
         bookingId:row[0], clientName:row[2], hotelName:hn,
@@ -3757,6 +3825,7 @@ function saveCompanyBranding(nameAr, nameEn, logoDataUri, currentUser) {
   props.setProperty("COMPANY_NAME_AR", String(nameAr||"").trim());
   props.setProperty("COMPANY_NAME_EN", String(nameEn||"").trim());
   if (logoDataUri) props.setProperty("COMPANY_LOGO_URI", logoDataUri);
+  props.setProperty("COMPANY_BRANDING_VER", String(Date.now())); // v3.53 — يُبطل نسخة الهوية المحفوظة بالمتصفحات
   logAudit("النظام","تحديث هوية الشركة","","","","","تم تحديث اسم/شعار الشركة",currentUser);
   return {success:true};
   } catch(e) { _logError_(_fn, e); throw e; }
@@ -4010,6 +4079,7 @@ function saveHijriMonthCorrections(hijriYear, correctionsObj, currentUser) {
   hijriYear = parseInt(hijriYear, 10);
   var props = PropertiesService.getScriptProperties();
   props.setProperty("HIJRI_CORRECTIONS_" + hijriYear, JSON.stringify(correctionsObj || {}));
+  __HIJRI_CORR_MEMO = {}; __HIJRI_DISPLAY_MEMO = {};
   logAudit("النظام","تصحيح تقويم هجري","","","","","تم تحديث تصحيحات بدايات شهور السنة الهجرية "+hijriYear,currentUser);
   return {success:true};
   } catch(e) { _logError_(_fn, e); throw e; }
@@ -4241,7 +4311,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "v3.52";
+var APP_VERSION = "v3.53";
 
 // ═══════════════════════════════════════════════════════════════
 // طبقة تشفير كلمات المرور (SHA-256 + Salt) — متوافقة مع الحسابات القديمة
@@ -4599,18 +4669,43 @@ function exportReportToDriveExcel(headers, rows, fileName, currentUser) {
 }
 
 // تُجمّع كل بيانات ما بعد تسجيل الدخول في نداء واحد (كانت 5 نداءات منفصلة)
-function getAppBootstrap(username, fullName) {
+// v3.53 — opts (اختياري): {brandingVer} — إن طابق نسخة الهوية المحفوظة في المتصفح لا يُعاد إرسال الشعار (أغلب حجم الحزمة).
+// وتشمل الحزمة الآن ما كانت الشاشات تطلبه منفصلاً عند الإقلاع (التفضيلات، أسماء الفنادق، جهات التحصيل،
+// نطاقات التعاقد) + أرقام نسخ الإشعارات/التوافر حتى لا يعيد أول نداء دوري تحميل قائمة الإشعارات كاملة.
+function getAppBootstrap(username, fullName, opts) {
   var _fn="[getAppBootstrap]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"fullName:"+String(JSON.stringify(fullName)||"").slice(0, 80));
   try {
-  return {
+  opts = opts || {};
+  var props = PropertiesService.getScriptProperties();
+  var brandingVer = _getBrandingVersion_();
+  var branding;
+  if (opts.brandingVer && String(opts.brandingVer) === brandingVer) branding = { unchanged: true };
+  else branding = getCompanyBranding();
+  var out = {
     systemVersion: APP_VERSION,
     userMap: getUsernameFullNameMap(),
-    branding: getCompanyBranding(),
+    branding: branding,
+    brandingVer: brandingVer,
     sessionTimeoutMinutes: getSessionTimeoutMinutes(),
+    notifVersion: props.getProperty(_NOTIF_VERSION_PROP) || "0",
+    availVersion: props.getProperty(_AVAIL_VERSION_PROP) || "0",
     notifications: getMyNotifications(username),
     activeUsers: pingHeartbeatAndGetActiveUsers(username, fullName)
   };
+  // الإضافات اختيارية: فشل أي منها لا يُفشل الإقلاع (المتصفح يطلبها منفصلة عند غيابها)
+  try { out.prefs = _getUserPrefsMap_(username); } catch(e1) {}
+  try { out.hotelNames = getDistinctHotelNames(username); } catch(e2) {}
+  try { out.contractRanges = _getContractDateRangesMap_(username); } catch(e3) {}
+  try { out.collectionAccounts = _getCollectionAccountsCached_(); } catch(e4) {}
+  return out;
   } catch(e) { _logError_(_fn, e); throw e; }
+}
+// نسخة هوية الشركة: تتغيّر مع كل حفظ؛ للنسخ القديمة بلا رقم نشتقها من أطوال القيم (تتغير عملياً مع أي تعديل)
+function _getBrandingVersion_() {
+  var props = PropertiesService.getScriptProperties();
+  var v = props.getProperty("COMPANY_BRANDING_VER");
+  if (v) return v;
+  return "L" + (props.getProperty("COMPANY_LOGO_URI") || "").length + "-" + (props.getProperty("COMPANY_NAME_AR") || "").length + "-" + (props.getProperty("COMPANY_NAME_EN") || "").length;
 }
 
 // تُجمّع بيانات فتح نموذج الحجز (تعاقدات نشطة + جهات تحصيل + أسماء عملاء + بيانات الحجز عند التعديل) — كانت 3-4 نداءات
@@ -5336,7 +5431,11 @@ function flushClientPerfMetrics(entries, currentUser, extra) {
     _ensurePerfFlushTriggerThrottled_(false); // يثبّت مشغّل التفريغ تلقائياً من أول استخدام فعلي للتطبيق
     (entries || []).forEach(function(e) {
       if (!e || !e.fn || typeof e.ms !== "number") return;
-      _recordPerfSample_("client:" + String(e.fn).slice(0,90), e.ms, e.ok !== false, currentUser, e.v);
+      // v3.53 — تبويب بكود قديم لا يرسل رقم إصداره: يُوسَم "legacy" بدل نسبه خطأً للإصدار الحالي،
+      // وأي زمن أطول من 10 دقائق هو حتماً جهاز نائم/تبويب معلّق، فيُفصل كـ bg: بعيداً عن المتوسطات
+      var fname = String(e.fn).slice(0,90);
+      if (e.ms > 600000 && fname.indexOf("bg:") !== 0) fname = "bg:" + fname;
+      _recordPerfSample_("client:" + fname, e.ms, e.ok !== false, currentUser, e.v || "legacy");
     });
     var logged = 0;
     try { logged = _perfLogPush_(_perfClientExtraToItems_(extra, currentUser)); } catch(e2) {}

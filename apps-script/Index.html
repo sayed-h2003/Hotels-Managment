@@ -1804,6 +1804,58 @@ function _recordBootReady_() {
   } catch(e) {}
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// v3.53 — كاش نتائج القراءات شبه الثابتة في المتصفح. أظهر تقرير الأداء أن كل نداء خادم يكلّف 2-5 ثوانٍ ذهاباً
+// وإياباً حتى لو أنهاه الخادم في أقل من ثانية، وأن الإقلاع وحده يطلب التفضيلات 4 مرات وأسماء الفنادق مرتين.
+// الآن: حزمة الإقلاع تحمل هذه البيانات، والنداءات المطابقة تُجاب محلياً فوراً (طبقة واحدة داخل وكيل
+// google.script.run فلا يتغيّر أي موضع نداء). أي نداء كتابة أو تغيّر نسخة البيانات من مستخدم آخر يُبطلها.
+// ═══════════════════════════════════════════════════════════════
+var _CC_TTL_MS = 10 * 60 * 1000;
+var _CC_DATA_FNS = { getDistinctHotelNames: 1, getCollectionAccounts: 1, getContractDateRange: 1 };
+// نداءات لا تغيّر أسماء الفنادق/جهات التحصيل/نطاقات التعاقد — كل ما عداها يُبطل الكاش احتياطاً
+var _CC_NONWRITE_RE = /^(get|poll|ping|flush|search|list|check|load|is|has|export|count|preview|validate|login|logout|mark|send)/;
+var _cc = { data: {}, prefs: {}, prefsAuth: false, bootPending: false, waiters: [] };
+function _ccKey_(fn, args) { try { return fn + ':' + JSON.stringify(args); } catch(e) { return null; } }
+function _ccClone_(v) { try { return (v === null || typeof v !== 'object') ? v : JSON.parse(JSON.stringify(v)); } catch(e) { return v; } }
+function _ccPrefsLsKey_() { return 'hotelapp_prefs_' + ((typeof sessionUser !== 'undefined' && sessionUser && sessionUser.username) || ''); }
+function _ccIsMine_(u) { return typeof sessionUser !== 'undefined' && sessionUser && u === sessionUser.username; }
+function _ccCacheable_(fn) { return fn === 'getUserPreference' || !!_CC_DATA_FNS[fn]; }
+function _ccLookup_(fn, args) {
+  if (fn === 'getUserPreference') {
+    if (!_ccIsMine_(args[0])) return null;
+    var k = String(args[1]);
+    if (Object.prototype.hasOwnProperty.call(_cc.prefs, k)) return { value: _cc.prefs[k] };
+    return _cc.prefsAuth ? { value: null } : null; // بعد الإقلاع الخريطة كاملة: غياب المفتاح = لا قيمة محفوظة
+  }
+  if (!_CC_DATA_FNS[fn]) return null;
+  var key = _ccKey_(fn, args), e = key && _cc.data[key];
+  return (e && Date.now() - e.at < _CC_TTL_MS) ? { value: e.value } : null;
+}
+function _ccStore_(fn, args, value) {
+  if (fn === 'getUserPreference') { if (_ccIsMine_(args[0])) _ccSetPref_(args[1], value); return; }
+  if (!_CC_DATA_FNS[fn]) return;
+  var key = _ccKey_(fn, args);
+  if (key) _cc.data[key] = { at: Date.now(), value: _ccClone_(value) };
+}
+function _ccSetPref_(k, v) { _cc.prefs[String(k)] = (v === undefined ? null : v); _ccPersistPrefs_(); }
+function _ccPersistPrefs_() { try { localStorage.setItem(_ccPrefsLsKey_(), JSON.stringify(_cc.prefs)); } catch(e) {} }
+function _ccLoadPersistedPrefs_() {
+  _cc.prefs = {}; _cc.prefsAuth = false;
+  try { var raw = localStorage.getItem(_ccPrefsLsKey_()); if (raw) _cc.prefs = JSON.parse(raw) || {}; } catch(e) { _cc.prefs = {}; }
+}
+function _ccInvalidateData_() { _cc.data = {}; }
+function _ccReleaseWaiters_() { var w = _cc.waiters; _cc.waiters = []; w.forEach(function(f) { try { f(); } catch(e) {} }); }
+function _ccReset_() { _cc.data = {}; _cc.prefs = {}; _cc.prefsAuth = false; _cc.bootPending = false; _ccReleaseWaiters_(); }
+// يُستدعى قبل إرسال أي نداء فعلي للخادم
+function _ccBeforeCall_(fn, args) {
+  if (fn === 'saveUserPreference') { if (_ccIsMine_(args[0])) _ccSetPref_(args[1], args[2]); return; }
+  if (!_CC_NONWRITE_RE.test(fn)) _ccInvalidateData_();
+}
+function _ccRecordHit_(fn) {
+  try { _perfBuffer.push({ fn: 'cache:' + fn, ms: 0, ok: true, v: CLIENT_APP_VERSION }); } catch(e) {}
+}
+
 (function() {
   try {
     if (!window.google || !google.script || !google.script.run) return;
@@ -1821,8 +1873,11 @@ function _recordBootReady_() {
           if (typeof val !== 'function') return val;
           if (prop === 'withSuccessHandler') {
             return function(fn) {
+              ctx.userOk = fn;
               var next = Reflect.apply(val, obj, [function(result) {
                 try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, true, { reqBytes: ctx.reqBytes, result: result, bg: ctx.bg0 || document.hidden || ctx.epoch0 !== _perfHiddenEpoch }); } catch(e) {}
+                if (ctx.ccArgs) { try { _ccStore_(ctx.fnName, ctx.ccArgs, result); } catch(e) {} }
+                else if (ctx.fnName && ctx.fnName !== 'saveUserPreference' && !_CC_NONWRITE_RE.test(ctx.fnName)) _ccInvalidateData_(); // قراءة جرت أثناء الكتابة قد تحمل بيانات قديمة
                 if (typeof fn === 'function') fn(result);
               }]);
               return wrapChain(next, ctx);
@@ -1845,11 +1900,31 @@ function _recordBootReady_() {
           }
           // أي خاصية أخرى قابلة للاستدعاء = اسم دالة الخادم الفعلي المطلوب تنفيذه الآن
           return function() {
+            var args = Array.prototype.slice.call(arguments);
             ctx.fnName = String(prop);
-            ctx.t0 = performance.now();
-            ctx.bg0 = !!document.hidden; ctx.epoch0 = _perfHiddenEpoch;
-            try { ctx.reqBytes = _PERF_EXCLUDE_FNS[ctx.fnName] ? 0 : _perfJsonLen_(Array.prototype.slice.call(arguments)); } catch(e) { ctx.reqBytes = 0; }
-            return Reflect.apply(val, obj, arguments);
+            var realCall = function() {
+              ctx.t0 = performance.now();
+              ctx.bg0 = !!document.hidden; ctx.epoch0 = _perfHiddenEpoch;
+              try { ctx.reqBytes = _PERF_EXCLUDE_FNS[ctx.fnName] ? 0 : _perfJsonLen_(args); } catch(e) { ctx.reqBytes = 0; }
+              return Reflect.apply(val, obj, args);
+            };
+            try { _ccBeforeCall_(ctx.fnName, args); } catch(e) {}
+            // v3.53 — قراءة قابلة للتخزين: تُجاب محلياً إن وُجدت، أو تنتظر حزمة الإقلاع الجارية بدل نداء مكرر
+            if (_ccCacheable_(ctx.fnName) && typeof ctx.userOk === 'function') {
+              ctx.ccArgs = args;
+              var serve = function(h) {
+                _ccRecordHit_(ctx.fnName);
+                var v = _ccClone_(h.value);
+                setTimeout(function() { ctx.userOk(v); }, 0);
+              };
+              var h = null; try { h = _ccLookup_(ctx.fnName, args); } catch(e) {}
+              if (h) { serve(h); return; }
+              if (_cc.bootPending) {
+                _cc.waiters.push(function() { var h2 = null; try { h2 = _ccLookup_(ctx.fnName, args); } catch(e) {} if (h2) serve(h2); else realCall(); });
+                return;
+              }
+            }
+            return realCall();
           };
         }
       });
@@ -3085,6 +3160,7 @@ function _handleAvailVersion(v) {
     if (_lastAvailVersion === null) { _lastAvailVersion = v; return; } // أول فحص: تسجيل الأساس فقط دون تحديث
     if (v !== _lastAvailVersion) {
       _lastAvailVersion = v;
+      _ccInvalidateData_(); // v3.53 — تغيير من مستخدم آخر (حجز/تعاقد): أسماء الفنادق ونطاقات التعاقد قد تغيّرت
       invalidateScreenCache('Availability_Screen');
       var screenEl = document.getElementById('Availability_Screen');
       var hotelVal = document.getElementById('avail_hotel_select') ? document.getElementById('avail_hotel_select').value : '';
@@ -3382,10 +3458,32 @@ function loadUsernameFullNameMap(callback) {
 
 // ═══ النداء المجمّع لما بعد تسجيل الدخول: يجلب 5 مجموعات بيانات برحلة خادم واحدة ═══
 function _applyAppBootstrap() {
+  // v3.53 — التفضيلات المحفوظة محلياً تُجيب فوراً (مثل الشاشة الرئيسية)؛ وباقي القراءات تنتظر الحزمة بدل نداءات مكررة
+  _ccLoadPersistedPrefs_(); _cc.data = {}; _cc.bootPending = true;
+  var _ccBootGuard = setTimeout(function() { if (_cc.bootPending) { _cc.bootPending = false; _ccReleaseWaiters_(); } }, 15000);
+  var _ccBootDone = function() { clearTimeout(_ccBootGuard); _cc.bootPending = false; _ccReleaseWaiters_(); };
+  // هوية الشركة (الشعار أغلب حجم الحزمة): نرسل نسخة المحفوظ محلياً، والخادم يحذف الشعار إن لم يتغيّر
+  var cachedBranding = null;
+  try { var rawB = localStorage.getItem('hotelapp_branding'); if (rawB) cachedBranding = JSON.parse(rawB); } catch(e) { cachedBranding = null; }
+  var bootOpts = { brandingVer: (cachedBranding && cachedBranding.ver && cachedBranding.data) ? cachedBranding.ver : '' };
   google.script.run.withSuccessHandler(function(boot) {
     boot = boot || {};
+    try {
+      if (boot.prefs) { _cc.prefs = boot.prefs; _cc.prefsAuth = true; _ccPersistPrefs_(); }
+      var u = sessionUser.username;
+      if (boot.hotelNames) _ccStore_('getDistinctHotelNames', [u], boot.hotelNames);
+      if (boot.collectionAccounts) _ccStore_('getCollectionAccounts', [], boot.collectionAccounts);
+      if (boot.contractRanges) Object.keys(boot.contractRanges).forEach(function(h) { _ccStore_('getContractDateRange', [h, u], boot.contractRanges[h]); });
+      if (boot.notifVersion != null) _knownNotifVersion = boot.notifVersion; // أول نداء دوري لا يعيد تحميل القائمة
+      if (boot.availVersion != null && _lastAvailVersion === null) _lastAvailVersion = boot.availVersion;
+    } catch(e) {}
+    _ccBootDone();
     _usernameFullNameMap = boot.userMap || {};
-    _companyBranding = boot.branding || { nameAr:'', nameEn:'', logoUri:'' };
+    var br = boot.branding || null;
+    if (br && br.unchanged) br = (cachedBranding && cachedBranding.data) || null;
+    else if (br && boot.brandingVer) { try { localStorage.setItem('hotelapp_branding', JSON.stringify({ ver: boot.brandingVer, data: br })); } catch(e) {} }
+    if (!br) loadCompanyBranding();
+    _companyBranding = br || { nameAr:'', nameEn:'', logoUri:'' };
     _SESSION_TIMEOUT_MS = (parseInt(boot.sessionTimeoutMinutes,10)||15) * 60 * 1000;
     _resetSessionTimer();
     _myNotifications = boot.notifications || [];
@@ -3396,10 +3494,11 @@ function _applyAppBootstrap() {
     _recordBootReady_(); // v3.44 — نهاية قياس زمن الإقلاع
   }).withFailureHandler(function() {
     // احتياطي آمن: عند فشل النداء المجمّع نرجع تلقائياً للنداءات المنفصلة القديمة
+    _ccBootDone();
     loadUsernameFullNameMap(); loadCompanyBranding(); _loadSessionTimeoutSetting();
     loadMyNotifications(); pingAndRefreshConnected();
     _recordBootReady_();
-  }).getAppBootstrap(sessionUser.username, sessionUser.fullName || sessionUser.username);
+  }).getAppBootstrap(sessionUser.username, sessionUser.fullName || sessionUser.username, bootOpts);
 }
 // تُرجع الاسم الكامل لاسم مستخدم معيّن، أو اسم المستخدم نفسه إن لم يكن معروفاً (احتياطي آمن)
 function _uname(username) {
@@ -3667,6 +3766,7 @@ function doLogout() {
   stopNotifPolling();
   stopAvailVersionPolling();
   stopAppPolling();
+  _ccReset_(); // v3.53
   _lastAvailVersion = null; // إعادة تصفير الأساس ليُعاد ضبطه من جديد عند الدخول التالي
   google.script.run.logoutUser(sessionUser.username, sessionUser.fullName);
   sessionUser = null;
@@ -10009,7 +10109,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'v3.52';
+var CLIENT_APP_VERSION = 'v3.53';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {
