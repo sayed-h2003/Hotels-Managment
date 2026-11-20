@@ -388,6 +388,7 @@ body.m-view .btn-secondary, body.m-view .btn-primary-dark { min-height:42px; fon
 body.m-view .action-icon-btn { width:40px; height:40px; font-size:17px; }
 body.m-view .status-badge { font-size:11.5px !important; padding:3px 10px !important; }
 body.m-view .gs-input { height:36px; font-size:14px !important; min-height:0; }
+body.m-view #btn_theme_toggle, body.m-view #btn_view_toggle { min-height:36px; min-width:38px; padding:4px 7px !important; font-size:15px !important; }
 body.m-view .pag-wrap { font-size:13px; gap:8px; }
 body.m-view .pag-btn { height:40px; min-width:44px; font-size:13px; }
 body.m-view .placeholder-box { font-size:14px; padding:36px 16px; }
@@ -441,6 +442,11 @@ body.m-view .avail-sort-btn { min-height:36px; font-size:12.5px; }
 body.m-view #AuditLog_Screen > div:first-child .form-group { flex:1 1 calc(50% - 6px) !important; min-width:0 !important; }
 body.m-view #AuditLog_Screen > div:first-child .form-group > div { height:42px !important; }
 body.m-view #AuditLog_Screen > div:first-child input[type=text] { flex:1; width:auto !important; min-width:0; }
+/* V3.66 — الشارت على الموبايل: أعمدة بيانات الحجز الأولى غير مثبّتة (كانت تغطي معظم عرض الشاشة فتُخفي الأيام خلفها عند التمرير) */
+body.m-view .avail-table .avail-sticky-col, body.m-view .avail-table tbody td.avail-sticky-col, body.m-view .avail-table thead th.avail-sticky-col,
+body.m-view .avail-table tfoot td.avail-sticky-col, body.m-view .avail-table tfoot th.avail-sticky-col,
+body.m-view .avail-table th[style*="position:sticky"], body.m-view .avail-table td[style*="position:sticky"],
+body.m-view .avail-table th[style*="position: sticky"], body.m-view .avail-table td[style*="position: sticky"] { position:static !important; right:auto !important; box-shadow:none !important; }
 /* ── التوافر: عرض الأيام ── */
 #av_mode_toggle { display:none; }
 body.m-view #av_mode_toggle { display:inline-flex; }
@@ -448,7 +454,15 @@ body.m-view.m-av-days .avail-zoom, body.m-view.m-av-days #avail_panel_toggle, bo
 .mav-list { display:flex; flex-direction:column; gap:8px; }
 .mav-day { background:#fff; border:1px solid var(--clr-border); border-radius:14px; overflow:hidden; }
 :root[data-theme="dark"] .mav-day { background:var(--clr-card); }
-.mav-day.today { border-color:#c9a84c; box-shadow:0 0 0 2px rgba(201,168,76,.25); }
+/* V3.66 — اليوم الحالي مميّز بوضوح: إطار ذهبي سميك، خلفية ذهبية فاتحة، خانة التاريخ داكنة، وشارة "اليوم" */
+.mav-day.today { border:2.5px solid #c9a84c; background:#fff8e1; box-shadow:0 6px 18px rgba(201,168,76,.4); }
+:root[data-theme="dark"] .mav-day.today { background:#2c2a17; }
+.mav-day.today .mav-date { background:#0f2419; border-radius:12px; padding:7px 2px; }
+.mav-day.today .mav-date b { color:#e5c766; }
+.mav-day.today .mav-date span, .mav-day.today.fri .mav-date span { color:#fff; }
+.mav-day.today .mav-date small { color:#cfdcd4; }
+.mav-day.today .mav-meta { font-weight:700; color:var(--clr-text); }
+.mav-today-tag { display:inline-block; background:#c9a84c; color:#0f2419; font-weight:900; font-size:11.5px; border-radius:20px; padding:1px 10px; margin-inline-end:6px; }
 .mav-head { display:grid; grid-template-columns:64px 1fr auto; align-items:center; gap:10px; padding:10px 12px; cursor:pointer; }
 .mav-date { text-align:center; line-height:1.25; }
 .mav-date b { display:block; font-size:19px; font-weight:900; color:var(--clr-primary-dark); font-variant-numeric:tabular-nums; }
@@ -1106,6 +1120,7 @@ body.sb-collapsed #availHScrollProxy { right: 0; }
       <div class="gs-panel" id="gs_panel"></div>
     </div>
     <button class="btn-secondary" id="btn_theme_toggle" onclick="toggleTheme()" title="تبديل الوضع الليلي" style="background:transparent;border:1px solid rgba(201,168,76,.4);color:#c9a84c;padding:5px 10px;border-radius:6px;font-size:11pt;">🌓</button>
+    <button class="btn-secondary" id="btn_view_toggle" onclick="_mCycleViewMode()" title="التبديل بين عرض الموبايل وعرض الكمبيوتر" aria-label="التبديل بين عرض الموبايل وعرض الكمبيوتر" style="background:transparent;border:1px solid rgba(201,168,76,.4);color:#c9a84c;padding:5px 10px;border-radius:6px;font-size:11pt;">📱</button>
     <div class="th-datetime" id="th_datetime"></div>
     <div class="notif-bell-wrap" onclick="toggleNotifDropdown(event)">
       <button class="notif-bell-btn" title="الإشعارات">🔔
@@ -6776,6 +6791,9 @@ function _mApplyViewMode_() {
   document.body.classList.toggle('m-av-days', on && _mAvMode === 'days');
   var sw = document.getElementById('m_view_switch');
   if (sw) sw.innerText = on ? '🖥️ التحويل لعرض سطح المكتب' : '📱 التحويل لعرض الموبايل';
+  // V3.66 — زر بالشريط العلوي بجوار الوضع الليلي: الأيقونة تدل على العرض الذي سيُنتقل إليه
+  var hb = document.getElementById('btn_view_toggle');
+  if (hb) { hb.innerText = on ? '🖥️' : '📱'; hb.title = on ? 'التحويل لعرض الكمبيوتر' : 'التحويل لعرض الموبايل'; }
   var tg = document.getElementById('av_mode_toggle'); if (tg) tg.innerText = _mAvMode === 'days' ? '📊 الشارت' : '🗓 الأيام';
   if (on !== was) _mRerender_();
 }
@@ -6911,7 +6929,7 @@ function _mRenderAvailDays_(data) {
       + '<div class="mav-head" onclick="_mAvToggleDay(\'' + k + '\')">'
       + '<div class="mav-date"><b>' + dh.day + '</b><span>' + (_M_DAY_AR[dh.dayNameEn] || dh.dayNameEn || '') + '</span><small>' + (dh.hijriDay || '') + ' ' + escapeHtml(dh.hijriMonthName || '') + '</small></div>'
       + '<div><div class="mav-bar ' + (pct >= 100 ? 'full' : (pct >= 75 ? 'mid' : '')) + '"><i style="width:' + Math.min(100, Math.max(0, pct)) + '%"></i></div>'
-      + '<div class="mav-meta">محجوز ' + bk + ' من ' + cap + ' · ' + pct + '%' + (dh.isToday ? ' · اليوم' : '') + '</div></div>'
+      + '<div class="mav-meta">' + (dh.isToday ? '<span class="mav-today-tag">اليوم</span>' : '') + 'محجوز ' + bk + ' من ' + cap + ' · ' + pct + '%</div></div>'
       + '<div class="mav-free ' + (free <= 0 ? 'none' : (cap > 0 && free / cap <= 0.25 ? 'low' : '')) + '"><b>' + free + '</b><span>متاح</span></div>'
       + '</div><div class="mav-body">' + finLine + (list || '<div style="font-size:12.5px;color:var(--clr-muted);">' + (showBk ? 'لا حجوزات في هذه الليلة.' : 'تفاصيل الحجوزات غير متاحة لصلاحياتك.') + '</div>') + '</div></div>';
   });
@@ -11068,7 +11086,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.65';
+var CLIENT_APP_VERSION = 'V3.66';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {
