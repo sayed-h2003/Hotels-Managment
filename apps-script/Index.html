@@ -363,6 +363,128 @@ body.sb-collapsed #top-header { margin-right:0; }
   .th-title { font-size:9pt; }
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   V3.64 — عرض الموبايل (body.m-view): واجهة مخصصة للهاتف لا نسخة مصغّرة من سطح المكتب.
+   يُفعَّل تلقائياً على الشاشات ≤ 760px (أو يدوياً من قائمة المستخدم). كل القواعد تحت body.m-view فلا تمسّ سطح المكتب.
+   ═══════════════════════════════════════════════════════════════════════════ */
+#m-tabbar { display:none; }
+body.m-view #m-tabbar { display:flex; position:fixed; bottom:0; left:0; right:0; z-index:840; background:#0f2419; border-top:1px solid rgba(201,168,76,.35);
+  height:calc(60px + env(safe-area-inset-bottom, 0px)); padding-bottom:env(safe-area-inset-bottom, 0px); box-shadow:0 -4px 14px rgba(0,0,0,.18); }
+#m-tabbar button { flex:1 1 0; min-width:0; background:none; border:none; color:#a9bdb1; font-family:inherit; font-size:10.5px; font-weight:700; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; padding:0 2px; cursor:pointer; }
+#m-tabbar button .ic { font-size:20px; line-height:1; filter:grayscale(.35); }
+#m-tabbar button.active { color:#e5c766; }
+#m-tabbar button.active .ic { filter:none; transform:translateY(-1px); }
+body.m-view #main_app_footer { display:none !important; }
+body.m-view #availHScrollProxy { bottom:calc(60px + env(safe-area-inset-bottom, 0px)) !important; }
+body.m-view .page-content { padding:10px 10px calc(78px + env(safe-area-inset-bottom, 0px)) !important; }
+body.m-view #top-header { height:52px; }
+body.m-view .th-title { font-size:15px !important; }
+/* ── خط ولمس ── */
+body.m-view input:not([type=checkbox]):not([type=radio]):not([type=hidden]), body.m-view select, body.m-view textarea { font-size:16px !important; min-height:42px; }
+body.m-view input[type=checkbox], body.m-view input[type=radio] { width:18px !important; height:18px !important; }
+body.m-view .form-group label { font-size:12.5px !important; }
+body.m-view .btn-secondary, body.m-view .btn-primary-dark { min-height:42px; font-size:13.5px !important; padding-inline:14px !important; }
+body.m-view .action-icon-btn { width:40px; height:40px; font-size:17px; }
+body.m-view .status-badge { font-size:11.5px !important; padding:3px 10px !important; }
+body.m-view .gs-input { height:36px; font-size:14px !important; min-height:0; }
+body.m-view .pag-wrap { font-size:13px; gap:8px; }
+body.m-view .pag-btn { height:40px; min-width:44px; font-size:13px; }
+body.m-view .placeholder-box { font-size:14px; padding:36px 16px; }
+/* ── الجداول تتحول لبطاقات: كل صف بطاقة، وكل خلية "عنوان: قيمة" (العنوان من رأس العمود عبر data-label) ── */
+body.m-view table.data-table { display:block; width:100% !important; min-width:0 !important; background:transparent; box-shadow:none; }
+body.m-view table.data-table thead { display:none; }
+body.m-view table.data-table tbody { display:block; }
+body.m-view table.data-table tbody tr { display:block; background:#fff; border:1px solid var(--clr-border); border-radius:14px; margin:0 0 10px; padding:10px 12px; box-shadow:var(--shadow-sm); }
+body.m-view table.data-table tbody td { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:5px 0 !important; border:none !important; font-size:13.5px !important; max-width:none !important; width:auto !important; min-width:0 !important; white-space:normal !important; text-align:start !important; position:static !important; background:transparent !important; overflow:visible !important; }
+body.m-view table.data-table tbody td::before { content:attr(data-label); flex:0 0 36%; color:var(--clr-muted); font-size:12px; font-weight:700; text-align:start; }
+body.m-view table.data-table tbody td:not([data-label])::before, body.m-view table.data-table tbody td[data-label=""]::before { content:none; }
+body.m-view table.data-table tbody td.m-full { display:block; text-align:center !important; }
+body.m-view table.data-table tbody td.m-full::before { content:none; }
+body.m-view table.data-table tbody td.m-actions { justify-content:flex-start; flex-wrap:wrap; gap:8px; border-top:1px dashed var(--clr-border) !important; margin-top:6px; padding-top:9px !important; }
+body.m-view table.data-table tbody td.m-actions::before { content:none; }
+body.m-view table.data-table tbody td.m-empty { display:none; }
+body.m-view table.data-table .two-line-date small { display:inline; margin-inline-start:6px; }
+:root[data-theme="dark"] body.m-view table.data-table tbody tr { background:var(--clr-card); }
+/* حاويات الجداول: بلا خلفية بيضاء ولا تمرير أفقي (البطاقات تملأ العرض) */
+body.m-view .screen > div[style*="overflow-x:auto"] { background:transparent !important; box-shadow:none !important; overflow:visible !important; }
+/* ── بطاقة الحجز ── */
+body.m-view #bookingsTable tbody tr.m-bk { padding:12px 13px; }
+body.m-view #bookingsTable tbody tr.m-bk td { display:block; padding:0 !important; }
+body.m-view #bookingsTable tbody tr.m-bk td::before { content:none; }
+.mc-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.mc-title { font-size:15.5px; font-weight:800; color:var(--clr-text); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mc-sub { font-size:13px; color:var(--clr-text-sub); margin-top:4px; }
+.mc-dates { display:flex; align-items:center; gap:8px; margin-top:8px; font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; }
+.mc-dates small { display:block; font-size:11px; font-weight:600; color:var(--clr-muted); }
+.mc-dates .arr { color:var(--clr-muted); }
+.mc-nights { margin-inline-start:auto; background:var(--clr-bg); border-radius:20px; padding:2px 10px; font-size:12px; font-weight:800; white-space:nowrap; }
+.mc-foot { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:8px; font-size:12.5px; color:var(--clr-muted); }
+.mc-foot b { color:var(--clr-primary-dark); font-size:14px; font-variant-numeric:tabular-nums; }
+.mc-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; padding-top:9px; border-top:1px dashed var(--clr-border); }
+.mc-notes { margin-top:6px; font-size:12.5px; color:var(--clr-text-sub); background:var(--clr-bg); border-radius:8px; padding:5px 9px; }
+/* ── فلاتر الحجوزات: لوحة قابلة للطي ── */
+#bk_filter_toggle { display:none; }
+body.m-view #bk_filter_toggle { display:inline-flex; align-items:center; justify-content:center; gap:6px; flex:1 1 100%; }
+body.m-view #bk_filter_panel { display:none !important; }
+body.m-view #bk_filter_panel.m-open { display:flex !important; }
+body.m-view #bk_filter_panel .form-group { flex:1 1 calc(50% - 8px); min-width:0 !important; }
+body.m-view #bk_filter_panel input[type=text], body.m-view #bk_filter_panel select, body.m-view #bk_filter_panel #bkf_status_btn { width:100% !important; height:42px !important; }
+body.m-view #bk_filter_panel .form-group > div[style*="display:flex"] { height:42px !important; }
+body.m-view #bk_filter_panel .form-group > div[style*="display:flex"] input[type=text] { flex:1; width:auto !important; min-width:0; border:none !important; }
+body.m-view #bk_filter_panel > div:last-child { flex:1 1 100%; margin:4px 0 0 !important; flex-wrap:wrap; }
+body.m-view #bk_filter_panel > div:last-child button { flex:1; height:42px !important; }
+/* ── أشرطة الأدوات (توافر/نسك/مالي/حسابات/سجل) ── */
+body.m-view .avail-toolbar .form-group > div[style*="display:flex"] input[type=text] { flex:1; width:auto !important; min-width:0; }
+body.m-view .avail-toolbar > button, body.m-view .avail-toolbar .avail-zoom { height:42px !important; }
+body.m-view .avail-sort-btn { min-height:36px; font-size:12.5px; }
+body.m-view #AuditLog_Screen > div:first-child .form-group { flex:1 1 calc(50% - 6px) !important; min-width:0 !important; }
+body.m-view #AuditLog_Screen > div:first-child .form-group > div { height:42px !important; }
+body.m-view #AuditLog_Screen > div:first-child input[type=text] { flex:1; width:auto !important; min-width:0; }
+/* ── التوافر: عرض الأيام ── */
+#av_mode_toggle { display:none; }
+body.m-view #av_mode_toggle { display:inline-flex; }
+body.m-view.m-av-days .avail-zoom, body.m-view.m-av-days #avail_panel_toggle, body.m-view.m-av-days #avail_filter_bar > .avail-sort-btn, body.m-view.m-av-days #avail_filter_bar > span { display:none !important; }
+.mav-list { display:flex; flex-direction:column; gap:8px; }
+.mav-day { background:#fff; border:1px solid var(--clr-border); border-radius:14px; overflow:hidden; }
+:root[data-theme="dark"] .mav-day { background:var(--clr-card); }
+.mav-day.today { border-color:#c9a84c; box-shadow:0 0 0 2px rgba(201,168,76,.25); }
+.mav-head { display:grid; grid-template-columns:64px 1fr auto; align-items:center; gap:10px; padding:10px 12px; cursor:pointer; }
+.mav-date { text-align:center; line-height:1.25; }
+.mav-date b { display:block; font-size:19px; font-weight:900; color:var(--clr-primary-dark); font-variant-numeric:tabular-nums; }
+.mav-date span { display:block; font-size:11.5px; font-weight:700; color:var(--clr-text-sub); }
+.mav-date small { display:block; font-size:10.5px; color:var(--clr-muted); }
+.mav-day.fri .mav-date span { color:#7c3aed; }
+.mav-bar { height:9px; border-radius:6px; background:var(--clr-bg); overflow:hidden; }
+.mav-bar i { display:block; height:100%; border-radius:6px; background:#1f7a4d; }
+.mav-bar.mid i { background:#c9902a; } .mav-bar.full i { background:#b3261e; }
+.mav-meta { font-size:12px; color:var(--clr-text-sub); margin-top:4px; font-variant-numeric:tabular-nums; }
+.mav-free { text-align:center; min-width:56px; }
+.mav-free b { display:block; font-size:20px; font-weight:900; font-variant-numeric:tabular-nums; color:#1f7a4d; }
+.mav-free.low b { color:#c9902a; } .mav-free.none b { color:#b3261e; }
+.mav-free span { font-size:10.5px; font-weight:700; color:var(--clr-muted); }
+.mav-body { display:none; border-top:1px dashed var(--clr-border); padding:8px 12px 10px; }
+.mav-day.open .mav-body { display:block; }
+.mav-bk { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 0; border-bottom:1px solid var(--clr-border); font-size:13.5px; cursor:pointer; }
+.mav-bk:last-child { border-bottom:none; }
+.mav-bk .n { font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mav-bk .r { white-space:nowrap; color:var(--clr-text-sub); font-size:12.5px; }
+.mav-fin { display:flex; gap:14px; font-size:12px; color:var(--clr-text-sub); margin-bottom:6px; font-variant-numeric:tabular-nums; }
+.mav-sum { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-bottom:10px; }
+.mav-sum div { background:#fff; border:1px solid var(--clr-border); border-radius:12px; padding:8px 6px; text-align:center; }
+:root[data-theme="dark"] .mav-sum div { background:var(--clr-card); }
+.mav-sum b { display:block; font-size:17px; font-weight:900; color:var(--clr-primary-dark); font-variant-numeric:tabular-nums; }
+.mav-sum span { font-size:11px; font-weight:700; color:var(--clr-muted); }
+/* ── النوافذ: نماذج وجداول بملء الشاشة، والتأكيدات الصغيرة تبقى حواراً ── */
+body.m-view .modal-overlay:has(.modal-box .form-group), body.m-view .modal-overlay:has(.modal-box table) { padding:0 !important; align-items:stretch !important; justify-content:stretch !important; }
+body.m-view .modal-box:has(.form-group), body.m-view .modal-box:has(table) { width:100vw !important; max-width:100vw !important; height:100vh; height:100dvh; max-height:100dvh !important; border-radius:0 !important; margin:0 !important; left:0 !important; top:0 !important; transform:none !important; display:flex; flex-direction:column; }
+body.m-view .modal-box:has(.form-group) .modal-body, body.m-view .modal-box:has(table) .modal-body { flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch; max-height:none !important; }
+body.m-view .modal-header { min-height:52px; font-size:15px; }
+body.m-view .modal-footer { padding-bottom:calc(10px + env(safe-area-inset-bottom, 0px)); gap:8px; }
+body.m-view .modal-footer button { flex:1 1 0; min-height:46px; }
+body.m-view .modal-close-btn { min-width:44px; min-height:44px; font-size:22px; }
+body.m-view .dp-grid button, body.m-view .dp-grid .dp-day { min-height:40px; font-size:14px; }
+
 /* ══ مساحة شاغرة ══ */
 .placeholder-box { background:#fff; border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); padding:60px 20px; text-align:center; color:var(--clr-muted); font-size:10pt; }
 
@@ -932,6 +1054,8 @@ body.sb-collapsed #availHScrollProxy { right: 0; }
 
 <!-- ══════════════ Overlay موبايل ══════════════ -->
 <div id="sb-overlay" onclick="closeMobileSidebar()"></div>
+<!-- V3.64 — شريط التنقل السفلي (عرض الموبايل فقط؛ يُبنى حسب صلاحيات المستخدم) -->
+<nav id="m-tabbar" aria-label="التنقل الرئيسي"></nav>
 
 <!-- ══════════════ القائمة الجانبية ══════════════ -->
 <nav id="app-sidebar" style="display:none;">
@@ -1009,6 +1133,7 @@ body.sb-collapsed #availHScrollProxy { right: 0; }
       <div class="user-dropdown" id="user_dropdown">
         <div class="user-dropdown-header" id="user_dropdown_header">المستخدم</div>
         <div class="user-dropdown-item" onclick="openHomeScreenModal();closeUserDropdown()">🏠 الشاشة الرئيسية</div>
+        <div class="user-dropdown-item" id="m_view_switch" onclick="_mCycleViewMode();closeUserDropdown()">📱 عرض الموبايل</div>
         <div class="user-dropdown-item" onclick="openChangePasswordModal();closeUserDropdown()">🔑 تغيير كلمة المرور</div>
         <div class="user-dropdown-item" onclick="testBrowserNotification();closeUserDropdown()">🔔 اختبار إشعارات المتصفح</div>
         <div class="user-dropdown-item danger" onclick="doLogout()">🚪 تسجيل خروج</div>
@@ -1172,6 +1297,7 @@ body.sb-collapsed #availHScrollProxy { right: 0; }
         <button class="avail-toggle-btn" id="avail_panel_toggle" title="إخفاء/إظهار بيانات الحجوزات" style="height:38px;" onclick="toggleAvailPanel()">◄</button>
         <button class="btn-secondary" style="height:38px;" onclick="openAvailColumnsModal()">⚙️ أعمدة</button>
         <button class="btn-secondary" style="height:38px;" onclick="printAvailabilityChart()">🖨️ طباعة</button>
+        <button class="btn-secondary" id="av_mode_toggle" type="button" style="height:38px;" onclick="_mToggleAvailMode()">🗓 الأيام</button>
         <div class="avail-zoom" title="تكبير/تصغير الشارت (أو قرص بإصبعين على الشارت)">
           <button type="button" onclick="avZoomStep(-1)" aria-label="تصغير">−</button>
           <span id="avail_zoom_lbl">100%</span>
@@ -1238,10 +1364,11 @@ body.sb-collapsed #availHScrollProxy { right: 0; }
       <div style="display:flex;align-items:stretch;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
         <button class="btn-primary-dark" id="btn_add_booking" onclick="openBookingModal()" style="flex-shrink:0;">➕ تسجيل حجز جديد</button>
         <div id="bkStatCards" style="display:flex;gap:8px;flex:1;flex-wrap:wrap;"></div>
+        <button class="btn-secondary" id="bk_filter_toggle" type="button" onclick="_mToggleBkFilters()">🔍 الفلاتر والترتيب</button>
       </div>
       <div id="overCapacityBanner" style="display:none;"></div>
       <!-- فلاتر مباشرة ديناميكية لحظية -->
-      <div style="background:#fff;border-radius:var(--radius-md);padding:10px 14px;margin-bottom:8px;box-shadow:var(--shadow-sm);display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+      <div id="bk_filter_panel" style="background:#fff;border-radius:var(--radius-md);padding:10px 14px;margin-bottom:8px;box-shadow:var(--shadow-sm);display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
         <div class="form-group" style="margin:0;min-width:88px;">
           <label style="font-size:7.8pt;">رقم الحجز</label>
           <input type="text" id="bkf_id" placeholder="D001..." style="height:28px;font-size:8.5pt;width:88px;padding:2px 6px;" oninput="_renderFilteredBookings()">
@@ -4005,6 +4132,7 @@ function enterApp() {
   document.getElementById('th_avatar').innerText = (sessionUser.fullName || '?').charAt(0);
   applyPermissionsToSidebar();
   _initSidebarState_();
+  try { _mApplyViewMode_(); _mBuildTabbar_(); } catch (eMV) {} // V3.64 — عرض الموبايل
   // نداء مجمّع واحد بدلاً من 5 نداءات منفصلة (خريطة الأسماء + الهوية + مدة الجلسة + الإشعارات + المتصلون)
   _applyAppBootstrap();
   startHeaderClock();
@@ -4073,6 +4201,7 @@ function doLogout() {
   _lastAvailVersion = null; // إعادة تصفير الأساس ليُعاد ضبطه من جديد عند الدخول التالي
   if (sessionUser.token) google.script.run.logoutUser(sessionUser.username, sessionUser.fullName); // V3.63 — ينهي رمز الجلسة بالخادم
   sessionUser = null;
+  try { var _mtb = document.getElementById('m-tabbar'); if (_mtb) _mtb.innerHTML = ''; } catch (eTB) {}
   document.getElementById('Login_Screen').style.display = 'flex';
   document.getElementById('app-sidebar').style.display = 'none';
   document.getElementById('top-header').style.display = 'none';
@@ -4202,6 +4331,7 @@ function switchScreen(screenId) {
   var btn = document.getElementById(SCREEN_TO_NAVBTN[screenId]);
   if (btn) btn.classList.add('active');
   document.getElementById('th_screen_title').innerText = SCREEN_TITLES[screenId] || '';
+  try { _mSyncTabbar_(screenId); if (_mIsOn()) window.scrollTo(0, 0); } catch (eMT) {} // V3.64
 
   // v3.14 — شريط التمرير الأفقي المصاحب لشارت التوافر: يظهر فقط بشاشة التوافر (قبل أي return مبكّر بسبب الكاش أدناه)
   if (screenId === 'Availability_Screen') { _avSyncHScrollProxy(); } else { _avHideHScrollProxy(); }
@@ -5568,6 +5698,8 @@ function renderBookingsTable(list) {
       +'</td>';
     }
   };
+  // V3.64 — عرض الموبايل: بطاقة لكل حجز (العميل والحالة، الفندق، التواريخ، القيمة، الأزرار) بدل صف جدول عريض
+  if (_mIsOn()) { tbody.innerHTML = list.map(function(b) { return _mBookingCardRow_(b, cellRenderers, canFin, colCount); }).join(''); return; }
   tbody.innerHTML = list.map(function(b) {
     var rowCls=(b.status==='ملغي')?' class="row-cancelled"':(Number(b.roomCount)<0?' class="row-purchase"':'');
     return '<tr'+rowCls+'>'+visibleDefs.map(function(c){ return cellRenderers[c.k] ? cellRenderers[c.k](b) : '<td></td>'; }).join('')+'</tr>';
@@ -6629,6 +6761,167 @@ function avZoomFit() { _avZoom = (_avZoom === 'fit') ? 1 : 'fit'; _avSaveZoom_()
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind); else bind();
 })();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// V3.64 — عرض الموبايل (m-view)
+// وضع العرض: 'auto' (موبايل تلقائياً عند عرض ≤ 760px) | 'mobile' | 'desktop' — يُحفظ على الجهاز.
+// ═══════════════════════════════════════════════════════════════════════════
+var _mViewPref = (function() { try { var v = localStorage.getItem('ha_view_mode'); if (v === 'mobile' || v === 'desktop') return v; } catch (e) {} return 'auto'; })();
+var _mAvMode = (function() { try { return localStorage.getItem('ha_m_av_mode') === 'chart' ? 'chart' : 'days'; } catch (e) { return 'days'; } })();
+function _mIsOn() { return document.body.classList.contains('m-view'); }
+function _mApplyViewMode_() {
+  var on = _mViewPref === 'mobile' || (_mViewPref === 'auto' && (window.innerWidth || 1200) <= 760);
+  var was = _mIsOn();
+  document.body.classList.toggle('m-view', on);
+  document.body.classList.toggle('m-av-days', on && _mAvMode === 'days');
+  var sw = document.getElementById('m_view_switch');
+  if (sw) sw.innerText = on ? '🖥️ التحويل لعرض سطح المكتب' : '📱 التحويل لعرض الموبايل';
+  var tg = document.getElementById('av_mode_toggle'); if (tg) tg.innerText = _mAvMode === 'days' ? '📊 الشارت' : '🗓 الأيام';
+  if (on !== was) _mRerender_();
+}
+function _mCycleViewMode() {
+  _mViewPref = _mIsOn() ? 'desktop' : 'mobile';
+  try { localStorage.setItem('ha_view_mode', _mViewPref); } catch (e) {}
+  _mApplyViewMode_();
+  showToast(_mIsOn() ? 'تم التحويل لعرض الموبايل.' : 'تم التحويل لعرض سطح المكتب.', 'info');
+}
+// إعادة رسم ما يختلف شكله بين الوضعين (بلا أي نداء خادم)
+function _mRerender_() {
+  try { if (typeof sessionUser === 'undefined' || !sessionUser) return; } catch (e) { return; }
+  try { _mBuildTabbar_(); } catch (e1) {}
+  try { if (_bkAllMode === 'local' && _bkAll) _bkRenderLocal_(); else if (_bkPageRows && _bkPageRows.length) renderBookingsTable(_bkPageRows); } catch (e2) {}
+  try { if (_availData) renderAvailabilityGrid(); } catch (e3) {}
+  try { _mLabelTables_(); } catch (e4) {}
+}
+(function() {
+  var rz = null;
+  window.addEventListener('resize', function() { clearTimeout(rz); rz = setTimeout(_mApplyViewMode_, 180); });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _mApplyViewMode_); else _mApplyViewMode_();
+})();
+
+// ── شريط التنقل السفلي: أول 4 شاشات مسموحة بهذا الترتيب + "المزيد" (يفتح القائمة الكاملة) ──
+var _M_TABS = [
+  { id: 'Availability_Screen', ic: '📅', t: 'التوافر' }, { id: 'Bookings_Screen', ic: '🛎️', t: 'الحجوزات' },
+  { id: 'Dashboard_Screen', ic: '📊', t: 'اللوحة' }, { id: 'Accounts_Screen', ic: '💰', t: 'الحسابات' },
+  { id: 'Contracts_Screen', ic: '📄', t: 'التعاقدات' }, { id: 'Waitlist_Screen', ic: '📋', t: 'الانتظار' },
+  { id: 'Nusuk_Screen', ic: '🌙', t: 'نسك' }, { id: 'FinancialReport_Screen', ic: '📈', t: 'المالي' }
+];
+function _mBuildTabbar_() {
+  var bar = document.getElementById('m-tabbar'); if (!bar) return;
+  if (typeof sessionUser === 'undefined' || !sessionUser) { bar.innerHTML = ''; return; }
+  var allowed = _getAllowedHomeScreens();
+  var tabs = _M_TABS.filter(function(t) { return allowed.indexOf(t.id) > -1; }).slice(0, 4);
+  bar.innerHTML = tabs.map(function(t) {
+    return '<button type="button" data-screen="' + t.id + '" onclick="closeMobileSidebar();switchScreen(\'' + t.id + '\')"><span class="ic">' + t.ic + '</span><span>' + t.t + '</span></button>';
+  }).join('') + '<button type="button" data-screen="" onclick="_mOpenMore()"><span class="ic">☰</span><span>المزيد</span></button>';
+  var cur = document.querySelector('.screen.active-screen'); _mSyncTabbar_(cur ? cur.id : '');
+}
+function _mSyncTabbar_(screenId) {
+  var bar = document.getElementById('m-tabbar'); if (!bar) return;
+  var hit = false;
+  bar.querySelectorAll('button').forEach(function(b) { var a = b.getAttribute('data-screen') === screenId && !!screenId; if (a) hit = true; b.classList.toggle('active', a); });
+  if (!hit) { var more = bar.querySelector('button[data-screen=""]'); if (more) more.classList.add('active'); }
+}
+function _mOpenMore() {
+  var sidebar = document.getElementById('app-sidebar'), overlay = document.getElementById('sb-overlay');
+  var isOpen = sidebar.classList.toggle('sb-open'); overlay.classList.toggle('open', isOpen);
+}
+function _mToggleBkFilters() { var p = document.getElementById('bk_filter_panel'); if (p) p.classList.toggle('m-open'); }
+
+// ── الجداول ⇒ بطاقات: عنوان كل خلية من رأس عمودها ──
+var _mLabelRaf = 0;
+function _mLabelTables_() {
+  if (!_mIsOn()) return;
+  document.querySelectorAll('table.data-table').forEach(function(tb) {
+    if (tb.id === 'bookingsTable') return; // لها بطاقة مخصصة
+    var heads = Array.prototype.map.call(tb.querySelectorAll('thead th'), function(th) { return (th.innerText || '').trim(); });
+    if (!heads.length) return;
+    tb.querySelectorAll('tbody tr').forEach(function(tr) {
+      var tds = tr.children;
+      for (var i = 0; i < tds.length; i++) {
+        var td = tds[i]; if (td._mDone) continue; td._mDone = true;
+        if (td.colSpan > 1) { td.classList.add('m-full'); continue; }
+        var lbl = heads[i] || '';
+        if (/الإجراءات|إجراءات/.test(lbl)) { td.classList.add('m-actions'); continue; }
+        td.setAttribute('data-label', lbl);
+        if (!(td.innerText || '').trim() && !td.querySelector('button, input, select, img, span')) td.classList.add('m-empty');
+      }
+    });
+  });
+}
+(function() {
+  var start = function() {
+    var host = document.querySelector('.page-content'); if (!host || typeof MutationObserver === 'undefined') return;
+    new MutationObserver(function() { if (!_mIsOn() || _mLabelRaf) return; _mLabelRaf = requestAnimationFrame(function() { _mLabelRaf = 0; _mLabelTables_(); }); }).observe(host, { childList: true, subtree: true });
+    // النوافذ المنبثقة خارج .page-content: نراقب الجسم لجداولها أيضاً
+    new MutationObserver(function() { if (!_mIsOn() || _mLabelRaf) return; _mLabelRaf = requestAnimationFrame(function() { _mLabelRaf = 0; _mLabelTables_(); }); }).observe(document.body, { childList: true, subtree: true });
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
+
+// ── بطاقة الحجز ──
+function _mTdInner_(html) { return String(html || '').replace(/^\s*<td[^>]*>/, '').replace(/<\/td>\s*$/, ''); }
+function _mBookingCardRow_(b, cellRenderers, canFin, colCount) {
+  var rooms = Number(b.roomCount) || 0;
+  var val = (canFin && b.bookingValue != null && b.bookingValue !== '') ? '<b>' + Number(b.bookingValue || 0).toLocaleString('en-US') + '</b> ر.س' : '';
+  return '<tr class="m-bk' + (rooms < 0 ? ' purchase-row' : '') + '"><td colspan="' + colCount + '">'
+    + '<div class="mc-top"><span class="mc-title">' + escapeHtml(b.clientName) + '</span><span>' + _mTdInner_(cellRenderers.status(b)) + '</span></div>'
+    + '<div class="mc-sub">🏨 ' + escapeHtml(b.hotelName) + ' · ' + Math.abs(rooms) + ' غرفة' + (b.collectionAccount ? ' · ' + escapeHtml(b.collectionAccount) : '') + '</div>'
+    + '<div class="mc-dates"><span>' + escapeHtml(b.checkIn) + '<small>' + escapeHtml(b.checkInHijri || '') + '</small></span><span class="arr">←</span>'
+    + '<span>' + escapeHtml(b.checkOut) + '<small>' + escapeHtml(b.checkOutHijri || '') + '</small></span><span class="mc-nights">' + (b.nights || 0) + ' ليلة</span></div>'
+    + (b.notes ? '<div class="mc-notes">📝 ' + escapeHtml(b.notes) + '</div>' : '')
+    + '<div class="mc-foot"><span>#' + escapeHtml(b.bookingId) + (b.paymentDate ? ' · سداد ' + escapeHtml(b.paymentDate) : '') + '</span><span>' + val + '</span></div>'
+    + '<div class="mc-actions">' + _mTdInner_(cellRenderers.actions(b)) + '</div>'
+    + '</td></tr>';
+}
+
+// ── التوافر: عرض الأيام ──
+var _M_DAY_AR = { Sun: 'الأحد', Mon: 'الاثنين', Tue: 'الثلاثاء', Wed: 'الأربعاء', Thu: 'الخميس', Fri: 'الجمعة', Sat: 'السبت' };
+var _mAvOpenDays = {};
+function _mToggleAvailMode() {
+  _mAvMode = _mAvMode === 'days' ? 'chart' : 'days';
+  try { localStorage.setItem('ha_m_av_mode', _mAvMode); } catch (e) {}
+  _mApplyViewMode_(); renderAvailabilityGrid();
+}
+function _mAvToggleDay(k) { _mAvOpenDays[k] = !_mAvOpenDays[k]; var el = document.getElementById('mav_' + k); if (el) el.classList.toggle('open', !!_mAvOpenDays[k]); }
+function _mRenderAvailDays_(data) {
+  var host = document.getElementById('availGridContainer'); if (!host) return;
+  var _f = document.getElementById('avail_from'), _t = document.getElementById('avail_to');
+  var fromDate = (_f && _f.value) ? new Date(_f.value + 'T00:00:00') : null, toDate = (_t && _t.value) ? new Date(_t.value + 'T00:00:00') : null;
+  var rows = (data.bookingRows || []).filter(function(b) { return _availShowCancelled || b.status !== 'ملغي'; });
+  var showBk = !data.bookingDataHidden, fin = !data.financeHidden && !!data.dailySales && !!data.dailyCost;
+  var html = '', totCap = 0, totBk = 0, minFree = null, n = 0;
+  var fmt = function(v) { return Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 0 }); };
+  data.dayHeaders.forEach(function(dh, i) {
+    var d = new Date(dh._gYear, dh._gMonth - 1, dh.day);
+    if ((fromDate && d < fromDate) || (toDate && d > toDate)) return;
+    var cap = Number(data.dailyCapacity[i]) || 0, bk = Number(data.dailyBooked[i]) || 0, free = cap - bk;
+    var pct = cap > 0 ? Math.round(bk / cap * 100) : (bk > 0 ? 100 : 0);
+    totCap += cap; totBk += bk; n++; if (minFree === null || free < minFree) minFree = free;
+    var k = dh._gYear + '_' + dh._gMonth + '_' + dh.day;
+    var list = '';
+    if (showBk) {
+      rows.forEach(function(b) {
+        var v = b.dayValues && b.dayValues[i]; if (v === '' || v == null) return;
+        list += '<div class="mav-bk" onclick="openBookingViewModal(\'' + escapeHtmlAttr(b.bookingId) + '\')"><span class="n">' + escapeHtml(b.clientName) + '</span><span class="r">' + escapeHtml(String(v)) + ' غرفة · ' + escapeHtml(typeof _bkStatusDisplay === 'function' && b.overCapacity ? (b.overCapacityType || b.status) : b.status) + '</span></div>';
+      });
+    }
+    var finLine = fin ? '<div class="mav-fin"><span>مبيعات: ' + fmt(data.dailySales[i]) + '</span><span>تكلفة: ' + fmt(data.dailyCost[i]) + '</span></div>' : '';
+    html += '<div class="mav-day' + (dh.isToday ? ' today' : '') + (dh.isFriday ? ' fri' : '') + (_mAvOpenDays[k] ? ' open' : '') + '" id="mav_' + k + '">'
+      + '<div class="mav-head" onclick="_mAvToggleDay(\'' + k + '\')">'
+      + '<div class="mav-date"><b>' + dh.day + '</b><span>' + (_M_DAY_AR[dh.dayNameEn] || dh.dayNameEn || '') + '</span><small>' + (dh.hijriDay || '') + ' ' + escapeHtml(dh.hijriMonthName || '') + '</small></div>'
+      + '<div><div class="mav-bar ' + (pct >= 100 ? 'full' : (pct >= 75 ? 'mid' : '')) + '"><i style="width:' + Math.min(100, Math.max(0, pct)) + '%"></i></div>'
+      + '<div class="mav-meta">محجوز ' + bk + ' من ' + cap + ' · ' + pct + '%' + (dh.isToday ? ' · اليوم' : '') + '</div></div>'
+      + '<div class="mav-free ' + (free <= 0 ? 'none' : (cap > 0 && free / cap <= 0.25 ? 'low' : '')) + '"><b>' + free + '</b><span>متاح</span></div>'
+      + '</div><div class="mav-body">' + finLine + (list || '<div style="font-size:12.5px;color:var(--clr-muted);">' + (showBk ? 'لا حجوزات في هذه الليلة.' : 'تفاصيل الحجوزات غير متاحة لصلاحياتك.') + '</div>') + '</div></div>';
+  });
+  if (!n) { host.innerHTML = '<div class="placeholder-box">لا أيام ضمن الفترة المختارة.</div>'; return; }
+  var occ = totCap > 0 ? Math.round(totBk / totCap * 100) : 0;
+  host.innerHTML = '<div class="mav-sum"><div><b>' + occ + '%</b><span>متوسط الإشغال</span></div><div><b>' + (totCap - totBk) + '</b><span>ليالٍ/غرف متاحة</span></div><div><b>' + (minFree == null ? 0 : minFree) + '</b><span>أقل متاح في يوم</span></div></div>'
+    + '<div class="mav-list">' + html + '</div>';
+  try { var td = host.querySelector('.mav-day.today'); if (td && !host._mScrolled) { host._mScrolled = true; td.scrollIntoView({ block: 'center' }); } } catch (e) {}
+}
+
 function _avHideHScrollProxy() {
   var proxy = document.getElementById('availHScrollProxy');
   if (proxy) proxy.classList.remove('show');
@@ -6637,6 +6930,8 @@ function _avHideHScrollProxy() {
 function renderAvailabilityGrid() {
   var data = _availData;
   if (!data) return;
+  // V3.64 — عرض الموبايل: قائمة أيام (إشغال ومتاح لكل ليلة، واللمس يعرض حجوزاتها) بدل شبكة 30 عموداً
+  if (_mIsOn() && _mAvMode === 'days') { _mRenderAvailDays_(data); _avHideHScrollProxy(); try { _markScreenOpenEnd_('Availability_Screen'); } catch (eM0) {} return; }
   
   var showBookingCols = !data.bookingDataHidden && !_availPanelCollapsed;
   var cols = showBookingCols ? AVAIL_COLUMN_DEFS.filter(function(c) { 
@@ -10773,7 +11068,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.63';
+var CLIENT_APP_VERSION = 'V3.64';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {

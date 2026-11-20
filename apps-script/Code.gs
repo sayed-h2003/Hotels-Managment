@@ -329,6 +329,10 @@ function initializeSystem() { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════════════════
 var __TRUSTED_DEPTH = 0, __API_CTX = null;
 var _AUTH_ERR_ = "انتهت الجلسة أو تم تحديث البرنامج — حدّث الصفحة وسجّل الدخول من جديد. [SESSION_EXPIRED]";
+// V3.64 — ساعة مراحل: تسجّل زمن كل مرحلة داخل دالة ثقيلة كعيّنة "~الدالة:المرحلة" (لمعرفة أين يذهب الزمن فعلاً قبل أي تحسين)
+var __LAP = null;
+function _lapStart_() { __LAP = Date.now(); }
+function _lap_(label) { try { if (__LAP == null) return; var n = Date.now(); _recordPerfSample_("~" + label, n - __LAP, true); __LAP = n; } catch (e) {} }
 function _apiGuard_() { if (__TRUSTED_DEPTH > 0) return; throw new Error(_AUTH_ERR_); }
 function _trusted_(fn) { __TRUSTED_DEPTH++; try { return fn(); } finally { __TRUSTED_DEPTH--; } }
 
@@ -568,17 +572,22 @@ function loginUser(username, password, opts) {
     if (!isActive) return { success: false, message: "هذا الحساب معطّل. تواصل مع مدير النظام." };
     // ترحيل شفاف للحساب القديم لصيغة مشفَّرة بعد أول دخول ناجح
     if (!_pwIsHashed_(stored)) _pwMigrateIfNeeded_(sheet, i, password);
-    removeActiveSessionRow(storedUsername);
-    _getOrCreateSheet_("Active_Sessions").appendRow([fullName, new Date(), storedUsername]);
+    // V3.64 — سطر "المتصلون" يُكتب من نبضة النداء الدوري الأول (ينطلق بالتوازي فور الدخول) بدل قراءة + حذف + إضافة هنا
+    // (ثلاث عمليات شيت كانت تؤخّر رد الدخول الذي يحمل الآن الإقلاع وبيانات الشاشة الرئيسية)
+    _lapStart_();
     logAudit("شاشة الدخول", "تسجيل دخول", "N/A", "", "", "", "تسجيل دخول ناجح", fullName);
+    _lap_("loginUser:audit");
     var permissions = getUserPermissions(storedUsername, role);
     _loginFailClear_(username);
     var out = { success: true, username: storedUsername, fullName: fullName, role: role,
              permissions: permissions, screens: ALL_SCREENS, systemVersion: APP_VERSION,
              token: _sessionCreate_(storedUsername, fullName) }; // V3.63 — رمز الجلسة (يبقى في ذاكرة الصفحة فقط)
+    _lap_("loginUser:permsSession");
     if (opts && opts.boot) {
       try { out.boot = getAppBootstrap(storedUsername, fullName, { brandingVer: opts.brandingVer, lite: true }); } catch (eB) { _logError_(_fn, eB); }
+      _lap_("loginUser:boot");
       if (out.boot) { try { out.home = _loginHomeData_(storedUsername, role, permissions, out.boot, opts); } catch (eH) { _logError_(_fn, eH); } }
+      _lap_("loginUser:home");
     }
     return out;
   }
@@ -2247,6 +2256,7 @@ function saveBooking(b, currentUser) { _apiGuard_();
   return _withLock_(function() {
   _invalidateSheetCache_("Bookings_Master"); // ضمان قراءة حديثة بعد أي كتابة ضمن نفس التنفيذ
   _invalidateReferenceCache_(_REF_CACHE_KEY_CLIENTS); // إبطال الكاش المرجعي المؤثر
+  _lapStart_();
   _requirePermission_(currentUser,"bookings",b.editId?"canEdit":"canAdd");
   var ss=_getSS_();
   var sheet=_getOrCreateSheet_("Bookings_Master");
@@ -2288,6 +2298,7 @@ function saveBooking(b, currentUser) { _apiGuard_();
     }
   }
 
+  _lap_("saveBooking:readAvail");
   // ─── منع التكرار: رفض الحفظ إن وُجد حجز آخر (غير محذوف) مطابق تماماً لكل بياناته الجوهرية ───
   // يحمي من التسجيل المزدوج (ضغط زر الحفظ مرتين بسرعة فينشأ رقما حجز مختلفان بنفس البيانات) ومن إدخال حجز مكرر يدوياً
   for (var _di=1; _di<data.length; _di++) {
@@ -2341,7 +2352,9 @@ function saveBooking(b, currentUser) { _apiGuard_();
         newVals[5]=checkIn; newVals[6]=checkOut; newVals[7]=nights; newVals[8]=salePrice; newVals[9]=bookingValue;
         newVals[12]=editSummary; newVals[14]=notes; newVals[15]=overCapacity; newVals[16]=overCapacityType;
         while (newVals.length < 17) newVals.push("");
+        _lap_("saveBooking:auditDiff");
         sheet.getRange(rowNum,2,1,17).setValues([newVals]);
+        _lap_("saveBooking:write");
         if (b.paymentDate !== undefined) sheet.getRange(rowNum,22).setValue(paymentDate||"");
         if (overCapacity) {
           logAudit("الحجوزات","تعديل أوفر",b.editId,"","","","تم حفظ التعديل رغم عدم توفر إمكانية كافية (معدل اوفر)",currentUser);
@@ -2384,6 +2397,7 @@ function saveBooking(b, currentUser) { _apiGuard_();
         // دون إبطال كاش شارت التوافر الفعلي لهذا الفندق/الشهر (TTL حتى 15 دقيقة) — لذا كان التعديل
         // لا يظهر بالشارت فوراً ولا حتى بزر "تحديث" حتى تنتهي صلاحية الكاش من تلقاء نفسها.
         // الآن نُمرّر الفندق والتواريخ الجديدة، ونُبطل أيضاً كاش الفندق/التواريخ القديمة (في حال تغيّرت أثناء التعديل)
+        _lap_("saveBooking:notify");
         _bumpAvailabilityVersion_(hotelMap[contractId]||contractId, checkIn, checkOut);
         try {
           var _oldHotelName = hotelMap[oldRow[1]] || oldRow[1];
@@ -2399,9 +2413,10 @@ function saveBooking(b, currentUser) { _apiGuard_();
     throw new Error("لم يتم العثور على الحجز المطلوب تعديله.");
   } else {
 var bookingId=_getNextSequentialId_("D",3);
+    _lap_("saveBooking:newId");
     sheet.appendRow([bookingId,contractId,clientName,collectionAccountId,status,roomCount,
       checkIn,checkOut,nights,salePrice,bookingValue,currentUser,now,"",false,
-      notes,overCapacity,overCapacityType,"","","",paymentDate||""]); // V3.58 — إصلاح: تاريخ السداد في عمود Booking_Payment_Date (22) لا Client_Option_Date (21)
+      notes,overCapacity,overCapacityType,"","","",paymentDate||""]); _lap_("saveBooking:write"); // V3.58 — إصلاح: تاريخ السداد في عمود Booking_Payment_Date (22) لا Client_Option_Date (21)
     logAudit("الحجوزات","إنشاء حجز",bookingId,"","","",
       "حجز جديد: "+clientName+" — "+(hotelMap[contractId]||contractId)+" — "+roomCount+" غرفة"+(overCapacity?" (مسجل اوفر)":""),currentUser);
     // v3.29 — تنبيه واحد فقط لكل حجز جديد: إن كان (مسجل اوفر) يُرسَل تنبيه الأوفر وحده، وإلا تنبيه الحجز الجديد العادي.
@@ -2424,7 +2439,9 @@ var bookingId=_getNextSequentialId_("D",3);
         _bookingNotifDetails_(_newBaseDetails), currentUser);
     }
     // v3.10 — نفس إصلاح إبطال كاش شارت التوافر (راجع التعليق بمسار التعديل أعلاه)
+    _lap_("saveBooking:auditNotify");
     _bumpAvailabilityVersion_(hotelMap[contractId]||contractId, checkIn, checkOut);
+    _lap_("saveBooking:bump");
     return {success:true,bookingId:bookingId, overCapacity: overCapacity, overCapacityType: overCapacityType,
       row: _savedBookingObj_([bookingId,contractId,clientName,collectionAccountId,status,roomCount,checkIn,checkOut,nights,salePrice,bookingValue,currentUser,now,"",false,notes,overCapacity,overCapacityType,"","","",paymentDate||""], currentUser)};
   }
@@ -4888,7 +4905,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.63";
+var APP_VERSION = "V3.64";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
