@@ -129,7 +129,7 @@ const ALL_SCREENS = [
 ];
 
 // تُعيد قائمة كل الشاشات/الصلاحيات المتاحة بالنظام - المصدر الوحيد الذي تعتمد عليه الواجهة لبناء شاشة الصلاحيات ديناميكياً
-function getAllScreensList() {
+function getAllScreensList() { _apiGuard_();
   var _fn="[getAllScreensList]"; _logInfo_(_fn, "START | "+"");
   try {
   return ALL_SCREENS;
@@ -138,7 +138,7 @@ function getAllScreensList() {
 
 // تُعيد خريطة (اسم المستخدم → الاسم الكامل) لكل المستخدمين - تُستخدم بالواجهة لعرض الاسم الفعلي بدل اسم الدخول
 // في كل مكان يظهر فيه "منشئ الحجز/التعاقد" أو "المستخدم" بسجل التعديلات، بدلاً من تخزين نسخة مكررة من الاسم مع كل سجل
-function getUsernameFullNameMap() {
+function getUsernameFullNameMap() { _apiGuard_();
   var _fn="[getUsernameFullNameMap]"; _logInfo_(_fn, "START | "+"");
   try {
   var data = _getSheetValues_("Users_Master");
@@ -208,12 +208,13 @@ function doGet(e) {
     name = p.action === "perfReport" ? "doGet:perfReport" : (p.page === "guide" ? "doGet:guide" : "doGet:index");
     __EXEC_CONSOLE = [];
   } catch (e0) {}
-  __PERF_DEPTH++;
+  __PERF_DEPTH++; __TRUSTED_DEPTH++; // V3.63 — نقطة دخول موثوقة
   try {
     return _doGetCore_(e);
   } catch (err) {
     ok = false; throw err;
   } finally {
+    __TRUSTED_DEPTH--;
     __PERF_DEPTH = Math.max(0, __PERF_DEPTH - 1);
     try { _perfLogPush_({ t: new Date(start).toISOString(), src: "web", kind: "exec", name: name, ms: Date.now() - start, ok: ok, err: "", v: APP_VERSION, con: __EXEC_CONSOLE.slice(0, 30) }); } catch (e1) {}
   }
@@ -278,12 +279,12 @@ function _doGetCore_(e) {
 }
 
 // يُرجع رابط صفحة الدليل للواجهة (الرابط الحالي للنشر + ?page=guide)
-function getSetupGuideUrl() {
+function getSetupGuideUrl() { _apiGuard_();
   return ScriptApp.getService().getUrl() + '?page=guide';
 }
 
 // ===================== 3. تهيئة قاعدة البيانات =====================
-function initializeSystem() {
+function initializeSystem() { _apiGuard_();
   var _fn="[initializeSystem]"; _logInfo_(_fn, "START | "+"");
   try {
   var ss = _getSS_();
@@ -315,11 +316,245 @@ function initializeSystem() {
 }
 
 // ===================== 4. تسجيل الدخول والجلسات =====================
+// ═══════════════════════════════════════════════════════════════════════════
+// V3.63 — جلسة موثّقة من الخادم
+// كان الخادم يصدّق اسم المستخدم الذي يرسله المتصفح في كل نداء (بلا أي إثبات) — فمن يملك رابط البرنامج يستطيع
+// تنفيذ أي دالة باسم المدير. الآن:
+//   1) loginUser يُصدر رمز جلسة عشوائياً (256 بت) يُحفظ في الخادم.
+//   2) المتصفح ينادي بوابة واحدة: api(token, fnName, ...args). البوابة تحلّ الرمز إلى مستخدم فعّال، وتكتب اسمه
+//      هو في موضع وسيط الهوية بالدالة المطلوبة (مهما أرسل المتصفح)، ثم تنفّذها.
+//   3) كل دالة عامة تبدأ بـ _apiGuard_(): النداء المباشر لها من المتصفح (خارج البوابة) مرفوض.
+//   4) جدول _apiTable_ قائمة بيضاء صريحة: ما ليس فيه لا يُنادى من المتصفح إطلاقاً.
+// نقاط الدخول الموثوقة (تفتح "الثقة" لما تستدعيه داخلياً): api، loginUser، doGet، مشغّلات trigger_*، ومشغّلا القياس/تليجرام.
+// ═══════════════════════════════════════════════════════════════════════════
+var __TRUSTED_DEPTH = 0, __API_CTX = null;
+var _AUTH_ERR_ = "انتهت الجلسة أو تم تحديث البرنامج — حدّث الصفحة وسجّل الدخول من جديد. [SESSION_EXPIRED]";
+function _apiGuard_() { if (__TRUSTED_DEPTH > 0) return; throw new Error(_AUTH_ERR_); }
+function _trusted_(fn) { __TRUSTED_DEPTH++; try { return fn(); } finally { __TRUSTED_DEPTH--; } }
+
+var _SES_PREFIX = "SES_", _SES_TTL_SEC = 21600, _SES_REFRESH_MS = 30 * 60 * 1000, _SES_MAX_IDLE_MS = 24 * 60 * 60 * 1000;
+// الرمز يُحفظ في الكاش (سريع) وفي خصائص السكربت (دائم، يحمي من إخلاء الكاش). لا يُخزَّن في أي شيت.
+function _sessionCreate_(username, fullName) {
+  var token = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, "").toLowerCase();
+  var rec = JSON.stringify({ u: String(username), f: String(fullName || username), r: Date.now() });
+  try { CacheService.getScriptCache().put(_SES_PREFIX + token, rec, _SES_TTL_SEC); } catch (e) {}
+  try { PropertiesService.getScriptProperties().setProperty(_SES_PREFIX + token, rec); } catch (e2) {}
+  return token;
+}
+function _sessionResolve_(token) {
+  token = String(token || "");
+  if (!/^[0-9a-f]{64}$/.test(token)) return null;
+  var key = _SES_PREFIX + token, raw = null, fromProp = false;
+  try { raw = CacheService.getScriptCache().get(key); } catch (e) {}
+  if (!raw) { try { raw = PropertiesService.getScriptProperties().getProperty(key); fromProp = true; } catch (e2) {} }
+  if (!raw) return null;
+  var rec; try { rec = JSON.parse(raw); } catch (e3) { return null; }
+  if (!rec || !rec.u) return null;
+  var now = Date.now();
+  if (now - (Number(rec.r) || 0) > _SES_MAX_IDLE_MS) { _sessionKill_(token); return null; }
+  if (fromProp || now - rec.r > _SES_REFRESH_MS) { // تمديد دوري مع النشاط (نبضة الواجهة تكفي لإبقاء الجلسة حية)
+    rec.r = now; var s = JSON.stringify(rec);
+    try { CacheService.getScriptCache().put(key, s, _SES_TTL_SEC); } catch (e4) {}
+    try { PropertiesService.getScriptProperties().setProperty(key, s); } catch (e5) {}
+  }
+  rec.token = token;
+  return rec;
+}
+function _sessionKill_(token) {
+  try { CacheService.getScriptCache().remove(_SES_PREFIX + token); } catch (e) {}
+  try { PropertiesService.getScriptProperties().deleteProperty(_SES_PREFIX + token); } catch (e2) {}
+}
+// إنهاء كل جلسات مستخدم (تغيير/إعادة تعيين كلمة المرور، تعطيل، حذف، إعادة تسمية) عدا رمز يُستثنى اختيارياً
+function _killUserSessions_(username, exceptToken) {
+  try {
+    var props = PropertiesService.getScriptProperties(), all = props.getProperties(), ul = String(username || "").toLowerCase();
+    Object.keys(all).forEach(function(k) {
+      if (k.indexOf(_SES_PREFIX) !== 0) return;
+      var tok = k.slice(_SES_PREFIX.length); if (exceptToken && tok === exceptToken) return;
+      var rec = null; try { rec = JSON.parse(all[k]); } catch (e) {}
+      if (!rec || String(rec.u || "").toLowerCase() === ul) _sessionKill_(tok);
+    });
+  } catch (e2) {}
+}
+// تنظيف الجلسات الخاملة أكثر من يوم (يُستدعى من مشغّل القياس، مرة بالساعة على الأكثر)
+function _sessionsPrune_() {
+  try {
+    var props = PropertiesService.getScriptProperties(), now = Date.now();
+    if (now - (Number(props.getProperty("SES_LAST_PRUNE")) || 0) < 60 * 60 * 1000) return 0;
+    props.setProperty("SES_LAST_PRUNE", String(now));
+    var all = props.getProperties(), n = 0;
+    Object.keys(all).forEach(function(k) {
+      if (k.indexOf(_SES_PREFIX) !== 0 || k === "SES_LAST_PRUNE") return;
+      var rec = null; try { rec = JSON.parse(all[k]); } catch (e) {}
+      if (!rec || now - (Number(rec.r) || 0) > _SES_MAX_IDLE_MS) { _sessionKill_(k.slice(_SES_PREFIX.length)); n++; }
+    });
+    return n;
+  } catch (e2) { return 0; }
+}
+// قفل محاولات الدخول: 5 محاولات فاشلة لنفس اسم المستخدم خلال 10 دقائق ⇒ رفض حتى تنقضي المهلة
+var _LOGIN_MAX_FAILS = 5, _LOGIN_LOCK_SEC = 600;
+function _loginFailKey_(username) { return "LOGINFAIL_" + String(username || "").toLowerCase().slice(0, 60); }
+function _loginFails_(username) { try { return parseInt(CacheService.getScriptCache().get(_loginFailKey_(username)), 10) || 0; } catch (e) { return 0; } }
+function _loginFailNote_(username) { try { CacheService.getScriptCache().put(_loginFailKey_(username), String(_loginFails_(username) + 1), _LOGIN_LOCK_SEC); } catch (e) {} }
+function _loginFailClear_(username) { try { CacheService.getScriptCache().remove(_loginFailKey_(username)); } catch (e) {} }
+
+// البوابة الوحيدة لنداءات المتصفح بعد الدخول
+function api(token, fnName) {
+  var args = Array.prototype.slice.call(arguments, 2);
+  var def = _apiTable_()[String(fnName)];
+  if (!def || typeof def.f !== "function") throw new Error("دالة غير متاحة: " + String(fnName).slice(0, 60));
+  var ses = _sessionResolve_(token);
+  if (!ses) throw new Error(_AUTH_ERR_);
+  var ul = String(ses.u).toLowerCase(), snap = _authSnapshot_();
+  // مستخدم محذوف أو معطَّل: تُسحب جلسته فوراً (كان التعطيل يُفحص عند الدخول فقط)
+  if (!snap.roles[ul] || (snap.inactive && snap.inactive[ul])) { _sessionKill_(ses.token); throw new Error(_AUTH_ERR_); }
+  if (def.a && !_isAdmin_(ses.u)) throw new Error("غير مصرح.");
+  if (def.u >= 0) { while (args.length <= def.u) args.push(undefined); args[def.u] = ses.u; }
+  if (def.n != null) { while (args.length <= def.n) args.push(undefined); args[def.n] = ses.f; }
+  var prev = __API_CTX; __API_CTX = ses; __TRUSTED_DEPTH++;
+  try { return def.f.apply(null, args); }
+  finally { __TRUSTED_DEPTH--; __API_CTX = prev; if (String(fnName) === "logoutUser") _sessionKill_(ses.token); }
+}
+// V3.63 — القائمة البيضاء لبوابة api (مولَّدة من تواقيع الدوال؛ اختبار v363 يطابقها مع الكود والواجهة عند كل تغيير).
+// f: الدالة، u: موضع وسيط هوية المستخدم (-1 = لا وسيط هوية؛ يكفي جلسة صالحة)، n: موضع الاسم الكامل، a: للمدير فقط.
+function _apiTable_() {
+  return {
+    getAllScreensList: { f: getAllScreensList, u: -1 },
+    getUsernameFullNameMap: { f: getUsernameFullNameMap, u: -1 },
+    getSetupGuideUrl: { f: getSetupGuideUrl, u: -1, a: 1 },
+    logoutUser: { f: logoutUser, u: 0, n: 1 },
+    pingHeartbeatAndGetActiveUsers: { f: pingHeartbeatAndGetActiveUsers, u: 0, n: 1 },
+    saveUserPermissions: { f: saveUserPermissions, u: 2 },
+    getRecordAuditHistory: { f: getRecordAuditHistory, u: 1 },
+    saveUserPreference: { f: saveUserPreference, u: 0 },
+    getUserPreference: { f: getUserPreference, u: 0 },
+    getContractMonthsByHotel: { f: getContractMonthsByHotel, u: 0 },
+    getDistinctHotelNames: { f: getDistinctHotelNames, u: 0 },
+    getUserAllowedHotels: { f: getUserAllowedHotels, u: 1 },
+    saveUserAllowedHotels: { f: saveUserAllowedHotels, u: 2 },
+    changeUserPassword: { f: changeUserPassword, u: 0 },
+    getContracts: { f: getContracts, u: 0 },
+    getMainContractsForHotel: { f: getMainContractsForHotel, u: -1 },
+    saveContract: { f: saveContract, u: 1 },
+    getContractPayments: { f: getContractPayments, u: 1 },
+    saveContractPayment: { f: saveContractPayment, u: 1 },
+    deleteContractPayment: { f: deleteContractPayment, u: 1 },
+    recordContractPaymentReceipt: { f: recordContractPaymentReceipt, u: 1 },
+    getContractPaymentReceipts: { f: getContractPaymentReceipts, u: 1 },
+    editContractPaymentReceipt: { f: editContractPaymentReceipt, u: 1 },
+    deleteContractPaymentReceipt: { f: deleteContractPaymentReceipt, u: 1 },
+    saveDualPayment: { f: saveDualPayment, u: 1 },
+    checkDuePaymentsAndNotify: { f: checkDuePaymentsAndNotify, u: 0 },
+    getActiveContractsForDropdown: { f: getActiveContractsForDropdown, u: 0 },
+    getCollectionAccounts: { f: getCollectionAccounts, u: -1 },
+    addCollectionAccount: { f: addCollectionAccount, u: 1 },
+    getPrefetchBundle: { f: getPrefetchBundle, u: 0 },
+    getUsersScreenData: { f: getUsersScreenData, u: 0 },
+    getBookingsAll: { f: getBookingsAll, u: 0 },
+    getBookingFullDetails: { f: getBookingFullDetails, u: 1 },
+    saveBooking: { f: saveBooking, u: 1 },
+    deleteBooking: { f: deleteBooking, u: 1 },
+    getOverCapacityNotifications: { f: getOverCapacityNotifications, u: 0 },
+    getGlobalNotificationSettings: { f: getGlobalNotificationSettings, u: 0 },
+    setNotifTypeEnabled: { f: setNotifTypeEnabled, u: 2 },
+    setTelegramNotifTypeEnabled: { f: setTelegramNotifTypeEnabled, u: 2 },
+    getMyNotifications: { f: getMyNotifications, u: 0 },
+    markNotificationRead: { f: markNotificationRead, u: 1 },
+    markAllNotificationsRead: { f: markAllNotificationsRead, u: 0 },
+    clearOverCapacityFlag: { f: clearOverCapacityFlag, u: 1 },
+    manuallyClearOverCapacityFlag: { f: manuallyClearOverCapacityFlag, u: 1 },
+    getAvailabilityData: { f: getAvailabilityData, u: 3 },
+    getAvailabilityDataMulti: { f: getAvailabilityDataMulti, u: 2 },
+    addUser: { f: addUser, u: 4 },
+    toggleUserActive: { f: toggleUserActive, u: 1 },
+    setUserActiveState: { f: setUserActiveState, u: 2 },
+    deleteUser: { f: deleteUser, u: 1 },
+    adminResetPassword: { f: adminResetPassword, u: 2 },
+    getUserPermissionsForAdmin: { f: getUserPermissionsForAdmin, u: 1 },
+    getContractDateRange: { f: getContractDateRange, u: 1 },
+    getFullProfitReport: { f: getFullProfitReport, u: 1 },
+    getDailyStatementSummary: { f: getDailyStatementSummary, u: 3 },
+    getDailyStatementMonthDetail: { f: getDailyStatementMonthDetail, u: 5 },
+    getDashboardData: { f: getDashboardData, u: 0 },
+    addToWaitlist: { f: addToWaitlist, u: 1 },
+    getWaitlist: { f: getWaitlist, u: 0 },
+    cancelWaitlistEntry: { f: cancelWaitlistEntry, u: 1 },
+    convertWaitlistToBooking: { f: convertWaitlistToBooking, u: 1 },
+    checkWaitlistAvailabilityAndNotify: { f: checkWaitlistAvailabilityAndNotify, u: -1 },
+    getWaitlistEntryDetails: { f: getWaitlistEntryDetails, u: 1 },
+    editWaitlistEntry: { f: editWaitlistEntry, u: 1 },
+    saveTelegramSettings: { f: saveTelegramSettings, u: 2 },
+    getTelegramSettings: { f: getTelegramSettings, u: 0 },
+    testTelegramConnection: { f: testTelegramConnection, u: 0 },
+    sendTelegramCheckinReminders: { f: sendTelegramCheckinReminders, u: -1 },
+    bulkImportBookings: { f: bulkImportBookings, u: 1 },
+    updateUserDetails: { f: updateUserDetails, u: 3 },
+    saveCompanyBranding: { f: saveCompanyBranding, u: 3 },
+    getCompanyBranding: { f: getCompanyBranding, u: -1 },
+    getBookingForConfirmation: { f: getBookingForConfirmation, u: 1 },
+    getReservationManagers: { f: getReservationManagers, u: -1 },
+    saveBookingConfirmation: { f: saveBookingConfirmation, u: 4 },
+    generateReportPdfForShare: { f: generateReportPdfForShare, u: 2 },
+    deleteSharedReportFile: { f: deleteSharedReportFile, u: 1 },
+    checkConfirmationOptionDatesAndNotify: { f: checkConfirmationOptionDatesAndNotify, u: -1 },
+    getHijriMonthStarts: { f: getHijriMonthStarts, u: 1 },
+    saveHijriMonthCorrections: { f: saveHijriMonthCorrections, u: 2 },
+    getRoles: { f: getRoles, u: -1, a: 1 },
+    saveRole: { f: saveRole, u: 2 },
+    deleteRole: { f: deleteRole, u: 1 },
+    applyRoleToUser: { f: applyRoleToUser, u: 2 },
+    clearUserRoleName: { f: clearUserRoleName, u: 1 },
+    updateRoleAndPropagate: { f: updateRoleAndPropagate, u: 2 },
+    getRolePermissions: { f: getRolePermissions, u: -1, a: 1 },
+    getSessionTimeoutMinutes: { f: getSessionTimeoutMinutes, u: -1 },
+    saveSessionTimeoutMinutes: { f: saveSessionTimeoutMinutes, u: 1 },
+    getBookingsPage: { f: getBookingsPage, u: 3 },
+    getGlobalAuditLogPage: { f: getGlobalAuditLogPage, u: 3 },
+    globalSearch: { f: globalSearch, u: 1 },
+    exportReportToDrivePdf: { f: exportReportToDrivePdf, u: 2 },
+    exportReportToDriveExcel: { f: exportReportToDriveExcel, u: 3 },
+    getAppBootstrap: { f: getAppBootstrap, u: 0, n: 1 },
+    getBookingModalBootstrap: { f: getBookingModalBootstrap, u: 0 },
+    getContractModalBootstrap: { f: getContractModalBootstrap, u: 0 },
+    repairArabicDigitsInSheets: { f: repairArabicDigitsInSheets, u: 0 },
+    purgeHotelsCompletely: { f: purgeHotelsCompletely, u: 1 },
+    setupApplicationComplete: { f: setupApplicationComplete, u: 0 },
+    getSystemFolders: { f: getSystemFolders, u: 0 },
+    renameSystemFolder: { f: renameSystemFolder, u: 2 },
+    getSystemTriggers: { f: getSystemTriggers, u: 0 },
+    enableSystemTrigger: { f: enableSystemTrigger, u: 1 },
+    disableSystemTrigger: { f: disableSystemTrigger, u: 1 },
+    runSystemTriggerNow: { f: runSystemTriggerNow, u: 1 },
+    pollAppState: { f: pollAppState, u: 0, n: 1 },
+    getAvailabilityVersion: { f: getAvailabilityVersion, u: -1 },
+    flushClientPerfMetrics: { f: flushClientPerfMetrics, u: 1 },
+    getPerfCopyAllJson: { f: getPerfCopyAllJson, u: 0 },
+    getPerfLog: { f: getPerfLog, u: 0 },
+    getPerformanceReport: { f: getPerformanceReport, u: 0 },
+    getPerfExportJson: { f: getPerfExportJson, u: 0 },
+    getBookingsForNusukSelector: { f: getBookingsForNusukSelector, u: 1 },
+    getNusukAgreementsForBooking: { f: getNusukAgreementsForBooking, u: 1 },
+    saveNusukAgreement: { f: saveNusukAgreement, u: 1 },
+    deleteNusukAgreement: { f: deleteNusukAgreement, u: 1 },
+    getNusukAgreementDetails: { f: getNusukAgreementDetails, u: 1 },
+    getNusukGridData: { f: getNusukGridData, u: 4 },
+    getAccountsSummary: { f: getAccountsSummary, u: 1 },
+    getAccountStatement: { f: getAccountStatement, u: 2 },
+    saveAccountPayment: { f: saveAccountPayment, u: 1 },
+    deleteAccountPayment: { f: deleteAccountPayment, u: 1 }
+  };
+}
+// نقطتا تشغيل يدوي من محرر السكربت فقط (الدوال المنتهية بـ "_" لا تُنادى من المتصفح)
+function editorInitializeSystem_() { return _trusted_(function() { return initializeSystem(); }); }
+function editorSetupDriveFolder_() { return _trusted_(function() { return setupDriveFolderManual(); }); }
+
 // V3.59 — opts.boot: حزمة الإقلاع وبيانات الشاشة الرئيسية تعود مع رد الدخول نفسه (كانت 3 رحلات متتالية:
 // دخول ← إقلاع ← بيانات الشاشة ≈ 10 ث حتى ظهور شارت التوافر). فشل أي إضافة لا يُفشل الدخول (الواجهة تطلبها منفصلة).
 function loginUser(username, password, opts) {
   var _fn="[loginUser]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", password:[hidden]");
+  __TRUSTED_DEPTH++; // V3.63 — نقطة دخول موثوقة (تستدعي دوال عامة محروسة داخلياً)
   try {
+  if (_loginFails_(username) >= _LOGIN_MAX_FAILS) return { success: false, message: "محاولات دخول فاشلة كثيرة. حاول مرة أخرى بعد 10 دقائق." };
   var ss = _getSS_();
   var sheet = _getOrCreateSheet_("Users_Master");
   var uRows = sheet.getDataRange().getValues();
@@ -327,7 +562,7 @@ function loginUser(username, password, opts) {
     if (String(uRows[i][0]).toLowerCase() !== String(username).toLowerCase()) continue;
     var stored = uRows[i][1];   // كلمة المرور المخزَّنة (مشفّرة أو نصّية قديمة)
     var salt = uRows[i][5]||""; // الملح (فارغ للحسابات القديمة قبل الترحيل)
-    if (!_pwVerify_(password, stored, salt)) return { success: false, message: "اسم المستخدم أو كلمة المرور غير صحيحة!" };
+    if (!_pwVerify_(password, stored, salt)) { _loginFailNote_(username); return { success: false, message: "اسم المستخدم أو كلمة المرور غير صحيحة!" }; }
     var fullName = uRows[i][2], role = uRows[i][3], isActive = uRows[i][4] !== false;
     var storedUsername = String(uRows[i][0]);
     if (!isActive) return { success: false, message: "هذا الحساب معطّل. تواصل مع مدير النظام." };
@@ -337,20 +572,24 @@ function loginUser(username, password, opts) {
     _getOrCreateSheet_("Active_Sessions").appendRow([fullName, new Date(), storedUsername]);
     logAudit("شاشة الدخول", "تسجيل دخول", "N/A", "", "", "", "تسجيل دخول ناجح", fullName);
     var permissions = getUserPermissions(storedUsername, role);
+    _loginFailClear_(username);
     var out = { success: true, username: storedUsername, fullName: fullName, role: role,
-             permissions: permissions, screens: ALL_SCREENS, systemVersion: APP_VERSION };
+             permissions: permissions, screens: ALL_SCREENS, systemVersion: APP_VERSION,
+             token: _sessionCreate_(storedUsername, fullName) }; // V3.63 — رمز الجلسة (يبقى في ذاكرة الصفحة فقط)
     if (opts && opts.boot) {
       try { out.boot = getAppBootstrap(storedUsername, fullName, { brandingVer: opts.brandingVer, lite: true }); } catch (eB) { _logError_(_fn, eB); }
       if (out.boot) { try { out.home = _loginHomeData_(storedUsername, role, permissions, out.boot, opts); } catch (eH) { _logError_(_fn, eH); } }
     }
     return out;
   }
+  _loginFailNote_(username);
   return { success: false, message: "اسم المستخدم أو كلمة المرور غير صحيحة!" };
   } catch(e) { _logError_(_fn, e); throw e; }
+  finally { __TRUSTED_DEPTH--; }
 }
 
 // تسجيل الخروج: يحذف الجلسة النشطة للمستخدم من شيت Active_Sessions ويسجّل الحدث في سجل التعديلات
-function logoutUser(username, fullName) {
+function logoutUser(username, fullName) { _apiGuard_();
   var _fn="[logoutUser]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"fullName:"+String(JSON.stringify(fullName)||"").slice(0, 80));
   try {
   removeActiveSessionRow(username);
@@ -360,7 +599,7 @@ function logoutUser(username, fullName) {
 }
 
 // نبضة دورية (Heartbeat) تُحدّث وقت آخر ظهور للمستخدم النشط للحفاظ على حالة الاتصال
-function pingUserHeartbeat(username, fullName) {
+function pingUserHeartbeat(username, fullName) { _apiGuard_();
   var _fn="[pingUserHeartbeat]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"fullName:"+String(JSON.stringify(fullName)||"").slice(0, 80));
   try {
   var ss = _getSS_();
@@ -377,7 +616,7 @@ function pingUserHeartbeat(username, fullName) {
 }
 
 // نفس نبضة pingUserHeartbeat، لكنها تُعيد أيضاً قائمة كل المستخدمين المتصلين حالياً (لعرضهم في الشريط العلوي)
-function pingHeartbeatAndGetActiveUsers(username, fullName) {
+function pingHeartbeatAndGetActiveUsers(username, fullName) { _apiGuard_();
   var _fn="[pingHeartbeatAndGetActiveUsers]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"fullName:"+String(JSON.stringify(fullName)||"").slice(0, 80));
   try {
   pingUserHeartbeat(username, fullName);
@@ -386,7 +625,7 @@ function pingHeartbeatAndGetActiveUsers(username, fullName) {
 }
 
 // دالة مساعدة داخلية: تحذف صف جلسة مستخدم معيّن من شيت الجلسات النشطة
-function removeActiveSessionRow(username) {
+function removeActiveSessionRow(username) { _apiGuard_();
   var _fn="[removeActiveSessionRow]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80));
   try {
   var ss = _getSS_();
@@ -399,7 +638,7 @@ function removeActiveSessionRow(username) {
 }
 
 // تُعيد قائمة المستخدمين المتصلين حالياً (آخر نبضة خلال 30 دقيقة) كمصفوفة كائنات {fullName, username}
-function getActiveUsersList() {
+function getActiveUsersList() { _apiGuard_();
   var _fn="[getActiveUsersList]"; _logInfo_(_fn, "START | "+"");
   try {
   var rows = _getOrCreateSheet_("Active_Sessions").getDataRange().getValues();
@@ -418,7 +657,7 @@ function getActiveUsersList() {
 }
 
 // ===================== 5. الصلاحيات =====================
-function getUserPermissions(username, role) {
+function getUserPermissions(username, role) { _apiGuard_();
   var _fn="[getUserPermissions]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"role:"+String(JSON.stringify(role)||"").slice(0, 80));
   try {
   var perms = {};
@@ -457,7 +696,7 @@ function _replacePermissionRows_(matchUser, newRows) {
 }
 
 // يحفظ/يُحدّث صلاحيات مستخدم معيّن لكل الشاشات دفعة واحدة (Admin فقط)
-function saveUserPermissions(targetUsername, permsArray, actingUsername) {
+function saveUserPermissions(targetUsername, permsArray, actingUsername) { _apiGuard_();
   var _fn="[saveUserPermissions]"; _logInfo_(_fn, "START | "+"targetUsername:"+String(JSON.stringify(targetUsername)||"").slice(0, 80)+", "+"permsArray:[data]"+", "+"actingUsername:"+String(JSON.stringify(actingUsername)||"").slice(0, 80));
   try {
   return _withLock_(function() {
@@ -483,7 +722,7 @@ function _getUserRole_(username) {
 // V3.55 — لقطة الأدوار والصلاحيات: كل نداء خادم تقريباً يفحص الصلاحية، وكان يقرأ شيتي المستخدمين والصلاحيات كاملين
 // في كل نداء. الآن: نسخة في كاش السكريبت لمدة 60 ثانية + نسخة داخل التنفيذ، وتُمسح فور أي تعديل على الشيتين
 // (كل دوال الكتابة عليهما تستدعي _invalidateSheetCache_ للشيت، وهي تمسح اللقطة). لا تحوي كلمات مرور أو أملاح.
-var _AUTH_CACHE_KEY = "AUTH_SNAPSHOT_V1", _AUTH_CACHE_TTL_SEC = 60;
+var _AUTH_CACHE_KEY = "AUTH_SNAPSHOT_V2", _AUTH_CACHE_TTL_SEC = 60;
 var __AUTH_SNAPSHOT = null;
 function _authSnapshot_() {
   if (__AUTH_SNAPSHOT) return __AUTH_SNAPSHOT;
@@ -491,12 +730,13 @@ function _authSnapshot_() {
     var raw = CacheService.getScriptCache().get(_AUTH_CACHE_KEY);
     if (raw) return (__AUTH_SNAPSHOT = JSON.parse(raw));
   } catch (e) {}
-  var snap = { roles: {}, perms: {} };
+  var snap = { roles: {}, perms: {}, inactive: {} };
   var users = _getSheetValues_("Users_Master");
   // أول تطابق يفوز (نفس سلوك البحث الخطي السابق)
   for (var i = users.length - 1; i >= 1; i--) {
     if (users[i][0] === "" || users[i][0] == null) continue;
     snap.roles[String(users[i][0]).toLowerCase()] = String(users[i][3] || "User");
+    if (users[i][4] === false) snap.inactive[String(users[i][0]).toLowerCase()] = true; else delete snap.inactive[String(users[i][0]).toLowerCase()];
   }
   var pd = _getSheetValues_("Permissions_Master");
   for (var j = 1; j < pd.length; j++) {
@@ -575,7 +815,7 @@ function _getNextPlainNumber_(seqKey, digits) {
 }
 
 // ===================== 7. سجل التدقيق =====================
-function logAudit(screen, actionType, recordId, fieldChanged, oldValue, newValue, changeSummary, user) {
+function logAudit(screen, actionType, recordId, fieldChanged, oldValue, newValue, changeSummary, user) { _apiGuard_();
   var _fn="[logAudit]"; _logInfo_(_fn, "START | "+"screen:"+String(JSON.stringify(screen)||"").slice(0, 80)+", "+"actionType:"+String(JSON.stringify(actionType)||"").slice(0, 80)+", "+"recordId:"+String(JSON.stringify(recordId)||"").slice(0, 80));
   try {
   var sheet = _getOrCreateSheet_("Global_Audit_Log");
@@ -587,7 +827,7 @@ function logAudit(screen, actionType, recordId, fieldChanged, oldValue, newValue
 
 // سجل تعديلات سجل واحد بعينه (حجز/تعاقد) - يُستدعى من داخل شاشة عرض/تعديل الحجز أو التعاقد
 // currentUser اختياري: إن أُرسل، يُشترط أن يملك المستخدم صلاحية عرض سجل التعديلات لهذا النوع (حجوزات/تعاقدات) وإلا يُرفض الطلب من الخادم مباشرة (خط دفاع ثانٍ إضافةً للفحص في الواجهة)
-function getRecordAuditHistory(recordId, currentUser, recordType) {
+function getRecordAuditHistory(recordId, currentUser, recordType) { _apiGuard_();
   var _fn="[getRecordAuditHistory]"; _logInfo_(_fn, "START | "+"recordId:"+String(JSON.stringify(recordId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80)+", "+"recordType:"+String(JSON.stringify(recordType)||"").slice(0, 80));
   try {
   if (currentUser && recordType) {
@@ -629,7 +869,7 @@ function getRecordAuditHistory(recordId, currentUser, recordType) {
 // بمطابقة recordId مع الفندق التابع له (عبر خرائط الحجوزات/التعاقدات) قبل إرجاع النتيجة
 // تجلب سجل التعديلات العام مع دعم الفلاتر (الشاشة/نوع الإجراء/المستخدم/رقم السجل) وتصفية حسب الفنادق المسموح بها لغير المدير
 // ⚡ أُعيدت كتابتها بالكامل لتكون فائقة الصلابة: كل صف يُعالَج باستقلال تام (خطأ بصف واحد لا يُوقف الباقي)
-function getGlobalAuditLog(filters, currentUser) {
+function getGlobalAuditLog(filters, currentUser) { _apiGuard_();
   var _fn="[getGlobalAuditLog]"; _logInfo_(_fn, "START | "+"filters:"+String(JSON.stringify(filters)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   filters = filters || {};
@@ -741,7 +981,7 @@ function _logRead_(screen, recordId, description, user) {
 // ===================== 8. تفضيلات المستخدم =====================
 // V3.60 — الدالة العامة ترفض مفتاح "allowed_hotels" (قيد أمني يُكتب فقط عبر saveUserAllowedHotels بصلاحية المدير؛
 // كان أي نداء يستطيع رفع قيد الفنادق عن أي مستخدم بكتابة قيمة فارغة). الكتابة الفعلية في _saveUserPreference_.
-function saveUserPreference(username, prefKey, prefValue) {
+function saveUserPreference(username, prefKey, prefValue) { _apiGuard_();
   if (String(prefKey) === "allowed_hotels") throw new Error("غير مصرح.");
   return _saveUserPreference_(username, prefKey, prefValue);
 }
@@ -759,7 +999,7 @@ function _saveUserPreference_(username, prefKey, prefValue) {
 }
 
 // يجلب قيمة تفضيل محفوظ مسبقاً لمستخدم معيّن
-function getUserPreference(username, prefKey) {
+function getUserPreference(username, prefKey) { _apiGuard_();
   var _fn="[getUserPreference]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"prefKey:"+String(JSON.stringify(prefKey)||"").slice(0, 80));
   try {
   // v3.53 — قراءة الشيت مرة واحدة لكل تنفيذ (كانت تُقرأ كاملة في كل نداء، ومنها فحص الفنادق المسموح بها مراراً)
@@ -787,7 +1027,7 @@ function _getUserPrefsMap_(username) {
 
 // V3.54 — الشهور (YYYY-MM) التي تغطيها فترات التعاقد الفعلية لكل فندق مسموح — لفلتر الشهر بشاشة الحجوزات
 // (كان الفلتر يعرض نطاقاً ثابتاً ±3 سنوات حول اليوم بغض النظر عن العقود)
-function getContractMonthsByHotel(currentUser) {
+function getContractMonthsByHotel(currentUser) { _apiGuard_();
   var _fn="[getContractMonthsByHotel]";
   try {
   var data = _getSheetValues_("Contracts_Master");
@@ -919,7 +1159,7 @@ function _gregorianToHijriCore_(date) {
 // يُنسّق تاريخاً هجرياً كنص عربي جاهز للعرض (اليوم/الشهر/السنة هـ)
 // v3.53 — نتيجة كل يوم تُحفظ لكل تنفيذ (الحجوزات تتشارك نفس تواريخ الدخول/الخروج كثيراً)
 var __HIJRI_DISPLAY_MEMO = {};
-function formatHijriDisplay(dateVal) {
+function formatHijriDisplay(dateVal) { _apiGuard_();
   if (!dateVal) return "";
   var d = (dateVal instanceof Date) ? dateVal : new Date(dateVal);
   if (isNaN(d.getTime())) return "";
@@ -947,7 +1187,7 @@ function _tz_() { return __SCRIPT_TZ || (__SCRIPT_TZ = Session.getScriptTimeZone
 
 // ===================== 10. شاشة التعاقدات =====================
 
-function getDistinctHotelNames(currentUser) {
+function getDistinctHotelNames(currentUser) { _apiGuard_();
   var _fn="[getDistinctHotelNames]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   var data = _getSheetValues_("Contracts_Master");
@@ -962,6 +1202,11 @@ function getDistinctHotelNames(currentUser) {
   } catch(e) { _logError_(_fn, e); throw e; }
 }
 
+// V3.63 — فحص نطاق الفنادق في عمليات الكتابة (كان يُطبَّق على العرض فقط: مستخدم مقيَّد بفندق كان يستطيع الحفظ على فندق آخر)
+function _requireHotelAccess_(username, hotelName) {
+  var allowed = _getUserAllowedHotels_(username);
+  if (allowed && hotelName && !allowed[hotelName]) throw new Error("غير مصرح: هذا الفندق خارج الفنادق المسموح لك بها.");
+}
 // ─── مساعدة: خريطة الفنادق المسموح بها للمستخدم (null = الكل) ───
 function _getUserAllowedHotels_(username) {
   if (_isAdmin_(username)) return null; // مدير: كل الفنادق
@@ -977,7 +1222,7 @@ function _getUserAllowedHotels_(username) {
 }
 
 // يُعيد قائمة أسماء الفنادق المسموح بها لمستخدم معيّن (لعرضها في نافذة إدارة الصلاحيات)
-function getUserAllowedHotels(username, actingUser) {
+function getUserAllowedHotels(username, actingUser) { _apiGuard_();
   var _fn="[getUserAllowedHotels]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"actingUser:"+String(JSON.stringify(actingUser)||"").slice(0, 80));
   try {
   if (_getUserRole_(actingUser)!=="Admin") throw new Error("غير مصرح.");
@@ -988,7 +1233,7 @@ function getUserAllowedHotels(username, actingUser) {
 }
 
 // يحفظ قائمة الفنادق المسموح بها لمستخدم معيّن (Admin فقط)
-function saveUserAllowedHotels(targetUsername, hotelNames, actingUser) {
+function saveUserAllowedHotels(targetUsername, hotelNames, actingUser) { _apiGuard_();
   var _fn="[saveUserAllowedHotels]"; _logInfo_(_fn, "START | "+"targetUsername:"+String(JSON.stringify(targetUsername)||"").slice(0, 80)+", "+"hotelNames:"+String(JSON.stringify(hotelNames)||"").slice(0, 80)+", "+"actingUser:"+String(JSON.stringify(actingUser)||"").slice(0, 80));
   try {
   if (_getUserRole_(actingUser)!=="Admin") throw new Error("غير مصرح.");
@@ -1001,7 +1246,7 @@ function saveUserAllowedHotels(targetUsername, hotelNames, actingUser) {
 }
 
 // يُغيّر كلمة مرور المستخدم الحالي بعد التحقق من كلمة المرور القديمة
-function changeUserPassword(username, oldPassword, newPassword) {
+function changeUserPassword(username, oldPassword, newPassword) { _apiGuard_();
   var _fn="[changeUserPassword]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", oldPassword:[hidden], newPassword:[hidden]");
   try {
   newPassword = String(newPassword||"").trim();
@@ -1015,6 +1260,7 @@ function changeUserPassword(username, oldPassword, newPassword) {
       var _s2 = _pwGenerateSalt_();
       sheet.getRange(i+1, 2).setValue(_pwHash_(newPassword, _s2));
       sheet.getRange(i+1, 6).setValue(_s2);
+      _killUserSessions_(username, __API_CTX && __API_CTX.token); // V3.63 — بقية جلسات المستخدم (أجهزة أخرى) تنتهي؛ الحالية تبقى
       logAudit("إدارة المستخدمين","تغيير كلمة المرور",username,"","","","تم تغيير كلمة المرور",username);
       return {success:true};
     }
@@ -1065,7 +1311,7 @@ function _buildContractLabelMap_() {
 }
 
 // ─── جلب التعاقدات: الرئيسية أولاً ثم إضافياتها مباشرةً تحتها ───
-function getContracts(currentUser) {
+function getContracts(currentUser) { _apiGuard_();
   var _fn="[getContracts]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser,"contracts","canView");
@@ -1120,7 +1366,7 @@ function getContracts(currentUser) {
 }
 
 // يجلب بيانات تعاقد واحد بصيغة مناسبة لتعبئة نموذج التعديل
-function getContractForEdit(contractId, currentUser) {
+function getContractForEdit(contractId, currentUser) { _apiGuard_();
   try { if (currentUser) _logRead_("التعاقدات", contractId, "عرض تفاصيل تعاقد "+contractId+" للتحرير", currentUser); } catch(e){}
 
   var _fn="[getContractForEdit]"; _logInfo_(_fn, "START | "+"contractId:"+String(JSON.stringify(contractId)||"").slice(0, 80));
@@ -1150,7 +1396,7 @@ function getContractForEdit(contractId, currentUser) {
 }
 
 // ─── التعاقدات الرئيسية لفندق معيّن (للاختيار كأب عند إضافة تعاقد إضافي) ───
-function getMainContractsForHotel(hotelName) {
+function getMainContractsForHotel(hotelName) { _apiGuard_();
   var _fn="[getMainContractsForHotel]"; _logInfo_(_fn, "START | "+"hotelName:"+String(JSON.stringify(hotelName)||"").slice(0, 80));
   try {
   var data=_getSheetValues_("Contracts_Master");
@@ -1169,7 +1415,7 @@ function getMainContractsForHotel(hotelName) {
 }
 
 // يحفظ تعاقداً جديداً أو يُحدّث تعاقداً موجوداً، مع تسجيل كل حقل تغيّر في سجل التعديلات
-function saveContract(c, currentUser) {
+function saveContract(c, currentUser) { _apiGuard_();
   var _fn="[saveContract]"; _logInfo_(_fn, "START | "+"c:"+String(JSON.stringify(c)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   return _withLock_(function() {
@@ -1194,6 +1440,7 @@ function saveContract(c, currentUser) {
   var totalValue=Math.round(nights*roomCount*roomPrice*100)/100;
 
   var hotelName=String(c.hotelName||"").trim();
+  _requireHotelAccess_(currentUser, hotelName); // V3.63 — مستخدم مقيَّد بفنادق لا يسجّل/يعدّل تعاقداً لفندق خارجها
   var contractingParty=String(c.contractingParty||"").trim();
   var city=String(c.city||"").trim();
   var contractType=String(c.contractType||"رئيسي").trim();
@@ -1317,7 +1564,7 @@ function _recalcContractPaymentPaidAmount_(paymentId) {
 // يُعيد كل دفعات تعاقد معيّن + ملخص إجمالي (إجمالي الأقساط/المسدد/المتبقي) مع تحويل تاريخ الاستحقاق للهجري
 // v3.32 — paidAmount/paidDate يُحتسَبان من مجموع دفعات السداد الفعلية (Contract_Payment_Receipts) بدل قيمة واحدة مخزَّنة بلا تفاصيل؛
 // receiptsCount يُتيح للواجهة إظهار زر "📜 سجل السداد" فقط للأقساط التي عليها دفعة واحدة فعلية فأكثر
-function getContractPayments(contractId, currentUser) {
+function getContractPayments(contractId, currentUser) { _apiGuard_();
   var _fn="[getContractPayments]"; _logInfo_(_fn, "START | "+"contractId:"+String(JSON.stringify(contractId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requireFinancePermission_(currentUser);
@@ -1359,7 +1606,7 @@ function getContractPayments(contractId, currentUser) {
 }
 
 // يحفظ قسط سداد جديد أو يُحدّث قسطاً موجوداً لتعاقد معيّن
-function saveContractPayment(p, currentUser) {
+function saveContractPayment(p, currentUser) { _apiGuard_();
   var _fn="[saveContractPayment]"; _logInfo_(_fn, "START | "+"p:"+String(JSON.stringify(p)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   return _withLock_(function() {
@@ -1394,7 +1641,7 @@ function saveContractPayment(p, currentUser) {
 }
 
 // يحذف قسط سداد (حذف منطقي) — مع حذف منطقي لكل دفعات السداد الفعلية المرتبطة به بشيت Contract_Payment_Receipts
-function deleteContractPayment(paymentId, currentUser) {
+function deleteContractPayment(paymentId, currentUser) { _apiGuard_();
   var _fn="[deleteContractPayment]"; _logInfo_(_fn, "START | "+"paymentId:"+String(JSON.stringify(paymentId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requireFinancePermission_(currentUser);
@@ -1426,7 +1673,7 @@ function deleteContractPayment(paymentId, currentUser) {
 // تماماً كبساطة تسجيل دفعة عميل/جهة تحصيل بشاشة الحسابات
 // p: {paymentId, contractId(مطلوب فقط إن كان paymentId فارغاً), amount, payDate, statement, notes, linkedAccountPaymentId}
 // linkedAccountPaymentId داخلي فقط: يُمرَّر من دالة saveDualPayment عند تسجيل "دفعة مزدوجة" لربط الطرفين
-function recordContractPaymentReceipt(p, currentUser) {
+function recordContractPaymentReceipt(p, currentUser) { _apiGuard_();
   var _fn="[recordContractPaymentReceipt]"; _logInfo_(_fn, "START | "+"p:"+String(JSON.stringify(p)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   return _withLock_(function() {
@@ -1471,7 +1718,7 @@ function recordContractPaymentReceipt(p, currentUser) {
 }
 
 // يُعيد كل دفعات السداد الفعلية المسجَّلة على قسط واحد (سجل تفصيلي بتاريخ/بيان/ملاحظات كل دفعة)
-function getContractPaymentReceipts(paymentId, currentUser) {
+function getContractPaymentReceipts(paymentId, currentUser) { _apiGuard_();
   var _fn="[getContractPaymentReceipts]"; _logInfo_(_fn, "START | "+"paymentId:"+String(JSON.stringify(paymentId)||"").slice(0, 80));
   try {
   _requireFinancePermission_(currentUser);
@@ -1498,7 +1745,7 @@ function getContractPaymentReceipts(paymentId, currentUser) {
 }
 
 // يُعدّل دفعة سداد فعلية موجودة (مبلغ/تاريخ/بيان/ملاحظات) — يُعيد احتساب Paid_Amount للقسط بعدها تلقائياً
-function editContractPaymentReceipt(p, currentUser) {
+function editContractPaymentReceipt(p, currentUser) { _apiGuard_();
   var _fn="[editContractPaymentReceipt]"; _logInfo_(_fn, "START | "+"p:"+String(JSON.stringify(p)||"").slice(0, 80));
   try {
   return _withLock_(function() {
@@ -1530,7 +1777,7 @@ function editContractPaymentReceipt(p, currentUser) {
 // يحذف دفعة سداد فعلية (حذف منطقي) — يُعيد احتساب Paid_Amount للقسط بعدها تلقائياً
 // v3.34 — إن كانت الدفعة مرتبطة بـ"دفعة مزدوجة" (linkedAccountPaymentId)، يُحذَف الطرف الآخر (دفعة العميل/جهة التحصيل
 // المقابلة بشيت Account_Payments) تلقائياً بنفس العملية أيضاً — الواجهة تُنبّه المستخدم بذلك بعد نجاح الحذف
-function deleteContractPaymentReceipt(receiptId, currentUser) {
+function deleteContractPaymentReceipt(receiptId, currentUser) { _apiGuard_();
   var _fn="[deleteContractPaymentReceipt]"; _logInfo_(_fn, "START | "+"receiptId:"+String(JSON.stringify(receiptId)||"").slice(0, 80));
   try {
   _requireFinancePermission_(currentUser);
@@ -1570,7 +1817,7 @@ function deleteContractPaymentReceipt(receiptId, currentUser) {
 // (2) سداد فعلي لصالح الفندق بشيت Contract_Payment_Receipts — مربوطان ببعضهما عبر Linked_*_ID للتتبّع من الطرفين
 // p: {partyType, partyKey, partyName, contractId, paymentId(اختياري), amount, payDate, statement, notes}
 // paymentId فارغ ⇐ يُنشَأ قسط جديد تلقائياً بنفس قيمة الدفعة وتاريخها (لتغطية حالة عدم وجود قسط مجدوَل مسبقاً)
-function saveDualPayment(p, currentUser) {
+function saveDualPayment(p, currentUser) { _apiGuard_();
   var _fn="[saveDualPayment]"; _logInfo_(_fn, "START | "+"p:"+String(JSON.stringify(p)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   return _withLock_(function() {
@@ -1627,7 +1874,7 @@ function saveDualPayment(p, currentUser) {
 
 // يفحص كل أقساط السداد غير المكتملة التي يقترب استحقاقها (خلال 7 أيام) أو فات موعدها، وينشئ تنبيهاً لكل منها
 // (بفضل الحارس الداخلي في _createNotification_ لن يتكرر نفس التنبيه أكثر من مرة كل 24 ساعة، محققاً "يظهر يومياً حتى السداد")
-function checkDuePaymentsAndNotify(currentUser, force) {
+function checkDuePaymentsAndNotify(currentUser, force) { _apiGuard_();
   var _fn="[checkDuePaymentsAndNotify]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_bgCheckShouldRun_("DUE_PAYMENTS", force)) return { success:true, skipped:"ran recently" };
@@ -1672,7 +1919,7 @@ var BOOKING_STATUSES=["مبدئي","انتظار","مؤكد","مؤكد نسك","
 
 // ─── قائمة التعاقدات للاختيار في نموذج الحجز ───
 // يظهر التعاقد الرئيسي فقط بنطاق تاريخ يشمل التعاقدات الإضافية الممتدة بعده
-function getActiveContractsForDropdown(currentUser) {
+function getActiveContractsForDropdown(currentUser) { _apiGuard_();
   var _fn="[getActiveContractsForDropdown]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   var data=_getSheetValues_("Contracts_Master");
@@ -1710,7 +1957,7 @@ function getActiveContractsForDropdown(currentUser) {
 }
 
 // يُعيد قائمة أسماء العملاء الفريدة من كل الحجوزات السابقة (لخاصية الإكمال التلقائي)
-function getDistinctClientNames() {
+function getDistinctClientNames() { _apiGuard_();
   var _fn="[getDistinctClientNames]"; _logInfo_(_fn, "START | "+"");
   try {
   var data=_getSheetValues_("Bookings_Master");
@@ -1721,7 +1968,7 @@ function getDistinctClientNames() {
 }
 
 // يُعيد قائمة جهات التحصيل المتاحة
-function getCollectionAccounts() {
+function getCollectionAccounts() { _apiGuard_();
   var _fn="[getCollectionAccounts]"; _logInfo_(_fn, "START | "+"");
   try {
   var data=_getSheetValues_("Collection_Accounts");
@@ -1732,7 +1979,7 @@ function getCollectionAccounts() {
 }
 
 // يُضيف جهة تحصيل جديدة سريعاً من داخل نموذج الحجز
-function addCollectionAccount(accountName, currentUser) {
+function addCollectionAccount(accountName, currentUser) { _apiGuard_();
   var _fn="[addCollectionAccount]"; _logInfo_(_fn, "START | "+"accountName:"+String(JSON.stringify(accountName)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _invalidateSheetCache_("Collection_Accounts"); // ضمان قراءة حديثة بعد أي كتابة ضمن نفس التنفيذ
@@ -1776,7 +2023,7 @@ function _buildCollectionAccountMap_() {
 }
 
 // يُعيد كل الحجوزات (غير المحذوفة) مع كل بياناتها المُجهّزة للعرض، مُصفّاة حسب صلاحيات الفنادق
-function getBookings(currentUser) {
+function getBookings(currentUser) { _apiGuard_();
   var _fn="[getBookings]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   var _tStart=Date.now();
@@ -1849,7 +2096,7 @@ function _canViewFinance_(currentUser) {
 // V3.58 — حزمة تحميل مسبق: كل بيانات الشاشات التي يملك المستخدم صلاحيتها في نداء واحد (رحلة ذهاب وإياب واحدة
 // بدل نداء لكل شاشة، وكل الأجزاء تتشارك نفس قراءات الشيتات المحفوظة داخل التنفيذ). كل جزء مستقل: فشل جزء (صلاحية مثلاً)
 // لا يُفشل البقية. المتصفح يخزّن كل جزء تحت نفس مفتاح نداء الشاشة الأصلي، ففتح الشاشة يُجاب من الكاش فوراً.
-function getPrefetchBundle(currentUser, req) {
+function getPrefetchBundle(currentUser, req) { _apiGuard_();
   var _fn="[getPrefetchBundle]";
   req = req || {};
   var out = {};
@@ -1896,7 +2143,7 @@ function _prefetchReplayTable_() {
   };
 }
 // V3.59 — شاشة الصلاحيات في نداء واحد (كانت 3 نداءات متتالية ≈ 8 ث: قائمة الشاشات ← المستخدمون ← أسماء الأدوار)
-function getUsersScreenData(currentUser) {
+function getUsersScreenData(currentUser) { _apiGuard_();
   var _fn="[getUsersScreenData]";
   try {
   return { users: getAllUsersWithPermissions(currentUser), roleNames: _getUserRoleNamesMap_() };
@@ -1913,7 +2160,7 @@ function _savedBookingObj_(rowArr, currentUser) {
 // V3.58 — كل حجوزات المستخدم (مع شريط الأوفر) دفعة واحدة: الفلترة والترتيب والترقيم تتم في المتصفح فوراً بدل نداء
 // خادم (~3 ث) لكل تغيير فلتر/صفحة. فوق الحد يُرجع tooLarge فتعود الواجهة للترقيم من الخادم (getBookingsPage).
 var _BOOKINGS_LOCAL_MAX = 4000;
-function getBookingsAll(currentUser) {
+function getBookingsAll(currentUser) { _apiGuard_();
   var _fn="[getBookingsAll]";
   try {
   var full = getBookings(currentUser);
@@ -1925,7 +2172,7 @@ function getBookingsAll(currentUser) {
 }
 
 // يجلب بيانات حجز واحد بصيغة مناسبة لتعبئة نموذج التعديل
-function getBookingForEdit(bookingId) {
+function getBookingForEdit(bookingId) { _apiGuard_();
   var _fn="[getBookingForEdit]"; _logInfo_(_fn, "START | "+"bookingId:"+String(JSON.stringify(bookingId)||"").slice(0, 80));
   try {
   var data=_getSheetValues_("Bookings_Master");
@@ -1949,7 +2196,7 @@ function getBookingForEdit(bookingId) {
 
 // يجلب كل تفاصيل حجز واحد بصيغة مناسبة لعرضها في نافذة "عرض الحجز"
 // ⚠️ محمية بالكامل: تتطلب صلاحية عرض الحجوزات + تصفية حسب الفنادق المسموح بها + تصفية الجزء المالي حسب صلاحية availability_finance
-function getBookingFullDetails(bookingId, currentUser) {
+function getBookingFullDetails(bookingId, currentUser) { _apiGuard_();
   var _fn="[getBookingFullDetails]"; _logInfo_(_fn, "START | "+"bookingId:"+String(JSON.stringify(bookingId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!currentUser) throw new Error("غير مصرح."); // V3.60 — كان غياب اسم المستخدم يُعامَل كمدير ويُرجع البيانات المالية
@@ -1994,7 +2241,7 @@ function getBookingFullDetails(bookingId, currentUser) {
 }
 
 // يحفظ حجزاً جديداً أو يُحدّث حجزاً موجوداً - يشمل فحص توافر السعة، دعم الغرف السالبة (شراء)، وتسجيل كل تغيير
-function saveBooking(b, currentUser) {
+function saveBooking(b, currentUser) { _apiGuard_();
   var _fn="[saveBooking]"; _logInfo_(_fn, "START | "+"b:"+String(JSON.stringify(b)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   return _withLock_(function() {
@@ -2023,6 +2270,7 @@ function saveBooking(b, currentUser) {
   var nights=Math.round((checkOut-checkIn)/86400000);
   var bookingValue=Math.round(roomCount*nights*salePrice*100)/100;
   var now=new Date(), hotelMap=_buildContractHotelMap_(), collMap=_buildCollectionAccountMap_();
+  _requireHotelAccess_(currentUser, hotelMap[contractId]); // V3.63
 
   // ─── فحص التوافر مقابل السعة المتاحة (لا يشمل حجوزات الشراء أو الحالات الملغاة) ───
   var overCapacity=false, overCapacityType="";
@@ -2065,6 +2313,7 @@ function saveBooking(b, currentUser) {
     for (var i=1; i<data.length; i++) {
       if (String(data[i][0])===String(b.editId)) {
         var oldRow=data[i], rowNum=i+1;
+        _requireHotelAccess_(currentUser, hotelMap[oldRow[1]]); // V3.63 — فندق الحجز قبل التعديل أيضاً
         var comparisons=[
           {label:"الفندق",      old:hotelMap[oldRow[1]]||oldRow[1], new:hotelMap[contractId]||contractId},
           {label:"اسم العميل",  old:oldRow[2], new:clientName},
@@ -2187,7 +2436,7 @@ var bookingId=_getNextSequentialId_("D",3);
 // v3.17 — يحذف حجزاً حذفاً ناعماً (Soft Delete): لا يُحذف الصف فعلياً، فقط يُعلَّم كمحذوف فيختفي فوراً من كل الشاشات
 // والتقارير (نفس آلية الحذف المستخدمة لبقية السجلات بالنظام). يتطلب صلاحية "حذف" على شاشة الحجوزات تحديداً،
 // ومقيّد بالفنادق المسموح بها للمستخدم إن وُجد قيد عليه
-function deleteBooking(bookingId, currentUser) {
+function deleteBooking(bookingId, currentUser) { _apiGuard_();
   var _fn="[deleteBooking]"; _logInfo_(_fn, "START | "+"bookingId:"+String(JSON.stringify(bookingId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   return _withLock_(function() {
@@ -2308,7 +2557,7 @@ function _checkBookingAvailability_(contractId, checkInDate, checkOutDate, roomC
 }
 
 // ─── تنبيهات: حجوزات "أوفر" أصبح لها الآن إمكانية كافية ───
-function getOverCapacityNotifications(currentUser) {
+function getOverCapacityNotifications(currentUser) { _apiGuard_();
   var _fn="[getOverCapacityNotifications]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser,"bookings","canView");
@@ -2384,7 +2633,7 @@ function _isNotifTypeTelegramEnabled_(type) {
   return !!_notifTypesTelegramCache_[type];
 }
 // يجلب حالتي كل نوع تنبيه حالياً: مُفعَّل عاماً؟ ومُرسَل لتليجرام؟ (Admin فقط) — تُستخدم لرسم مفاتيح التبديل بشاشة الإعدادات
-function getGlobalNotificationSettings(currentUser) {
+function getGlobalNotificationSettings(currentUser) { _apiGuard_();
   var _fn="[getGlobalNotificationSettings]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -2396,7 +2645,7 @@ function getGlobalNotificationSettings(currentUser) {
   } catch(e) { _logError_(_fn, e); throw e; }
 }
 // يُبدّل حالة نوع تنبيه واحد (تفعيل/تعطيل) على مستوى النظام بالكامل — يُحفظ فوراً (Admin فقط)
-function setNotifTypeEnabled(typeId, isEnabled, currentUser) {
+function setNotifTypeEnabled(typeId, isEnabled, currentUser) { _apiGuard_();
   var _fn="[setNotifTypeEnabled]"; _logInfo_(_fn, "START | "+"typeId:"+String(JSON.stringify(typeId)||"").slice(0, 80)+", "+"isEnabled:"+String(JSON.stringify(isEnabled)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -2416,7 +2665,7 @@ function setNotifTypeEnabled(typeId, isEnabled, currentUser) {
   } catch(e) { _logError_(_fn, e); throw e; }
 }
 // v3.23 — يُبدّل إرسال نوع تنبيه واحد إلى تليجرام (بصرف النظر عن تفعيله العام) — يُحفظ فوراً (Admin فقط)
-function setTelegramNotifTypeEnabled(typeId, isEnabled, currentUser) {
+function setTelegramNotifTypeEnabled(typeId, isEnabled, currentUser) { _apiGuard_();
   var _fn="[setTelegramNotifTypeEnabled]"; _logInfo_(_fn, "START | "+"typeId:"+String(JSON.stringify(typeId)||"").slice(0, 80)+", "+"isEnabled:"+String(JSON.stringify(isEnabled)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -2550,7 +2799,7 @@ function _notifDedupIndex_(sheet) {
 }
 
 // يجلب كل التنبيهات التي يحق لهذا المستخدم استقبالها (حسب صلاحيات نوع التنبيه + الفنادق المسموح بها) مع حالة القراءة الخاصة به
-function getMyNotifications(currentUser) {
+function getMyNotifications(currentUser) { _apiGuard_();
   var _fn="[getMyNotifications]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!currentUser) return [];
@@ -2592,7 +2841,7 @@ function getMyNotifications(currentUser) {
 }
 
 // يُعلّم تنبيهاً واحداً كمقروء لهذا المستخدم تحديداً (لا يؤثر على ظهوره لمستخدمين آخرين)
-function markNotificationRead(notificationId, currentUser) {
+function markNotificationRead(notificationId, currentUser) { _apiGuard_();
   var _fn="[markNotificationRead]"; _logInfo_(_fn, "START | "+"notificationId:"+String(JSON.stringify(notificationId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _invalidateSheetCache_("Notification_Reads"); // ضمان قراءة حديثة بعد أي كتابة ضمن نفس التنفيذ
@@ -2607,7 +2856,7 @@ function markNotificationRead(notificationId, currentUser) {
 }
 
 // يُعلّم كل التنبيهات الظاهرة حالياً لهذا المستخدم كمقروءة دفعة واحدة (زر "تعليم الكل كمقروء")
-function markAllNotificationsRead(currentUser) {
+function markAllNotificationsRead(currentUser) { _apiGuard_();
   var _fn="[markAllNotificationsRead]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _invalidateSheetCache_("Notification_Reads"); // ضمان قراءة حديثة بعد أي كتابة ضمن نفس التنفيذ
@@ -2628,7 +2877,7 @@ function markAllNotificationsRead(currentUser) {
 }
 
 // ─── إزالة علامة "أوفر" عن حجز بعد التأكد من توفر إمكانية كافية له ───
-function clearOverCapacityFlag(bookingId, currentUser) {
+function clearOverCapacityFlag(bookingId, currentUser) { _apiGuard_();
   var _fn="[clearOverCapacityFlag]"; _logInfo_(_fn, "START | "+"bookingId:"+String(JSON.stringify(bookingId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _invalidateSheetCache_("Bookings_Master"); // ضمان قراءة حديثة بعد أي كتابة ضمن نفس التنفيذ
@@ -2660,7 +2909,7 @@ function clearOverCapacityFlag(bookingId, currentUser) {
 // وحده)، يُرفض الطلب — تماماً كما لو كانت كل الحجوزات المتشاركة بحاجة فعلية لإبقاء علامة (أوفر).
 // ملاحظة: الترتيب مؤثر — تأكيد حجز يُحرّر له السعة فعلياً (يُستبعد من قائمة "الحجوزات الأخرى أوفر" لاحقاً)، فقد
 // يصبح حجز آخر قابلاً للتأكيد بعده ولم يكن كذلك قبله؛ هذا سلوك مقصود (أول من يُراجَع يحظى بالسعة أولاً)
-function manuallyClearOverCapacityFlag(bookingId, currentUser) {
+function manuallyClearOverCapacityFlag(bookingId, currentUser) { _apiGuard_();
   var _fn="[manuallyClearOverCapacityFlag]"; _logInfo_(_fn, "START | "+"bookingId:"+String(JSON.stringify(bookingId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _invalidateSheetCache_("Bookings_Master"); // ضمان قراءة حديثة بعد أي كتابة ضمن نفس التنفيذ
@@ -2702,7 +2951,7 @@ function manuallyClearOverCapacityFlag(bookingId, currentUser) {
 function _dateOnly_(d){ return new Date(d.getFullYear(),d.getMonth(),d.getDate()); }
 
 // يبني كل بيانات شبكة التوافر الشهرية لفندق معيّن (السعة اليومية، الحجوزات، الأيام الهجرية/الميلادية) - القلب الحسابي لشاشة التوافر
-function getAvailabilityData(hotelName, year, month, currentUser) {
+function getAvailabilityData(hotelName, year, month, currentUser) { _apiGuard_();
   var _fn="[getAvailabilityData]"; _logInfo_(_fn, "START | "+"hotelName:"+String(JSON.stringify(hotelName)||"").slice(0, 80)+", "+"year:"+String(JSON.stringify(year)||"").slice(0, 80)+", "+"month:"+String(JSON.stringify(month)||"").slice(0, 80));
   try {
   // V3.55 — إصلاح أمني + أداء: الكاش كان مفتاحه (فندق × شهر) فقط بينما محتواه يعتمد على صلاحيات أول من فتح الشارت
@@ -2739,7 +2988,7 @@ function _availForUser_(full, canViewBookingData, canViewFinance) {
 }
 
 // V3.55 — عرض نطاق تاريخ متعدد الأشهر في نداء واحد (كان حتى 14 نداءً متوازياً يقرأ كل منها الشيتين كاملين)
-function getAvailabilityDataMulti(hotelName, months, currentUser) {
+function getAvailabilityDataMulti(hotelName, months, currentUser) { _apiGuard_();
   var _fn="[getAvailabilityDataMulti]";
   try {
   months = (months || []).slice(0, 14);
@@ -2841,7 +3090,7 @@ function _buildAvailabilityFull_(hotelName, year, month) {
 // يُعيد قائمة كل المستخدمين بالنظام (Admin فقط) - تُستخدم في شاشة الصلاحيات
 // ⚡ تحسين أداء: تُعيد كل المستخدمين مع صلاحياتهم الكاملة دفعة واحدة (قراءة واحدة لكل شيت بدلاً من طلب منفصل لكل مستخدم)
 // (سابقاً كانت هناك دالة getAllUsers مهجورة — حُذفت لأنها لم تعد مستدعاة بعد اعتماد الدالة الأشمل أدناه)
-function getAllUsersWithPermissions(currentUser) {
+function getAllUsersWithPermissions(currentUser) { _apiGuard_();
   var _fn="[getAllUsersWithPermissions]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -2879,7 +3128,7 @@ function getAllUsersWithPermissions(currentUser) {
 }
 
 // يُضيف مستخدماً جديداً للنظام (Admin فقط)
-function addUser(username, password, fullName, role, currentUser) {
+function addUser(username, password, fullName, role, currentUser) { _apiGuard_();
   var _fn="[addUser]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", password:[hidden]"+", "+"fullName:"+String(JSON.stringify(fullName)||"").slice(0, 80));
   try {
   return _withLock_(function() {
@@ -2904,7 +3153,7 @@ function addUser(username, password, fullName, role, currentUser) {
 }
 
 // يُبدّل حالة تفعيل/تعطيل مستخدم معيّن (الحالة المعاكسة لحالته الراهنة)
-function toggleUserActive(username, currentUser) {
+function toggleUserActive(username, currentUser) { _apiGuard_();
   var _fn="[toggleUserActive]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -2913,6 +3162,7 @@ function toggleUserActive(username, currentUser) {
   for (var i=1; i<data.length; i++) {
     if (String(data[i][0])===String(username)) {
       var nv=!(data[i][4]!==false); sheet.getRange(i+1,5).setValue(nv);
+      _invalidateSheetCache_("Users_Master"); if (!nv) _killUserSessions_(username); // V3.63
       logAudit("إدارة المستخدمين","تفعيل/تعطيل مستخدم",username,"","","",(nv?"تفعيل":"تعطيل")+" "+username,currentUser);
       return {success:true,isActive:nv};
     }
@@ -2922,7 +3172,7 @@ function toggleUserActive(username, currentUser) {
 }
 
 // يضبط حالة تفعيل مستخدم معيّن إلى قيمة محددة (true/false) مباشرة - يُستخدم من أزرار ⏸️/🔒 في مصفوفة الصلاحيات
-function setUserActiveState(username, isActive, currentUser) {
+function setUserActiveState(username, isActive, currentUser) { _apiGuard_();
   var _fn="[setUserActiveState]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"isActive:"+String(JSON.stringify(isActive)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -2932,6 +3182,8 @@ function setUserActiveState(username, isActive, currentUser) {
   for (var i=1; i<data.length; i++) {
     if (String(data[i][0])===String(username)) {
       sheet.getRange(i+1,5).setValue(!!isActive);
+      _invalidateSheetCache_("Users_Master"); // V3.63 — لقطة الصلاحيات تُبنى من جديد فوراً (التعطيل يسري على الجلسات المفتوحة)
+      if (!isActive) _killUserSessions_(username);
       logAudit("إدارة المستخدمين","تفعيل/تعطيل مستخدم",username,"","","",(isActive?"تفعيل":"تعطيل")+" "+username,currentUser);
       return {success:true,isActive:!!isActive};
     }
@@ -2941,7 +3193,7 @@ function setUserActiveState(username, isActive, currentUser) {
 }
 
 // يحذف مستخدماً نهائياً من النظام مع كل صلاحياته المخصصة (Admin فقط، ولا يمكن حذف مدير أو حذف الحساب الشخصي)
-function deleteUser(username, currentUser) {
+function deleteUser(username, currentUser) { _apiGuard_();
   var _fn="[deleteUser]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _invalidateSheetCache_("Users_Master"); // ضمان قراءة حديثة بعد أي كتابة ضمن نفس التنفيذ
@@ -2959,6 +3211,7 @@ function deleteUser(username, currentUser) {
   // حذف صلاحياته المخصصة أيضاً
   // V3.55 — كتابة واحدة تحت القفل بدل حذف صف بصف (~40 صفاً لكل مستخدم)
   _withLock_(function() { _replacePermissionRows_(function(u) { return u === String(username); }, []); });
+  _killUserSessions_(username); // V3.63
   _invalidateAuthCache_(); // V3.55 — بعد الكتابة أيضاً (يغلق نافذة إعادة بناء اللقطة بقيم قديمة أثناء الكتابة)
   logAudit("إدارة المستخدمين","حذف مستخدم",username,"","","","تم حذف المستخدم: "+fullName+" ("+username+")",currentUser);
   return {success:true};
@@ -2966,7 +3219,7 @@ function deleteUser(username, currentUser) {
 }
 
 // يُتيح للمدير إعادة تعيين كلمة مرور أي مستخدم آخر مباشرة دون معرفة كلمة المرور القديمة
-function adminResetPassword(targetUsername, newPassword, currentUser) {
+function adminResetPassword(targetUsername, newPassword, currentUser) { _apiGuard_();
   var _fn="[adminResetPassword]"; _logInfo_(_fn, "START | "+"targetUsername:"+String(JSON.stringify(targetUsername)||"").slice(0, 80)+", newPassword:[hidden]"+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -2980,6 +3233,7 @@ function adminResetPassword(targetUsername, newPassword, currentUser) {
       var _sR = _pwGenerateSalt_();
       sheet.getRange(i+1,2).setValue(_pwHash_(newPassword, _sR));
       sheet.getRange(i+1,6).setValue(_sR);
+      _killUserSessions_(targetUsername); // V3.63 — كل جلسات المستخدم المفتوحة تنتهي فوراً
       logAudit("إدارة المستخدمين","إعادة تعيين كلمة المرور",targetUsername,"","","","تم إعادة تعيين كلمة مرور "+targetUsername+" بواسطة "+currentUser,currentUser);
       return {success:true};
     }
@@ -2989,7 +3243,7 @@ function adminResetPassword(targetUsername, newPassword, currentUser) {
 }
 
 // يجلب صلاحيات مستخدم معيّن بصيغة مناسبة لعرضها/تعديلها من نافذة إدارة الصلاحيات (Admin فقط)
-function getUserPermissionsForAdmin(targetUsername, actingUser) {
+function getUserPermissionsForAdmin(targetUsername, actingUser) { _apiGuard_();
   var _fn="[getUserPermissionsForAdmin]"; _logInfo_(_fn, "START | "+"targetUsername:"+String(JSON.stringify(targetUsername)||"").slice(0, 80)+", "+"actingUser:"+String(JSON.stringify(actingUser)||"").slice(0, 80));
   try {
   if (_getUserRole_(actingUser)!=="Admin") throw new Error("غير مصرح.");
@@ -3011,7 +3265,7 @@ function getUserPermissionsForAdmin(targetUsername, actingUser) {
  * ======================================================================
  */
 // يُعيد أول وآخر شهر تغطيه تعاقدات فندق معيّن (لبناء قائمة الشهور المتاحة ديناميكياً في شاشتي التوافر والتقرير المالي)
-function getContractDateRange(hotelName, currentUser) {
+function getContractDateRange(hotelName, currentUser) { _apiGuard_();
   var _fn="[getContractDateRange]"; _logInfo_(_fn, "START | "+"hotelName:"+String(JSON.stringify(hotelName)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   var ss=_getSS_();
@@ -3043,7 +3297,7 @@ function getContractDateRange(hotelName, currentUser) {
 // يبني التقرير المالي الكامل لفندق معيّن عبر كل مدة تعاقده (بلا تقطيع سنوي)، باحتساب صحيح لليالي حسب تاريخ الخروج، مع تفصيل حساب كل شهر عند المرور بالماوس
 // periodStartMonth/periodStartYear/periodEndMonth/periodEndYear باراميترات اختيارية (أرقام أو null) —
 // تُستخدم لتضييق نطاق التقرير لفترة مخصصة داخل مدة التعاقد؛ إن لم تُمرَّر، يُحتسب التقرير لكامل مدة التعاقد كما كان سابقاً
-function getFullProfitReport(hotelName, currentUser, periodStartMonth, periodStartYear, periodEndMonth, periodEndYear) {
+function getFullProfitReport(hotelName, currentUser, periodStartMonth, periodStartYear, periodEndMonth, periodEndYear) { _apiGuard_();
   var _fn="[getFullProfitReport]"; _logRead_("التقرير المالي", hotelName||"الكل", "عرض تقرير مالي: "+(hotelName||"الكل")+" من "+periodStartMonth+"/"+periodStartYear+" إلى "+periodEndMonth+"/"+periodEndYear, currentUser); _logInfo_(_fn, "START | "+"hotelName:"+String(JSON.stringify(hotelName)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser,"financial_report","canView");
@@ -3253,7 +3507,7 @@ function _dsDayFigures_(hotelContracts, hotelBookings, day) {
 }
 // الملخص الرئيسي للبيان اليومي: يبني قائمة أشهر ضمن [fromIso, toIso] (أو من بداية/نهاية التعاقد عند الترك فارغاً) —
 // كل الأشهر تظهر كإجمالي فقط (قابلة للتوسعة عبر getDailyStatementMonthDetail) ما عدا آخر شهر في النطاق الذي يظهر بتفاصيله اليومية كاملة مباشرة
-function getDailyStatementSummary(hotelName, fromIso, toIso, currentUser) {
+function getDailyStatementSummary(hotelName, fromIso, toIso, currentUser) { _apiGuard_();
   var _fn="[getDailyStatementSummary]"; _logRead_("البيان اليومي", hotelName||"", "عرض البيان اليومي: "+(hotelName||"")+" من "+(fromIso||"بداية التعاقد")+" إلى "+(toIso||"نهاية التعاقد"), currentUser); _logInfo_(_fn, "START | "+"hotelName:"+String(JSON.stringify(hotelName)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser, "daily_statement", "canView");
@@ -3322,7 +3576,7 @@ function getDailyStatementSummary(hotelName, fromIso, toIso, currentUser) {
   } catch(e) { _logError_(_fn, e); throw e; }
 }
 // يبني التفاصيل اليومية الكاملة لشهر واحد مُجمَّع (عند الضغط على زر "عرض التفاصيل") — يُقيَّد بنفس فلتر من/إلى الأصلي
-function getDailyStatementMonthDetail(hotelName, year, month, fromIso, toIso, currentUser) {
+function getDailyStatementMonthDetail(hotelName, year, month, fromIso, toIso, currentUser) { _apiGuard_();
   var _fn="[getDailyStatementMonthDetail]"; _logInfo_(_fn, "START | "+"hotelName:"+String(JSON.stringify(hotelName)||"").slice(0, 80)+", year:"+year+", month:"+month);
   try {
   _requirePermission_(currentUser, "daily_statement", "canView");
@@ -3359,7 +3613,7 @@ function getDailyStatementMonthDetail(hotelName, year, month, fromIso, toIso, cu
  */
 // يبني كل بيانات لوحة المعلومات: مصفوفة مبيعات (جهة تحصيل × فندق)، ملخص ربح/خسارة لكل فندق حتى تاريخه،
 // الحجوزات القريبة خلال أسبوع، وفترات الفراغ الكبيرة المرشحة للعروض الترويجية - كل ذلك مُصفّى حسب صلاحيات الفنادق
-function getDashboardData(currentUser) {
+function getDashboardData(currentUser) { _apiGuard_();
   var _fn="[getDashboardData]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser, "dashboard", "canView");
@@ -3561,7 +3815,7 @@ function _bkDisplayStatusForRow_(brow) {
  * ======================================================================
  */
 // يُضيف طلباً جديداً لقائمة الانتظار (يُستدعى عندما يرفض المستخدم تسجيل حجز "أوفر" ويفضّل الانتظار بدلاً من ذلك)
-function addToWaitlist(w, currentUser) {
+function addToWaitlist(w, currentUser) { _apiGuard_();
   var _fn="[addToWaitlist]"; _logInfo_(_fn, "START | "+"w:"+String(JSON.stringify(w)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser, "bookings", "canAdd");
@@ -3581,7 +3835,7 @@ function addToWaitlist(w, currentUser) {
 }
 
 // يُعيد كل طلبات قائمة الانتظار النشطة (مُصفّاة حسب صلاحيات الفنادق)
-function getWaitlist(currentUser) {
+function getWaitlist(currentUser) { _apiGuard_();
   var _fn="[getWaitlist]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser, "waitlist", "canView");
@@ -3621,7 +3875,7 @@ function getWaitlist(currentUser) {
 }
 
 // يحذف/يُلغي طلب انتظار
-function cancelWaitlistEntry(waitlistId, currentUser) {
+function cancelWaitlistEntry(waitlistId, currentUser) { _apiGuard_();
   var _fn="[cancelWaitlistEntry]"; _logInfo_(_fn, "START | "+"waitlistId:"+String(JSON.stringify(waitlistId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser, "waitlist", "canDelete");
@@ -3639,7 +3893,7 @@ function cancelWaitlistEntry(waitlistId, currentUser) {
 }
 
 // يُحوّل طلب انتظار إلى حجز فعلي (بعد التأكد من توفر السعة) - يستدعي نفس مسار حفظ الحجز العادي
-function convertWaitlistToBooking(waitlistId, currentUser) {
+function convertWaitlistToBooking(waitlistId, currentUser) { _apiGuard_();
   var _fn="[convertWaitlistToBooking]"; _logInfo_(_fn, "START | "+"waitlistId:"+String(JSON.stringify(waitlistId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   return _withLock_(function() {
@@ -3748,7 +4002,7 @@ function _classifyWaitlistAvailability_(nights, roomCount) {
 }
 
 // يفحص كل طلبات قائمة الانتظار النشطة، يُحدّث حالتها (متاح بالكامل/جزئياً) وينشئ تنبيهاً مفصَّلاً (يشمل عدد الغرف) عند أي تغيير
-function checkWaitlistAvailabilityAndNotify(force) {
+function checkWaitlistAvailabilityAndNotify(force) { _apiGuard_();
   var _fn="[checkWaitlistAvailabilityAndNotify]"; _logInfo_(_fn, "START | "+"");
   try {
   if (!_bgCheckShouldRun_("WAITLIST", force)) return { success:true, skipped:"ran recently" };
@@ -3784,7 +4038,7 @@ function checkWaitlistAvailabilityAndNotify(force) {
 }
 
 // يُعيد تفصيل الإمكانية لكل ليلة من ليالي طلب انتظار معيّن - لعرضها في نافذة تفاصيل الطلب
-function getWaitlistEntryDetails(waitlistId, currentUser) {
+function getWaitlistEntryDetails(waitlistId, currentUser) { _apiGuard_();
   var _fn="[getWaitlistEntryDetails]"; _logInfo_(_fn, "START | "+"waitlistId:"+String(JSON.stringify(waitlistId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser, "waitlist", "canView");
@@ -3810,7 +4064,7 @@ function getWaitlistEntryDetails(waitlistId, currentUser) {
 }
 
 // يُعدّل بيانات طلب انتظار بالكامل (كل الحقول) - يُسجّل ملخص التعديل في Last_Edit_Summary
-function editWaitlistEntry(obj, currentUser) {
+function editWaitlistEntry(obj, currentUser) { _apiGuard_();
   var _fn="[editWaitlistEntry]"; _logInfo_(_fn, "START | "+"obj:"+String(JSON.stringify(obj)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser, "waitlist", "canEdit");
@@ -3850,7 +4104,7 @@ function editWaitlistEntry(obj, currentUser) {
  * ======================================================================
  */
 // يحفظ إعدادات بوت تليجرام (Token + Chat ID الخاص بالجروب) - Admin فقط
-function saveTelegramSettings(botToken, chatId, currentUser) {
+function saveTelegramSettings(botToken, chatId, currentUser) { _apiGuard_();
   var _fn="[saveTelegramSettings]"; _logInfo_(_fn, "START | "+"botToken:"+String(JSON.stringify(botToken)||"").slice(0, 80)+", "+"chatId:"+String(JSON.stringify(chatId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -3871,7 +4125,7 @@ function saveTelegramSettings(botToken, chatId, currentUser) {
 }
 
 // يجلب إعدادات تليجرام الحالية (Admin فقط، تُخفى قيمة التوكن جزئياً لأسباب أمنية)
-function getTelegramSettings(currentUser) {
+function getTelegramSettings(currentUser) { _apiGuard_();
   var _fn="[getTelegramSettings]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -3933,7 +4187,8 @@ function _tgQueuePending_() {
 
 // يُنفَّذ تلقائياً عبر المشغّل أعلاه: يُرسل كل الرسائل المتراكمة في الطابور فعلياً ثم يُفرغه. آمن للتكرار
 // (لو استُدعي أكثر من مرة متقاربة بسبب عدة حفظات متتالية، كل تنفيذ يُفرغ ما وجده فقط تحت القفل فلا تكرار إرسال)
-function _flushTelegramQueue_() {
+function _flushTelegramQueue_() { return _trusted_(_flushTelegramQueueWork_); } // V3.63 — مشغّل: نقطة دخول موثوقة
+function _flushTelegramQueueWork_() {
   var props = PropertiesService.getScriptProperties();
   // حذف مشغّلات التفريغ المنتهية (المشغّل لمرة واحدة يبقى مسجلاً ويُحتسب ضمن حد الـ20)
   try { ScriptApp.getProjectTriggers().forEach(function(t) { if (t.getHandlerFunction() === "_flushTelegramQueue_") ScriptApp.deleteTrigger(t); }); } catch (eT) {}
@@ -3957,7 +4212,7 @@ function _flushTelegramQueue_() {
 }
 
 // اختبار الاتصال ببوت تليجرام (زر "اختبار الإرسال" في شاشة الإعدادات)
-function testTelegramConnection(currentUser) {
+function testTelegramConnection(currentUser) { _apiGuard_();
   var _fn="[testTelegramConnection]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -3967,7 +4222,7 @@ function testTelegramConnection(currentUser) {
 
 // يفحص كل الحجوزات التي يبدأ دخولها غداً وغير الملغاة، ويرسل تذكيراً مجمّعاً واحداً لجروب تليجرام
 // (يُستدعى مرة واحدة يومياً - يُفضَّل ربطه بمشغّل زمني Time-driven Trigger لضمان الإرسال حتى بدون تسجيل دخول أي مستخدم)
-function sendTelegramCheckinReminders(force) {
+function sendTelegramCheckinReminders(force) { _apiGuard_();
   var _fn="[sendTelegramCheckinReminders]"; _logInfo_(_fn, "START | "+"force:"+String(JSON.stringify(force)||"").slice(0, 80));
   try {
   // حارس يومي: يمنع الإرسال المكرر إن استدعاه أكثر من مستخدم بنفس اليوم (يُسمح فقط بمحاولة واحدة ناجحة يومياً)
@@ -4014,7 +4269,7 @@ function sendTelegramCheckinReminders(force) {
  */
 // يستقبل مصفوفة صفوف حجوزات (كل صف: اسم الفندق، العميل، جهة التحصيل، دخول، خروج، غرف، سعر، ملاحظات)
 // ويحفظها جميعاً عبر نفس مسار saveBooking المعتاد (بكل فحوصاته وتسجيل تدقيقه وتنبيهاته)، ويُعيد تقريراً بالنجاح/الفشل لكل صف
-function bulkImportBookings(rows, currentUser) {
+function bulkImportBookings(rows, currentUser) { _apiGuard_();
   var _fn="[bulkImportBookings]"; _logInfo_(_fn, "START | "+"rows:[data]"+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _invalidateSheetCache_("Bookings_Master"); // ضمان قراءة حديثة بعد أي كتابة ضمن نفس التنفيذ
@@ -4065,7 +4320,7 @@ function bulkImportBookings(rows, currentUser) {
 // عند تغيير اسم الدخول، يُنشر التغيير تلقائياً على كل الشيتات التي تحتفظ باسم المستخدم كمرجع
 // (الصلاحيات، منشئ الحجوزات/التعاقدات/الأقساط/طلبات الانتظار، سجل التعديلات، قراءات التنبيهات)
 // لضمان بقاء كل البيانات التاريخية مرتبطة بشكل صحيح بالمستخدم الجديد
-function updateUserDetails(oldUsername, newUsername, newFullName, currentUser) {
+function updateUserDetails(oldUsername, newUsername, newFullName, currentUser) { _apiGuard_();
   var _fn="[updateUserDetails]"; _logInfo_(_fn, "START | "+"oldUsername:"+String(JSON.stringify(oldUsername)||"").slice(0, 80)+", "+"newUsername:"+String(JSON.stringify(newUsername)||"").slice(0, 80)+", "+"newFullName:"+String(JSON.stringify(newFullName)||"").slice(0, 80));
   try {
   _invalidateSheetCache_("Users_Master"); // ضمان قراءة حديثة بعد أي كتابة ضمن نفس التنفيذ
@@ -4142,7 +4397,7 @@ function updateUserDetails(oldUsername, newUsername, newFullName, currentUser) {
  * ======================================================================
  */
 // يحفظ اسم الشركة (عربي/إنجليزي) وشعارها (Base64 DataURI) - Admin فقط
-function saveCompanyBranding(nameAr, nameEn, logoDataUri, currentUser) {
+function saveCompanyBranding(nameAr, nameEn, logoDataUri, currentUser) { _apiGuard_();
   var _fn="[saveCompanyBranding]"; _logInfo_(_fn, "START | "+"nameAr:"+String(JSON.stringify(nameAr)||"").slice(0, 80)+", "+"nameEn:"+String(JSON.stringify(nameEn)||"").slice(0, 80)+", "+"logoDataUri:[data]");
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -4157,7 +4412,7 @@ function saveCompanyBranding(nameAr, nameEn, logoDataUri, currentUser) {
 }
 
 // يجلب إعدادات هوية الشركة الحالية (متاح لأي مستخدم مسجّل دخول، تُستخدم بقوالب الطباعة/التأكيد)
-function getCompanyBranding() {
+function getCompanyBranding() { _apiGuard_();
   var _fn="[getCompanyBranding]"; _logInfo_(_fn, "START | "+"");
   try {
   var props = PropertiesService.getScriptProperties();
@@ -4178,7 +4433,7 @@ function getCompanyBranding() {
  */
 
 // يجلب بيانات حجز واحد منسّقة خصيصاً لنافذة/قالب تأكيد الحجز (منفصلة عن getBookingFullDetails لتفادي التعارض)
-function getBookingForConfirmation(bookingId, currentUser) {
+function getBookingForConfirmation(bookingId, currentUser) { _apiGuard_();
   var _fn="[getBookingForConfirmation]"; _logInfo_(_fn, "START | "+"bookingId:"+String(JSON.stringify(bookingId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser, "bookings", "canView");
@@ -4209,7 +4464,7 @@ function getBookingForConfirmation(bookingId, currentUser) {
 }
 
 // يجلب قائمة أسماء مديري الحجوزات المحفوظين مسبقاً (تُراكَم تلقائياً عند كل استخدام جديد)
-function getReservationManagers() {
+function getReservationManagers() { _apiGuard_();
   var _fn="[getReservationManagers]"; _logInfo_(_fn, "START | "+"");
   try {
   var props = PropertiesService.getScriptProperties();
@@ -4234,7 +4489,7 @@ function _addReservationManagerName_(name) {
 }
 
 // يحفظ بيانات تأكيد الحجز (نوع التأكيد/المدير/تاريخ السداد) على صف الحجز + يُراكم اسم المدير للقائمة
-function saveBookingConfirmation(bookingId, confType, manager, clientOptionDate, currentUser) {
+function saveBookingConfirmation(bookingId, confType, manager, clientOptionDate, currentUser) { _apiGuard_();
   var _fn="[saveBookingConfirmation]"; _logInfo_(_fn, "START | "+"bookingId:"+String(JSON.stringify(bookingId)||"").slice(0, 80)+", "+"confType:"+String(JSON.stringify(confType)||"").slice(0, 80)+", "+"manager:"+String(JSON.stringify(manager)||"").slice(0, 80));
   try {
   return _withLock_(function() {
@@ -4267,7 +4522,7 @@ function saveBookingConfirmation(bookingId, confType, manager, clientOptionDate,
 // ─── إنشاء/جلب مجلد Drive مؤقت لملفات التقارير المُصدَّرة ───
 // دالة عامة لتشغيل _ensureTempReportsFolder_ يدوياً من محرر Apps Script (الدوال التي تبدأ بـ _ لا تظهر بالقائمة)
 // شغّل هذه الدالة مرة واحدة يدوياً من المحرر لضمان ظهور نافذة الموافقة على صلاحية Drive
-function setupDriveFolderManual() { return _ensureTempReportsFolder_().getName(); }
+function setupDriveFolderManual() { _apiGuard_(); return _ensureTempReportsFolder_().getName(); }
 
 function _ensureTempReportsFolder_() {
   var props = PropertiesService.getScriptProperties();
@@ -4291,7 +4546,7 @@ function _ensureTempReportsFolder_() {
 }
 
 // يحوّل محتوى HTML إلى ملف PDF فعلي، يحفظه مؤقتاً في Drive، وينظّف الملفات الأقدم من ساعة تلقائياً
-function generateReportPdfForShare(htmlContent, fileName, currentUser) {
+function generateReportPdfForShare(htmlContent, fileName, currentUser) { _apiGuard_();
   var folder = _ensureTempReportsFolder_();
   try {
     var oneHourAgo = new Date(Date.now() - 60*60*1000);
@@ -4318,7 +4573,7 @@ function generateReportPdfForShare(htmlContent, fileName, currentUser) {
 }
 
 // يحذف ملف PDF مؤقت بعد اكتمال المشاركة/الطباعة
-function deleteSharedReportFile(fileId, currentUser) {
+function deleteSharedReportFile(fileId, currentUser) { _apiGuard_();
   if (!fileId) return {success:false};
   try {
     // V3.60 — يُحذف فقط ملف داخل مجلد التقارير المؤقتة (كانت تقبل أي معرّف ملف يصل إليه مالك السكربت، بلا أي تحقق)
@@ -4334,7 +4589,7 @@ function deleteSharedReportFile(fileId, currentUser) {
 }
 
 // يفحص كل الحجوزات التي لها تاريخ سداد تأكيد (Client Option Date) خلال 3 أيام أو فات موعدها، وينشئ تنبيهاً لكل منها
-function checkConfirmationOptionDatesAndNotify(force) {
+function checkConfirmationOptionDatesAndNotify(force) { _apiGuard_();
   var _fn="[checkConfirmationOptionDatesAndNotify]"; _logInfo_(_fn, "START | "+"");
   try {
   if (!_bgCheckShouldRun_("OPTION_DATES", force)) return { success:true, skipped:"ran recently" };
@@ -4369,7 +4624,7 @@ function checkConfirmationOptionDatesAndNotify(force) {
  * ======================================================================
  */
 // يُعيد بداية كل شهر من شهور سنة هجرية معيّنة (بالتاريخ الميلادي المقابل) + أي تصحيح محفوظ مسبقاً لكل شهر
-function getHijriMonthStarts(hijriYear, currentUser) {
+function getHijriMonthStarts(hijriYear, currentUser) { _apiGuard_();
   var _fn="[getHijriMonthStarts]"; _logInfo_(_fn, "START | "+"hijriYear:"+String(JSON.stringify(hijriYear)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -4403,7 +4658,7 @@ function getHijriMonthStarts(hijriYear, currentUser) {
 }
 
 // يحفظ تصحيحات بدايات الشهور لسنة هجرية معيّنة - Admin فقط
-function saveHijriMonthCorrections(hijriYear, correctionsObj, currentUser) {
+function saveHijriMonthCorrections(hijriYear, correctionsObj, currentUser) { _apiGuard_();
   var _fn="[saveHijriMonthCorrections]"; _logInfo_(_fn, "START | "+"hijriYear:"+String(JSON.stringify(hijriYear)||"").slice(0, 80)+", "+"correctionsObj:[data]"+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -4463,7 +4718,7 @@ var DEFAULT_ROLES = {
 };
 
 // يُعيد الأدوار المحفوظة + الافتراضية — Admin فقط
-function getRoles() {
+function getRoles() { _apiGuard_();
   var _fn="[getRoles]"; _logInfo_(_fn, "START | "+"");
   try {
   var props = PropertiesService.getScriptProperties();
@@ -4477,7 +4732,7 @@ function getRoles() {
 }
 
 // يحفظ الأدوار المخصَّصة (تُضيف إلى الافتراضية أو تُعدّلها) - Admin فقط
-function saveRole(roleName, perms, currentUser) {
+function saveRole(roleName, perms, currentUser) { _apiGuard_();
   var _fn="[saveRole]"; _logInfo_(_fn, "START | "+"roleName:"+String(JSON.stringify(roleName)||"").slice(0, 80)+", "+"perms:[data]"+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -4494,7 +4749,7 @@ function saveRole(roleName, perms, currentUser) {
 }
 
 // يحذف دوراً مخصَّصاً (لا يمكن حذف الأدوار الافتراضية) - Admin فقط
-function deleteRole(roleName, currentUser) {
+function deleteRole(roleName, currentUser) { _apiGuard_();
   var _fn="[deleteRole]"; _logInfo_(_fn, "START | "+"roleName:"+String(JSON.stringify(roleName)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -4510,7 +4765,7 @@ function deleteRole(roleName, currentUser) {
 }
 
 // يُطبّق صلاحيات دور كامل على مستخدم - Admin فقط (الصلاحيات تُستبدل بالكامل بصلاحيات الدور)
-function applyRoleToUser(targetUsername, roleName, currentUser) {
+function applyRoleToUser(targetUsername, roleName, currentUser) { _apiGuard_();
   var _fn="[applyRoleToUser]"; _logInfo_(_fn, "START | "+"targetUsername:"+String(JSON.stringify(targetUsername)||"").slice(0, 80)+", "+"roleName:"+String(JSON.stringify(roleName)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   return _withLock_(function() {
@@ -4545,9 +4800,9 @@ function _setUserRoleName_(username, roleName) {
   props.setProperty("USER_ROLE_NAMES", JSON.stringify(map));
 }
 // يُعيد خريطة (اسم المستخدم → اسم الدور المُطبَّق) لعرضها بجدول المستخدمين
-function getUserRoleNames() { return _getUserRoleNamesMap_(); }
+function getUserRoleNames() { _apiGuard_(); return _getUserRoleNamesMap_(); }
 // يُلغي ربط مستخدم بأي دور (يبقي صلاحياته الحالية كما هي، فقط يُزيل التسمية)
-function clearUserRoleName(username, currentUser) {
+function clearUserRoleName(username, currentUser) { _apiGuard_();
   var _fn="[clearUserRoleName]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -4557,7 +4812,7 @@ function clearUserRoleName(username, currentUser) {
 }
 
 // يُعدّل صلاحيات دور موجود، ثم يُعيد تطبيقها تلقائياً على كل المستخدمين المرتبطين حالياً بهذا الدور
-function updateRoleAndPropagate(roleName, perms, currentUser) {
+function updateRoleAndPropagate(roleName, perms, currentUser) { _apiGuard_();
   var _fn="[updateRoleAndPropagate]"; _logInfo_(_fn, "START | "+"roleName:"+String(JSON.stringify(roleName)||"").slice(0, 80)+", "+"perms:[data]"+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   return _withLock_(function() {
@@ -4582,7 +4837,7 @@ function updateRoleAndPropagate(roleName, perms, currentUser) {
 }
 
 // يجلب صلاحيات دور معيّن (لعرضها بنافذة تعديل الدور)
-function getRolePermissions(roleName) {
+function getRolePermissions(roleName) { _apiGuard_();
   var _fn="[getRolePermissions]"; _logInfo_(_fn, "START | "+"roleName:"+String(JSON.stringify(roleName)||"").slice(0, 80));
   try {
   var roles = getRoles();
@@ -4597,7 +4852,7 @@ function getRolePermissions(roleName) {
  * ======================================================================
  */
 // يجلب مدة الجلسة الحالية بالدقائق (15 دقيقة افتراضياً)
-function getSessionTimeoutMinutes() {
+function getSessionTimeoutMinutes() { _apiGuard_();
   var _fn="[getSessionTimeoutMinutes]"; _logInfo_(_fn, "START | "+"");
   try {
   var props = PropertiesService.getScriptProperties();
@@ -4607,7 +4862,7 @@ function getSessionTimeoutMinutes() {
 }
 
 // يحفظ مدة الجلسة الجديدة بالدقائق - Admin فقط
-function saveSessionTimeoutMinutes(minutes, currentUser) {
+function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
   var _fn="[saveSessionTimeoutMinutes]"; _logInfo_(_fn, "START | "+"minutes:"+String(JSON.stringify(minutes)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -4633,7 +4888,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.62";
+var APP_VERSION = "V3.63";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -4741,7 +4996,7 @@ function _invalidateAvailCacheForRange_(hotelName, startDate, endDate) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — Server-side pagination للحجوزات مع بحث مركزي
 // ═══════════════════════════════════════════════════════════════
-function getBookingsPage(filters, page, pageSize, currentUser) {
+function getBookingsPage(filters, page, pageSize, currentUser) { _apiGuard_();
   var _fn="[getBookingsPage]"; _logInfo_(_fn, "START | page:"+page+", pageSize:"+pageSize);
   try {
   _requirePermission_(currentUser, "bookings", "canView");
@@ -4828,7 +5083,7 @@ function getBookingsPage(filters, page, pageSize, currentUser) {
 }
 
 // v3.0 — Server-side pagination لسجل التدقيق العام
-function getGlobalAuditLogPage(filters, page, pageSize, currentUser) {
+function getGlobalAuditLogPage(filters, page, pageSize, currentUser) { _apiGuard_();
   var _fn="[getGlobalAuditLogPage]"; _logInfo_(_fn, "START | page:"+page);
   try {
   filters = filters || {};
@@ -4927,7 +5182,7 @@ function getGlobalAuditLogPage(filters, page, pageSize, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — البحث الموحّد (Global Search) — يبحث في: الحجوزات، التعاقدات، العملاء، الفنادق
 // ═══════════════════════════════════════════════════════════════
-function globalSearch(query, currentUser) {
+function globalSearch(query, currentUser) { _apiGuard_();
   var _fn="[globalSearch]"; _logInfo_(_fn, "START | q:"+String(query||"").slice(0,40));
   try {
   var q = String(query||"").trim().toLowerCase();
@@ -4972,7 +5227,7 @@ function globalSearch(query, currentUser) {
 // v3.0 — تصدير تقرير إلى Drive: PDF (شراكه فوراً) أو Excel (CSV مرن)
 // يعتمد على مجلد التقارير المؤقتة الموجود مسبقاً (_ensureTempReportsFolder_)
 // ═══════════════════════════════════════════════════════════════
-function exportReportToDrivePdf(htmlContent, fileName, currentUser) {
+function exportReportToDrivePdf(htmlContent, fileName, currentUser) { _apiGuard_();
   var _fn="[exportReportToDrivePdf]"; _logInfo_(_fn, "START | fileName:"+fileName);
   try {
   fileName = String(fileName||"تقرير").replace(/[\\/:*?"<>|]/g,"_").slice(0,120) + ".pdf";
@@ -4988,7 +5243,7 @@ function exportReportToDrivePdf(htmlContent, fileName, currentUser) {
 
 // يُصدّر صفوف جدول إلى ملف Excel (بصيغة .xlsx عبر Google Sheets ثم تحويل) أو CSV سريع
 // rows: مصفوفة صفوف (كل صف مصفوفة قيم). headers: مصفوفة أسماء الأعمدة.
-function exportReportToDriveExcel(headers, rows, fileName, currentUser) {
+function exportReportToDriveExcel(headers, rows, fileName, currentUser) { _apiGuard_();
   var _fn="[exportReportToDriveExcel]"; _logInfo_(_fn, "START | fileName:"+fileName);
   try {
   fileName = String(fileName||"تقرير").replace(/[\\/:*?"<>|]/g,"_").slice(0,120);
@@ -5045,7 +5300,7 @@ function _loginHomeData_(username, role, permissions, boot, opts) {
   return out;
 }
 
-function getAppBootstrap(username, fullName, opts) {
+function getAppBootstrap(username, fullName, opts) { _apiGuard_();
   var _fn="[getAppBootstrap]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"fullName:"+String(JSON.stringify(fullName)||"").slice(0, 80));
   try {
   opts = opts || {};
@@ -5084,7 +5339,7 @@ function _getBrandingVersion_() {
 
 // تُجمّع بيانات فتح نموذج الحجز (تعاقدات نشطة + جهات تحصيل + أسماء عملاء + بيانات الحجز عند التعديل) — كانت 3-4 نداءات
 // تعتمد على CacheService للبيانات شبه الثابتة (تسريع فتح النموذج من ~1-2 ثانية إلى فوري تقريباً بعد أول فتح)
-function getBookingModalBootstrap(currentUser, editId) {
+function getBookingModalBootstrap(currentUser, editId) { _apiGuard_();
   var _fn="[getBookingModalBootstrap]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80)+", "+"editId:"+String(JSON.stringify(editId)||"").slice(0, 80));
   try {
   return {
@@ -5097,7 +5352,7 @@ function getBookingModalBootstrap(currentUser, editId) {
 }
 
 // تُجمّع بيانات فتح نموذج التعاقد (أسماء الفنادق + بيانات التعاقد عند التعديل) — كانت نداءين
-function getContractModalBootstrap(currentUser, editId) {
+function getContractModalBootstrap(currentUser, editId) { _apiGuard_();
   var _fn="[getContractModalBootstrap]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80)+", "+"editId:"+String(JSON.stringify(editId)||"").slice(0, 80));
   try {
   return {
@@ -5171,7 +5426,7 @@ var SETUP_STEPS = [
 // v3.5 — أداة إصلاح بيانات: تحوّل كل الأرقام العربية/الفارسية المخزَّنة في الأعمدة العددية إلى أرقام Latin
 // تُشغَّل من شاشة الإعدادات (Admin فقط) لتصحيح السجلات القديمة كحجز D025 الذي كتب عدد الغرف بالعربي
 // آمنة تماماً: تعالج فقط الخلايا النصية التي تحتوي أرقاماً عربية، وتترك أي شيء آخر بلا مساس
-function repairArabicDigitsInSheets(currentUser) {
+function repairArabicDigitsInSheets(currentUser) { _apiGuard_();
   var _fn="[repairArabicDigitsInSheets]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
     if (!_isAdmin_(currentUser)) throw new Error("غير مصرح. هذه الأداة لمدير النظام فقط.");
@@ -5223,7 +5478,7 @@ function repairArabicDigitsInSheets(currentUser) {
 // قبل الحذف الفعلي، تُنسخ كل الصفوف المتأثرة احتياطياً إلى شيتات جديدة باسم "ZZ_Backup_<الشيت>_<الوقت>"
 // بنفس رؤوس الأعمدة الأصلية — فهذه نسخة احتياطية يدوية يمكن الرجوع لمحتواها عند الحاجة، لكن الحذف من
 // الشيتات الحيّة نفسها نهائي ولا تراجع عنه تلقائياً من داخل النظام. مدير النظام فقط يملك صلاحية التنفيذ.
-function purgeHotelsCompletely(hotelNames, currentUser) {
+function purgeHotelsCompletely(hotelNames, currentUser) { _apiGuard_();
   var _fn="[purgeHotelsCompletely]"; _logInfo_(_fn, "START | hotelNames:"+JSON.stringify(hotelNames)+", currentUser:"+String(JSON.stringify(currentUser)||"").slice(0,80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح. حذف فندق بالكامل متاح لمدير النظام فقط.");
@@ -5321,7 +5576,7 @@ function purgeHotelsCompletely(hotelNames, currentUser) {
   } catch(e) { _logError_(_fn, e); throw e; }
 }
 
-function setupApplicationComplete(currentUser) {
+function setupApplicationComplete(currentUser) { _apiGuard_();
   var _fn="[setupApplicationComplete]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (currentUser && !_isAdmin_(currentUser)) throw new Error("غير مصرح. التهيئة الشاملة متاحة لمدير النظام فقط.");
@@ -5345,10 +5600,12 @@ function setupApplicationComplete(currentUser) {
 
 // دوال Wrapper للمشغّلات الزمنية: التريجر يمرّر "كائن الحدث" كأول باراميتر،
 // وهذه الأغلفة تمنع وصوله للدوال الأصلية (كان سيفسد force/currentUser)
-function trigger_checkDuePayments() { checkDuePaymentsAndNotify("النظام (مشغّل يومي)", true); }
-function trigger_checkWaitlist() { checkWaitlistAvailabilityAndNotify(true); }
-function trigger_telegramReminders() { sendTelegramCheckinReminders(false); }
-function trigger_checkOptionDates() { checkConfirmationOptionDatesAndNotify(true); }
+// V3.63 — نقاط دخول موثوقة للمشغّلات. تبقى قابلة للنداء بالاسم (المشغّلات تتطلب ذلك) فتعمل بلا "إجبار":
+// تخضع لكابح 3 ساعات (_bgCheckShouldRun_)، فلا يمكن استخدامها لإغراق الإشعارات؛ المشغّل اليومي يمرّ من الكابح دائماً.
+function trigger_checkDuePayments() { _trusted_(function() { checkDuePaymentsAndNotify("النظام (مشغّل يومي)", false); }); }
+function trigger_checkWaitlist() { _trusted_(function() { checkWaitlistAvailabilityAndNotify(false); }); }
+function trigger_telegramReminders() { _trusted_(function() { sendTelegramCheckinReminders(false); }); }
+function trigger_checkOptionDates() { _trusted_(function() { checkConfirmationOptionDatesAndNotify(false); }); }
 
 // V3.55 — الفحوصات الخلفية تعمل يومياً بالمشغّلات الزمنية، وكانت تُشغَّل أيضاً من متصفح كل مستخدم عند أول دخول يومياً
 // (4 نداءات ثقيلة تتزاحم مع الإقلاع × عدد المستخدمين). الآن تشغيل المتصفح يُنفَّذ فعلياً مرة كل 3 ساعات على الأكثر
@@ -5443,7 +5700,7 @@ var SYSTEM_FOLDERS = [
 ];
 
 // يُرجع قائمة كل مجلدات النظام مع حالتها الحالية (للعرض في شاشة الإعدادات)
-function getSystemFolders(currentUser) {
+function getSystemFolders(currentUser) { _apiGuard_();
   var _fn="[getSystemFolders]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (currentUser && !_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -5463,7 +5720,7 @@ function getSystemFolders(currentUser) {
 }
 
 // يُغيّر اسم مجلد نظام معيّن على Drive (Admin فقط)
-function renameSystemFolder(key, newName, currentUser) {
+function renameSystemFolder(key, newName, currentUser) { _apiGuard_();
   var _fn="[renameSystemFolder]"; _logInfo_(_fn, "START | "+"key:"+String(JSON.stringify(key)||"").slice(0, 80)+", "+"newName:"+String(JSON.stringify(newName)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -5536,7 +5793,7 @@ function _findTriggerDef_(key) {
 }
 
 // يُرجع كل المشغّلات المسجّلة مع حالتها الفعلية على Apps Script (للعرض في شاشة الإعدادات)
-function getSystemTriggers(currentUser) {
+function getSystemTriggers(currentUser) { _apiGuard_();
   var _fn="[getSystemTriggers]";
   try {
   _logInfo_(_fn, "START");
@@ -5552,7 +5809,7 @@ function getSystemTriggers(currentUser) {
 }
 
 // يُفعّل مشغّلاً معيّناً (إن كان معطّلاً) - Admin فقط
-function enableSystemTrigger(key, currentUser) {
+function enableSystemTrigger(key, currentUser) { _apiGuard_();
   var _fn="[enableSystemTrigger]"; _logInfo_(_fn, "START | "+"key:"+String(JSON.stringify(key)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -5566,7 +5823,7 @@ function enableSystemTrigger(key, currentUser) {
 }
 
 // يُعطّل مشغّلاً معيّناً - Admin فقط
-function disableSystemTrigger(key, currentUser) {
+function disableSystemTrigger(key, currentUser) { _apiGuard_();
   var _fn="[disableSystemTrigger]"; _logInfo_(_fn, "START | "+"key:"+String(JSON.stringify(key)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -5579,7 +5836,7 @@ function disableSystemTrigger(key, currentUser) {
 }
 
 // يُشغّل مشغّلاً معيّناً يدوياً الآن (للاختبار الفوري) - Admin فقط
-function runSystemTriggerNow(key, currentUser) {
+function runSystemTriggerNow(key, currentUser) { _apiGuard_();
   var _fn="[runSystemTriggerNow]"; _logInfo_(_fn, "START | "+"key:"+String(JSON.stringify(key)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
@@ -5706,7 +5963,7 @@ function _bumpNotifVersion_() {
 
 // v3.52 — نداء دوري موحَّد بدل ثلاثة (نبضة + نسخة التوافر + الإشعارات): كل نداء من المتصفح يكلّف ~2 ثانية
 // ثابتة مهما صغر، فتقليل عدد النداءات هو المكسب الأكبر. wantNotifs: true=إجباري، false=تخطٍّ، غير ذلك=عند التغيير فقط
-function pollAppState(username, fullName, knownNotifVersion, wantHeartbeat, wantNotifs) {
+function pollAppState(username, fullName, knownNotifVersion, wantHeartbeat, wantNotifs) { _apiGuard_();
   var _fn="[pollAppState]";
   try {
     var props = PropertiesService.getScriptProperties();
@@ -5720,7 +5977,7 @@ function pollAppState(username, fullName, knownNotifVersion, wantHeartbeat, want
 }
 
 // يجلب رقم النسخة الحالي - يُستدعى من كل عميل دورياً للمقارنة
-function getAvailabilityVersion() {
+function getAvailabilityVersion() { _apiGuard_();
   var _fn="[getAvailabilityVersion]";
   try {
     return PropertiesService.getScriptProperties().getProperty(_AVAIL_VERSION_PROP) || "0";
@@ -5875,7 +6132,7 @@ function _perfCall_(name, args, fn) {
 
 // تستقبل دفعة {fn,ms,ok} مجمَّعة من المتصفح - لا ترمي خطأ أبداً (قياس الأداء لا يجب أن يكسر شيئاً)
 // v3.50 — extra (اختياري، متوافق مع المتصفحات القديمة): {network, console, resources, nav, v} لسجل التنفيذ
-function flushClientPerfMetrics(entries, currentUser, extra) {
+function flushClientPerfMetrics(entries, currentUser, extra) { _apiGuard_();
   var _fn="[flushClientPerfMetrics]";
   try {
     _ensurePerfFlushTriggerThrottled_(false); // يثبّت مشغّل التفريغ تلقائياً من أول استخدام فعلي للتطبيق
@@ -6125,7 +6382,7 @@ function _perfRedactReport_(data) {
 
 // زر "نسخ كل البيانات" (Admin فقط): كل أقسام التقرير + الصحة + سجل آخر 24 ساعة بتفاصيل كاملة غير منقّحة،
 // لأن الوجهة حافظة المدير نفسه (للصقها في المحادثة) وليست المستودع العام
-function getPerfCopyAllJson(currentUser, filters) {
+function getPerfCopyAllJson(currentUser, filters) { _apiGuard_();
   var _fn = "[getPerfCopyAllJson]";
   try {
     if (!_isAdmin_(currentUser)) throw new Error("غير مصرح — نسخ بيانات الأداء لمدير النظام فقط.");
@@ -6144,7 +6401,7 @@ function getPerfCopyAllJson(currentUser, filters) {
 }
 
 // سجل التنفيذ لشاشة الإدارة (Admin فقط، تفاصيل كاملة)
-function getPerfLog(currentUser, filters) {
+function getPerfLog(currentUser, filters) { _apiGuard_();
   var _fn = "[getPerfLog]";
   try {
     if (!_isAdmin_(currentUser)) throw new Error("غير مصرح — سجل التنفيذ لمدير النظام فقط.");
@@ -6154,6 +6411,11 @@ function getPerfLog(currentUser, filters) {
 
 // يُشغَّل كل 10 دقائق عبر مشغّل زمني (يُقاس وقته ضمن حصة المشغّلات) — المنطق الفعلي في _flushPerfBucketsCore_
 function _flushPerfBuckets_() {
+  __TRUSTED_DEPTH++; // V3.63 — مشغّل زمني: نقطة دخول موثوقة (لا تُنادى من المتصفح لانتهاء اسمها بـ "_")
+  try { _flushPerfBucketsWork_(); } finally { __TRUSTED_DEPTH--; }
+}
+function _flushPerfBucketsWork_() {
+  try { _sessionsPrune_(); } catch(e0) {}
   try { _flushPerfBucketsCore_(); } catch(e) { _logError_("[_flushPerfBuckets_]", e); }
   try { if (_tgQueuePending_()) _flushTelegramQueue_(); } catch(e2) { _logError_("[_flushPerfBuckets_→Telegram]", e2); } // V3.55 — شبكة أمان للرسائل العالقة
 }
@@ -6487,7 +6749,7 @@ function _gatherPerfDashboardData_(filters) {
 }
 
 // تقرير الأداء للوحة الإدارة (Admin فقط)
-function getPerformanceReport(currentUser, filters) {
+function getPerformanceReport(currentUser, filters) { _apiGuard_();
   var _fn="[getPerformanceReport]";
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح — تقرير الأداء لمدير النظام فقط.");
@@ -6497,7 +6759,7 @@ function getPerformanceReport(currentUser, filters) {
 }
 
 // تصدير بيانات لوحة الأداء الحالية كـ JSON (Admin فقط) - لزر "تصدير للتحليل" في الواجهة
-function getPerfExportJson(currentUser, filters) {
+function getPerfExportJson(currentUser, filters) { _apiGuard_();
   var _fn="[getPerfExportJson]";
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح — تصدير بيانات الأداء لمدير النظام فقط.");
@@ -6565,7 +6827,7 @@ function _nusukGetContractInfo_(contractId) {
 // ─── قائمة الحجوزات الصالحة كأساس لاتفاقيات نسك في فندق معيّن ───
 // تُستخدم في القائمة المنسدلة داخل نموذج إضافة الاتفاقية. تعرض كل حجوزات الفندق (غير الملغاة/المحذوفة) مع ملخص كل حجز
 // يمكن للحجز الواحد الظهور في اتفاقيات متعددة، لذا لا نستبعد الحجوزات التي لها اتفاقيات سابقة
-function getBookingsForNusukSelector(hotelName, currentUser) {
+function getBookingsForNusukSelector(hotelName, currentUser) { _apiGuard_();
   var _fn="[getBookingsForNusukSelector]"; _logInfo_(_fn, "START | "+"hotelName:"+String(JSON.stringify(hotelName)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser,"nusuk","canView");
@@ -6619,7 +6881,7 @@ function getBookingsForNusukSelector(hotelName, currentUser) {
 
 // ─── الاتفاقيات السابقة على حجز معيّن (يُعرض كتلميح داخل نموذج الاتفاقية الجديدة) ───
 // يستخدم مباشرةً عند اختيار الحجز في dropdown النموذج لعرض ملخص ما سُجِّل عليه سابقاً + إجمالي الأفراد المرصود
-function getNusukAgreementsForBooking(bookingId, currentUser) {
+function getNusukAgreementsForBooking(bookingId, currentUser) { _apiGuard_();
   var _fn="[getNusukAgreementsForBooking]"; _logInfo_(_fn, "START | "+"bookingId:"+String(JSON.stringify(bookingId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser,"nusuk","canView");
@@ -6649,7 +6911,7 @@ function getNusukAgreementsForBooking(bookingId, currentUser) {
 // ─── حفظ اتفاقية نسك (جديدة أو تعديل موجودة) + تحويل حالة الحجز الأصلي لـ"مؤكد نسك" تلقائياً ───
 // عند تسجيل أول اتفاقية على حجز: تُحدَّث حالة الحجز في Bookings_Master من (مبدئي/مؤكد/…) إلى "مؤكد نسك" مباشرة
 // لا يُعطَّل التسجيل إذا تجاوز عدد الأفراد الحد النظري — التحقق يكون كتلميح على الواجهة فقط
-function saveNusukAgreement(a, currentUser) {
+function saveNusukAgreement(a, currentUser) { _apiGuard_();
   var _fn="[saveNusukAgreement]"; _logInfo_(_fn, "START | "+"a:"+String(JSON.stringify(a)||"").slice(0, 120)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   return _withLock_(function() {
@@ -6756,7 +7018,7 @@ function saveNusukAgreement(a, currentUser) {
 }
 
 // ─── حذف (منطقي) اتفاقية نسك ───
-function deleteNusukAgreement(agreementId, currentUser) {
+function deleteNusukAgreement(agreementId, currentUser) { _apiGuard_();
   var _fn="[deleteNusukAgreement]"; _logInfo_(_fn, "START | "+"agreementId:"+String(JSON.stringify(agreementId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   return _withLock_(function() {
@@ -6778,7 +7040,7 @@ function deleteNusukAgreement(agreementId, currentUser) {
 }
 
 // ─── تفاصيل اتفاقية واحدة (لعرضها في نافذة تفاصيل الاتفاقية) ───
-function getNusukAgreementDetails(agreementId, currentUser) {
+function getNusukAgreementDetails(agreementId, currentUser) { _apiGuard_();
   var _fn="[getNusukAgreementDetails]"; _logInfo_(_fn, "START | "+"agreementId:"+String(JSON.stringify(agreementId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser,"nusuk","canView");
@@ -6835,7 +7097,7 @@ function getNusukAgreementDetails(agreementId, currentUser) {
 // ─── بيانات شبكة الأيام لشاشة نسك ───
 // المدخلات: اسم الفندق، تاريخ بداية وتاريخ نهاية العرض (ISO yyyy-MM-dd)، مرشحات اختيارية
 // الإخراج: dailyCapacity[] بالأفراد + dailyBooked[] بالأفراد + رؤوس أيام + صفوف الاتفاقيات مع dayValues[]
-function getNusukGridData(hotelName, startDateIso, endDateIso, filters, currentUser) {
+function getNusukGridData(hotelName, startDateIso, endDateIso, filters, currentUser) { _apiGuard_();
   var _fn="[getNusukGridData]"; _logInfo_(_fn, "START | "+"hotelName:"+String(JSON.stringify(hotelName)||"").slice(0, 80)+", "+"startDate:"+startDateIso+", "+"endDate:"+endDateIso+", currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser,"nusuk","canView");
@@ -7122,7 +7384,7 @@ function _buildHotelPaidMap_(allowed, fromDate, toDate) {
 // hotelFilter (اختياري) — v3.23: يقصر الملخص كاملاً على فندق واحد بعينه (المستحق من حجوزاته + المسدد من الدفعات المخصَّصة له) — غير مستخدَم مع partyType="hotel"
 // fromIso/toIso (اختياريان) — v3.33: فلتر فترة (خلال فترة / مفتوحة البداية / مفتوحة النهاية) يُطبَّق على كل الأنواع الثلاثة
 // partyType="hotel" — v3.33: كشف حساب كل فندق (مدين = قيمة تعاقداته، دائن = دفعات سداده الفعلية) يتطلب أيضاً صلاحية الجانب المالي
-function getAccountsSummary(partyType, currentUser, hotelFilter, fromIso, toIso) {
+function getAccountsSummary(partyType, currentUser, hotelFilter, fromIso, toIso) { _apiGuard_();
   var _fn="[getAccountsSummary]"; _logInfo_(_fn, "START | partyType:"+partyType+", currentUser:"+String(JSON.stringify(currentUser)||"").slice(0,80)+", hotelFilter:"+String(JSON.stringify(hotelFilter)||"").slice(0,80));
   try {
   _requirePermission_(currentUser, "accounts", "canView");
@@ -7185,7 +7447,7 @@ function getAccountsSummary(partyType, currentUser, hotelFilter, fromIso, toIso)
 // fromIso/toIso (اختياريان) — v3.33: فلتر فترة (خلال فترة / مفتوحة البداية / مفتوحة النهاية)؛ عند التفعيل تُعرض حركات هذه الفترة فقط
 // والإجماليات/الرصيد التراكمي تخصّها هي فقط (بلا رصيد افتتاحي مرحَّل من قبلها) — لتُطابق نفس أسلوب البيان اليومي بالنظام
 // partyType="hotel" — v3.33: كشف حساب فندق (مدين = تعاقداته من Contracts_Master، دائن = سداداته الفعلية من Contract_Payment_Receipts)
-function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, fromIso, toIso) {
+function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, fromIso, toIso) { _apiGuard_();
   var _fn="[getAccountStatement]"; _logInfo_(_fn, "START | partyType:"+partyType+", partyKey:"+String(JSON.stringify(partyKey)||"").slice(0,80)+", hotelFilter:"+String(JSON.stringify(hotelFilter)||"").slice(0,80));
   try {
   partyKey = String(partyKey||"").trim();
@@ -7352,7 +7614,7 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
 }
 
 // يحفظ دفعة سداد جديدة أو يُحدّث دفعة موجودة لطرف معيّن (جهة تحصيل/عميل) — المبلغ بالريال السعودي
-function saveAccountPayment(p, currentUser) {
+function saveAccountPayment(p, currentUser) { _apiGuard_();
   var _fn="[saveAccountPayment]"; _logInfo_(_fn, "START | p:"+String(JSON.stringify(p)||"").slice(0,80)+", currentUser:"+String(JSON.stringify(currentUser)||"").slice(0,80));
   try {
   return _withLock_(function() {
@@ -7402,7 +7664,7 @@ function saveAccountPayment(p, currentUser) {
 // يحذف دفعة سداد (حذف منطقي) مع تسجيل الحدث في سجل التعديلات
 // v3.34 — إن كانت الدفعة "مزدوجة" (Linked_Hotel_Receipt_ID)، يُحذَف الطرف الآخر (سداد الفندق المقابل بشيت
 // Contract_Payment_Receipts) تلقائياً بنفس العملية أيضاً، مع إعادة احتساب Paid_Amount للقسط المتأثر
-function deleteAccountPayment(paymentId, currentUser) {
+function deleteAccountPayment(paymentId, currentUser) { _apiGuard_();
   var _fn="[deleteAccountPayment]"; _logInfo_(_fn, "START | paymentId:"+String(JSON.stringify(paymentId)||"").slice(0,80));
   try {
   _requirePermission_(currentUser, "accounts", "canDelete");

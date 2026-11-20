@@ -2083,6 +2083,20 @@ function _ccBeforeCall_(fn, args) {
   if (!_CC_NONWRITE_RE.test(fn)) _ccInvalidateWrite_(fn);
 }
 var _inflightWrites = {};
+// V3.63 — الخادم يرفض النداء إن انتهت الجلسة (أو عُطِّل المستخدم أو تغيّرت كلمة مروره): عودة واحدة لشاشة الدخول برسالة واضحة
+var _authKicked = false;
+function _authFailCheck_(err) {
+  var m = ''; try { m = String((err && err.message) || err || ''); } catch (e) {}
+  if (m.indexOf('SESSION_EXPIRED') === -1) return false;
+  try {
+    if (typeof sessionUser === 'undefined' || !sessionUser || _authKicked) return true;
+    _authKicked = true;
+    sessionUser.token = null; // لا نداء خروج للخادم: الجلسة منتهية أصلاً
+    try { showToast('انتهت الجلسة — سجّل الدخول من جديد.', 'warning'); } catch (e1) {}
+    doLogout();
+  } catch (e2) {}
+  return true;
+}
 function _ccRecordHit_(fn) {
   try { _perfBuffer.push({ fn: 'cache:' + fn, ms: 0, ok: true, v: CLIENT_APP_VERSION }); } catch(e) {}
 }
@@ -2121,6 +2135,7 @@ function _ccRecordHit_(fn) {
               ctx.hasFail = true;
               var next = Reflect.apply(val, obj, [function(err) {
                 if (ctx.writeKey) delete _inflightWrites[ctx.writeKey];
+                if (_authFailCheck_(err)) { if (ctx.swrJson != null) _swrBusy_(-1); return; } // V3.63 — جلسة منتهية: عودة لشاشة الدخول بدل رسائل خطأ متفرقة
                 try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, false, { reqBytes: ctx.reqBytes, err: (err && err.message) || String(err), bg: ctx.bg0 || document.hidden || ctx.epoch0 !== _perfHiddenEpoch }); } catch(e) {}
                 if (ctx.swrJson != null) { _swrBusy_(-1); try { showToast('تعذّر تحديث البيانات — المعروض آخر نسخة محمّلة.', 'warning'); } catch(e) {} return; } // V3.57 — تبقى البيانات المعروضة بدل رسالة خطأ
                 if (typeof fn === 'function') fn(err);
@@ -2142,7 +2157,15 @@ function _ccRecordHit_(fn) {
               ctx.t0 = performance.now();
               ctx.bg0 = !!document.hidden; ctx.epoch0 = _perfHiddenEpoch;
               try { ctx.reqBytes = _PERF_EXCLUDE_FNS[ctx.fnName] ? 0 : _perfJsonLen_(args); } catch(e) { ctx.reqBytes = 0; }
-              return Reflect.apply(val, obj, args);
+              // V3.63 — كل نداء بعد الدخول يمرّ عبر بوابة api برمز الجلسة (الخادم يفرض هوية صاحب الرمز مهما كانت الوسائط).
+              // وبلا معالج فشل من المنادي يُضاف معالج افتراضي: انتهاء الجلسة يعيد لشاشة الدخول، ويُرفع حارس الإرسال المزدوج.
+              var target = obj;
+              if (!ctx.hasFail) {
+                try { target = Reflect.apply(Reflect.get(obj, 'withFailureHandler', obj), obj, [function(err) { if (ctx.writeKey) delete _inflightWrites[ctx.writeKey]; _authFailCheck_(err); }]); } catch(e) { target = obj; }
+              }
+              var tok = (typeof sessionUser !== 'undefined' && sessionUser && sessionUser.token) || null;
+              if (tok && ctx.fnName !== 'loginUser') return Reflect.apply(Reflect.get(target, 'api', target), target, [tok, ctx.fnName].concat(args));
+              return Reflect.apply(Reflect.get(target, ctx.fnName, target), target, args);
             };
             // V3.61 — حارس الإرسال المزدوج: نفس نداء الكتابة بنفس الوسائط وهو ما زال في الطريق يُتجاهل (ضغطتان على "حفظ"
             // كانتا تسجّلان تعاقدين/دفعتين). يُرفع الحارس عند وصول الرد؛ وبلا معالج فشل يُرفع بعد 8 ث كحد أقصى.
@@ -2237,6 +2260,7 @@ function doLogin() {
         return;
       }
       // نُبقي الزر بحالة التحميل حتى تنتهي enterApp()
+      _authKicked = false;
       sessionUser = res;
       enterApp();
       // إعادة الزر لحالته الطبيعية دائماً بعد نجاح الدخول (احتياطاً لأي عودة مستقبلية لشاشة الدخول)
@@ -4047,7 +4071,7 @@ function doLogout() {
   stopAppPolling();
   _ccReset_(); // v3.53
   _lastAvailVersion = null; // إعادة تصفير الأساس ليُعاد ضبطه من جديد عند الدخول التالي
-  google.script.run.logoutUser(sessionUser.username, sessionUser.fullName);
+  if (sessionUser.token) google.script.run.logoutUser(sessionUser.username, sessionUser.fullName); // V3.63 — ينهي رمز الجلسة بالخادم
   sessionUser = null;
   document.getElementById('Login_Screen').style.display = 'flex';
   document.getElementById('app-sidebar').style.display = 'none';
@@ -10749,7 +10773,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.62';
+var CLIENT_APP_VERSION = 'V3.63';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {

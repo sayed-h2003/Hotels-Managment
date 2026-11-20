@@ -22,7 +22,8 @@ if (!targetPath) {
 
 // مستبعدة لأنها إما نقطة دخول خاصة (doGet) أو جزء من آلية القياس/التصدير نفسها - لفّها قد يُسبب
 // تكراراً ذاتياً في القياس أو يُغيّر سلوك نقطة دخول حسّاسة (doGet بلا جلسة مستخدم)
-const EXCLUDE = new Set(['doGet', 'flushClientPerfMetrics', 'getPerformanceReport', 'getPerfExportJson']);
+// 'api' (V3.63): بوابة كل نداءات الواجهة — لو لُفّت لسُجّل كل شيء باسم "api" وضاع زمن كل دالة؛ باستبعادها تُقاس الدالة الداخلية نفسها
+const EXCLUDE = new Set(['doGet', 'flushClientPerfMetrics', 'getPerformanceReport', 'getPerfExportJson', 'api']);
 
 // دوال بادئتها "_" (مستبعدة بالقاعدة الافتراضية لأنها "داخلية" حسب اصطلاح هذا المشروع) لكنها
 // مُشغَّلة فعلياً عبر Trigger زمني، فنريد قياس مدة تنفيذها لحساب حصة وقت تشغيل المشغّلات اليومية.
