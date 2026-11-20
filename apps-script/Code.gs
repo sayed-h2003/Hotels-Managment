@@ -729,6 +729,33 @@ function _getUserPrefsMap_(username) {
   return out;
 }
 
+// V3.54 — الشهور (YYYY-MM) التي تغطيها فترات التعاقد الفعلية لكل فندق مسموح — لفلتر الشهر بشاشة الحجوزات
+// (كان الفلتر يعرض نطاقاً ثابتاً ±3 سنوات حول اليوم بغض النظر عن العقود)
+function getContractMonthsByHotel(currentUser) {
+  var _fn="[getContractMonthsByHotel]";
+  try {
+  var data = _getSheetValues_("Contracts_Master");
+  var allowed = currentUser ? _getUserAllowedHotels_(currentUser) : null;
+  var sets = {}, out = {};
+  for (var i=1; i<data.length; i++) {
+    var row = data[i];
+    if (!row[0] || row[12]===true || !row[1]) continue;
+    if (allowed && !allowed[row[1]]) continue;
+    var sd = row[3] instanceof Date ? row[3] : new Date(row[3]);
+    var ed = row[4] instanceof Date ? row[4] : new Date(row[4]);
+    if (isNaN(sd.getTime()) || isNaN(ed.getTime()) || ed < sd) continue;
+    var set = sets[row[1]] || (sets[row[1]] = {});
+    var y = sd.getFullYear(), m = sd.getMonth(), guard = 0;
+    while ((y < ed.getFullYear() || (y === ed.getFullYear() && m <= ed.getMonth())) && guard++ < 240) {
+      set[y + "-" + (m < 9 ? "0" : "") + (m + 1)] = true;
+      if (++m > 11) { m = 0; y++; }
+    }
+  }
+  Object.keys(sets).forEach(function(h) { out[h] = Object.keys(sets[h]).sort(); });
+  return out;
+  } catch(e) { _logError_(_fn, e); throw e; }
+}
+
 // v3.53 — نطاق أشهر التعاقد لكل فندق مسموح (نفس منطق getContractDateRange) في مرور واحد على الشيت
 function _getContractDateRangesMap_(currentUser) {
   var data = _getSheetValues_("Contracts_Master");
@@ -2082,7 +2109,7 @@ function getOverCapacityNotifications(currentUser) {
     if (!perms.overcapacity_notifications||!perms.overcapacity_notifications.canView) return [];
   }
   var ss=_getSS_();
-  var data=_getOrCreateSheet_("Bookings_Master").getDataRange().getValues();
+  var data=_getSheetValues_("Bookings_Master"); // V3.54 — مشتركة مع getBookings عند النداء من getBookingsPage
   var hotelMap=_buildContractHotelMap_(), tz=Session.getScriptTimeZone();
   var allowed=_getUserAllowedHotels_(currentUser);
   var _pre=null; // v3.53 — تُقرأ مرة واحدة فقط عند وجود أول حجز أوفر (بدل مرتين لكل حجز)
@@ -2096,7 +2123,7 @@ function getOverCapacityNotifications(currentUser) {
     if (allowed && !allowed[hn]) continue;
     var ci=row[6] instanceof Date?row[6]:new Date(row[6]);
     var co=row[7] instanceof Date?row[7]:new Date(row[7]);
-    if (!_pre) _pre={ contractsData:_getOrCreateSheet_("Contracts_Master").getDataRange().getValues(), bookingsData:data };
+    if (!_pre) _pre={ contractsData:_getSheetValues_("Contracts_Master"), bookingsData:data };
     var avail=_checkBookingAvailability_(row[1], ci, co, parseFloat(row[5])||0, row[0], false, _pre);
     if (avail.ok) {
       out.push({
@@ -4311,7 +4338,18 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "v3.53";
+var APP_VERSION = "V3.54";
+// V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
+function _cmpVersion_(a, b) {
+  var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
+  for (var i = 0; i < Math.max(pa.length, pb.length); i++) {
+    var x = parseInt(pa[i], 10), y = parseInt(pb[i], 10);
+    if (isNaN(x) !== isNaN(y)) return isNaN(x) ? -1 : 1; // غير الرقمي (مثل legacy) أولاً
+    if (isNaN(x)) { var c = String(pa[i] || "").localeCompare(String(pb[i] || "")); if (c) return c; continue; }
+    if (x !== y) return x - y;
+  }
+  return 0;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // طبقة تشفير كلمات المرور (SHA-256 + Salt) — متوافقة مع الحسابات القديمة
@@ -4415,6 +4453,7 @@ function getBookingsPage(filters, page, pageSize, currentUser) {
   page = Math.max(1, parseInt(page,10)||1);
   pageSize = Math.max(10, Math.min(500, parseInt(pageSize,10)||100));
   var full = getBookings(currentUser);
+  var _tFilter = Date.now();
   var q = String(filters.q||"").trim().toLowerCase();
   var fId = String(filters.bookingId||"").trim().toLowerCase();
   var fClient = String(filters.client||"").trim().toLowerCase();
@@ -4425,6 +4464,8 @@ function getBookingsPage(filters, page, pageSize, currentUser) {
   var fHotel = String(filters.hotel||"").trim();
   var fColl = String(filters.collection||"").trim();
   var fMonth = String(filters.month||"").trim(); // YYYY-MM
+  // V3.54 — الواجهة القديمة كانت ترسل "2026-1" بلا صفر فلا يطابق أي حجز في شهور 1-9
+  var _fmm = fMonth.match(/^(\d{4})-(\d{1,2})$/); if (_fmm) fMonth = _fmm[1] + "-" + (_fmm[2].length === 1 ? "0" : "") + _fmm[2];
   var fFromIso = String(filters.fromIso||"").trim();
   var fToIso = String(filters.toIso||"").trim();
   var fCheckinIso = String(filters.checkinIso||"").trim();
@@ -4468,8 +4509,10 @@ function getBookingsPage(filters, page, pageSize, currentUser) {
   });
   // v3.7 — الترتيب الافتراضي: تاريخ الدخول تصاعدياً (الأقرب أولاً) — يمكن للواجهة تخصيصه لاحقاً عبر filters.sortBy
   var sortBy = String(filters.sortBy||"checkInAsc").trim();
+  // V3.54 — مفتاح الترتيب يُحسب مرة لكل صف بدل مرتين في كل مقارنة (آلاف المقارنات)
+  var _isoKey = {}; filtered.forEach(function(b) { _isoKey[b.bookingId] = dmy2iso(b.checkIn); });
   filtered.sort(function(a, b) {
-    var aIso = dmy2iso(a.checkIn), bIso = dmy2iso(b.checkIn);
+    var aIso = _isoKey[a.bookingId], bIso = _isoKey[b.bookingId];
     if (sortBy === "checkInDesc") return (bIso||"").localeCompare(aIso||"");
     if (sortBy === "bookingIdDesc") return String(b.bookingId).localeCompare(String(a.bookingId), undefined, {numeric:true});
     if (sortBy === "bookingIdAsc")  return String(a.bookingId).localeCompare(String(b.bookingId), undefined, {numeric:true});
@@ -4479,7 +4522,11 @@ function getBookingsPage(filters, page, pageSize, currentUser) {
   var total = filtered.length;
   var start = (page-1)*pageSize;
   var slice = filtered.slice(start, start+pageSize);
-  return { rows: slice, total: total, page: page, pageSize: pageSize, totalPages: Math.max(1, Math.ceil(total/pageSize)) };
+  var res = { rows: slice, total: total, page: page, pageSize: pageSize, totalPages: Math.max(1, Math.ceil(total/pageSize)) };
+  try { _recordPerfSample_("~getBookingsPage:filterSort", Date.now()-_tFilter, true); } catch(eT) {}
+  // V3.54 — شريط "الأوفر" مع الصفحة عند فتح الشاشة (نفس قراءة شيت الحجوزات المحفوظة بهذا التنفيذ بدل نداء ثانٍ)
+  if (filters.includeOvercap) { try { res.overcap = getOverCapacityNotifications(currentUser); } catch(eO) {} }
+  return res;
   } catch(e) { _logError_(_fn, e); throw e; }
 }
 
@@ -4697,6 +4744,7 @@ function getAppBootstrap(username, fullName, opts) {
   try { out.hotelNames = getDistinctHotelNames(username); } catch(e2) {}
   try { out.contractRanges = _getContractDateRangesMap_(username); } catch(e3) {}
   try { out.collectionAccounts = _getCollectionAccountsCached_(); } catch(e4) {}
+  try { out.contractMonths = getContractMonthsByHotel(username); } catch(e5) {}
   return out;
   } catch(e) { _logError_(_fn, e); throw e; }
 }
@@ -5987,7 +6035,7 @@ function _gatherPerfDashboardData_(filters) {
   return {
     generatedAt: new Date().toISOString(),
     version: APP_VERSION,
-    versions: Object.keys(versionsSeen).sort(),
+    versions: Object.keys(versionsSeen).sort(_cmpVersion_),
     topByVolume: topByVolume.slice(0, 50),
     slowCalls: slowCalls,
     logHours: lg ? lg.hours : 0,

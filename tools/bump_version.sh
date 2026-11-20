@@ -3,7 +3,7 @@
 # معاً دفعة واحدة، ويضيف قسماً جديداً فارغاً في DEPLOY_GUIDE.md لهذا الإصدار لتعبئته.
 #
 # الاستخدام:
-#   ./tools/bump_version.sh v3.44
+#   ./tools/bump_version.sh V3.54
 #
 # يفشل بوضوح (ولا يُعدّل أي ملف جزئياً) إن لم يجد كل نمط مطلوب مرة واحدة بالضبط في كل ملف —
 # حماية من تعديل نسخة خاطئة بصمت لو تغيّر شكل السطر لاحقاً.
@@ -11,13 +11,15 @@
 set -euo pipefail
 
 if [ $# -ne 1 ]; then
-  echo "الاستخدام: $0 vX.Y" >&2
+  echo "الاستخدام: $0 VX.Y" >&2
   exit 1
 fi
 
 NEW_VERSION="$1"
-if ! [[ "$NEW_VERSION" =~ ^v[0-9]+\.[0-9]+$ ]]; then
-  echo "❌ صيغة الإصدار غير صحيحة: '$NEW_VERSION' — يجب أن تكون مثل v3.44" >&2
+# الإصدار يُكتب دائماً بحرف V كبير (V3.54) — نقبل v صغيرة في الإدخال ونحوّلها
+NEW_VERSION="V${NEW_VERSION#[vV]}"
+if ! [[ "$NEW_VERSION" =~ ^[vV][0-9]+\.[0-9]+$ ]]; then
+  echo "❌ صيغة الإصدار غير صحيحة: '$NEW_VERSION' — يجب أن تكون مثل V3.54" >&2
   exit 1
 fi
 
@@ -33,8 +35,8 @@ for f in "$CODE_FILE" "$HTML_FILE"; do
   fi
 done
 
-CODE_PATTERN='^var APP_VERSION = "v[0-9]+\.[0-9]+";$'
-HTML_PATTERN="^var CLIENT_APP_VERSION = 'v[0-9]+\.[0-9]+';\$"
+CODE_PATTERN='^var APP_VERSION = "[vV][0-9]+\.[0-9]+";$'
+HTML_PATTERN="^var CLIENT_APP_VERSION = '[vV][0-9]+\.[0-9]+';\$"
 
 code_matches=$(grep -cE "$CODE_PATTERN" "$CODE_FILE")
 html_matches=$(grep -cE "$HTML_PATTERN" "$HTML_FILE")
@@ -48,10 +50,10 @@ if [ "$html_matches" -ne 1 ]; then
   exit 1
 fi
 
-OLD_VERSION=$(grep -E "$CODE_PATTERN" "$CODE_FILE" | sed -E 's/^var APP_VERSION = "(v[0-9]+\.[0-9]+)";$/\1/')
+OLD_VERSION=$(grep -E "$CODE_PATTERN" "$CODE_FILE" | sed -E 's/^var APP_VERSION = "([vV][0-9]+\.[0-9]+)";$/\1/')
 
-sed -i -E "s/^var APP_VERSION = \"v[0-9]+\.[0-9]+\";\$/var APP_VERSION = \"$NEW_VERSION\";/" "$CODE_FILE"
-sed -i -E "s/^var CLIENT_APP_VERSION = 'v[0-9]+\.[0-9]+';\$/var CLIENT_APP_VERSION = '$NEW_VERSION';/" "$HTML_FILE"
+sed -i -E "s/^var APP_VERSION = \"[vV][0-9]+\.[0-9]+\";\$/var APP_VERSION = \"$NEW_VERSION\";/" "$CODE_FILE"
+sed -i -E "s/^var CLIENT_APP_VERSION = '[vV][0-9]+\.[0-9]+';\$/var CLIENT_APP_VERSION = '$NEW_VERSION';/" "$HTML_FILE"
 
 TODAY=$(date -u +%Y-%m-%d)
 if [ -f "$GUIDE_FILE" ]; then
