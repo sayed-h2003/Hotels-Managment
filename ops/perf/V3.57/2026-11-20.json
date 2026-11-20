@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-20T11:49:59.547Z",
+  "generatedAt": "2026-11-20T11:57:45.716Z",
   "version": "V3.57",
   "versions": [
     "v3.48",
@@ -106,20 +106,20 @@
     },
     {
       "fn": "_flushPerfBuckets_",
+      "version": "V3.57",
+      "totalCount": 8,
+      "avgMs": 6531,
+      "maxMs": 13388,
+      "totalTimeMs": 52247,
+      "fails": 0
+    },
+    {
+      "fn": "_flushPerfBuckets_",
       "version": "v3.53",
       "totalCount": 13,
       "avgMs": 3979,
       "maxMs": 5919,
       "totalTimeMs": 51725,
-      "fails": 0
-    },
-    {
-      "fn": "_flushPerfBuckets_",
-      "version": "V3.57",
-      "totalCount": 7,
-      "avgMs": 7078,
-      "maxMs": 13388,
-      "totalTimeMs": 49546,
       "fails": 0
     },
     {
@@ -231,6 +231,15 @@
       "fails": 0
     },
     {
+      "fn": "client:getBookingsPage",
+      "version": "V3.57",
+      "totalCount": 7,
+      "avgMs": 3357,
+      "maxMs": 4646,
+      "totalTimeMs": 23500,
+      "fails": 0
+    },
+    {
       "fn": "getBookingsPage",
       "version": "v3.51",
       "totalCount": 3,
@@ -312,12 +321,30 @@
       "fails": 0
     },
     {
+      "fn": "client:screen:Availability_Screen",
+      "version": "V3.56",
+      "totalCount": 3,
+      "avgMs": 5482,
+      "maxMs": 7406,
+      "totalTimeMs": 16446,
+      "fails": 0
+    },
+    {
       "fn": "client:getAvailabilityData",
       "version": "v3.51",
       "totalCount": 3,
       "avgMs": 5444,
       "maxMs": 7344,
       "totalTimeMs": 16331,
+      "fails": 0
+    },
+    {
+      "fn": "client:pollAppState",
+      "version": "V3.56",
+      "totalCount": 5,
+      "avgMs": 3258,
+      "maxMs": 5382,
+      "totalTimeMs": 16291,
       "fails": 0
     },
     {
@@ -375,6 +402,24 @@
       "fails": 0
     },
     {
+      "fn": "client:getAppBootstrap",
+      "version": "V3.56",
+      "totalCount": 2,
+      "avgMs": 6765,
+      "maxMs": 7489,
+      "totalTimeMs": 13529,
+      "fails": 0
+    },
+    {
+      "fn": "client:getAvailabilityData",
+      "version": "V3.56",
+      "totalCount": 3,
+      "avgMs": 4320,
+      "maxMs": 5402,
+      "totalTimeMs": 12959,
+      "fails": 0
+    },
+    {
       "fn": "client:getUserPreference",
       "version": "v3.52",
       "totalCount": 4,
@@ -417,51 +462,6 @@
       "avgMs": 5528,
       "maxMs": 7023,
       "totalTimeMs": 11055,
-      "fails": 0
-    },
-    {
-      "fn": "client:screen:Availability_Screen",
-      "version": "V3.56",
-      "totalCount": 2,
-      "avgMs": 5513,
-      "maxMs": 7406,
-      "totalTimeMs": 11026,
-      "fails": 0
-    },
-    {
-      "fn": "client:pollAppState",
-      "version": "V3.56",
-      "totalCount": 4,
-      "avgMs": 2727,
-      "maxMs": 3530,
-      "totalTimeMs": 10909,
-      "fails": 0
-    },
-    {
-      "fn": "client:pollAppState",
-      "version": "v3.52",
-      "totalCount": 4,
-      "avgMs": 2723,
-      "maxMs": 4394,
-      "totalTimeMs": 10893,
-      "fails": 0
-    },
-    {
-      "fn": "client:boot:ready",
-      "version": "v3.52",
-      "totalCount": 1,
-      "avgMs": 10588,
-      "maxMs": 10588,
-      "totalTimeMs": 10588,
-      "fails": 0
-    },
-    {
-      "fn": "formatHijriDisplay",
-      "version": "v3.49",
-      "totalCount": 331,
-      "avgMs": 31,
-      "maxMs": 85,
-      "totalTimeMs": 10227,
       "fails": 0
     }
   ],
@@ -555,14 +555,6 @@
       "version": "v3.51"
     },
     {
-      "time": "20/11 00:45:05",
-      "fn": "client:boot:ready",
-      "ms": 15478,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
       "time": "20/11 01:12:04",
       "fn": "client:boot:ready",
       "ms": 14140,
@@ -627,14 +619,6 @@
       "version": "v3.48"
     },
     {
-      "time": "20/11 00:45:05",
-      "fn": "client:getAppBootstrap",
-      "ms": 10310,
-      "user": "",
-      "ok": "نجاح",
-      "version": "v3.48"
-    },
-    {
       "time": "20/11 05:56:55",
       "fn": "client:boot:ready",
       "ms": 10129,
@@ -683,6 +667,14 @@
       "version": "v3.52"
     },
     {
+      "time": "20/11 13:45:11",
+      "fn": "client:boot:ready",
+      "ms": 8730,
+      "user": "",
+      "ok": "نجاح",
+      "version": "V3.57"
+    },
+    {
       "time": "20/11 01:21:50",
       "fn": "client:getOverCapacityNotifications",
       "ms": 8618,
@@ -705,10 +697,480 @@
       "user": "",
       "ok": "نجاح",
       "version": "v3.51"
+    },
+    {
+      "time": "20/11 03:33:46",
+      "fn": "getBookingsPage",
+      "ms": 8139,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.52"
     }
   ],
   "logHours": 24,
   "log": [
+    {
+      "time": "2026-11-20 13:49:54",
+      "src": "web",
+      "kind": "exec",
+      "name": "doGet:perfReport",
+      "ms": 5498,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:46:58",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAccountStatement",
+      "ms": 2563,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:46:54",
+      "src": "server",
+      "kind": "exec",
+      "name": "pollAppState",
+      "ms": 130,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:46:36",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAccountsSummary",
+      "ms": 1368,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:46:28",
+      "src": "server",
+      "kind": "exec",
+      "name": "pollAppState",
+      "ms": 43,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:46:10",
+      "src": "server",
+      "kind": "exec",
+      "name": "getDailyStatementSummary",
+      "ms": 1457,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:45:57",
+      "src": "server",
+      "kind": "exec",
+      "name": "getFullProfitReport",
+      "ms": 1922,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:45:54",
+      "src": "server",
+      "kind": "exec",
+      "name": "pollAppState",
+      "ms": 1241,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:45:40",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityData",
+      "ms": 929,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:45:33",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityData",
+      "ms": 82,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:45:24",
+      "src": "server",
+      "kind": "exec",
+      "name": "pollAppState",
+      "ms": 35,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:45:22",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 799,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:45:14",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 614,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:45:07",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 572,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:45:06",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 1364,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:45:05",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingsPage",
+      "ms": 2283,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:45:03",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingsPage",
+      "ms": 3590,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:44:56",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 829,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:44:54",
+      "src": "server",
+      "kind": "exec",
+      "name": "pollAppState",
+      "ms": 31,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:44:53",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingsPage",
+      "ms": 3330,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:44:51",
+      "src": "client",
+      "kind": "network",
+      "name": "pollAppState",
+      "ms": 2266,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:44:43",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 1349,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:44:40",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingsPage",
+      "ms": 3472,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:44:32",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 2701,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:44:31",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 1254,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:44:28",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingsPage",
+      "ms": 3070,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:44:27",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 746,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:44:24",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingsPage",
+      "ms": 3109,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:44:24",
+      "src": "server",
+      "kind": "exec",
+      "name": "pollAppState",
+      "ms": 27,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:44:21",
+      "src": "client",
+      "kind": "network",
+      "name": "pollAppState",
+      "ms": 2147,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:44:12",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 2432,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:44:10",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingsPage",
+      "ms": 4646,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:43:54",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityData",
+      "ms": 2989,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:43:53",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAppBootstrap",
+      "ms": 4240,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:43:51",
+      "src": "client",
+      "kind": "console",
+      "name": "Availability_Screen",
+      "ms": 0,
+      "status": "log",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:43:51",
+      "src": "client",
+      "kind": "network",
+      "name": "getAvailabilityData",
+      "ms": 5402,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:43:51",
+      "src": "client",
+      "kind": "network",
+      "name": "getAppBootstrap",
+      "ms": 6040,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:43:51",
+      "src": "server",
+      "kind": "exec",
+      "name": "loginUser",
+      "ms": 761,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:43:49",
+      "src": "client",
+      "kind": "network",
+      "name": "loginUser",
+      "ms": 2658,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:43:43",
+      "src": "server",
+      "kind": "exec",
+      "name": "logoutUser",
+      "ms": 971,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:43:35",
+      "src": "server",
+      "kind": "exec",
+      "name": "pollAppState",
+      "ms": 2794,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 13:43:32",
+      "src": "client",
+      "kind": "network",
+      "name": "pollAppState",
+      "ms": 5382,
+      "status": "ok",
+      "user": "",
+      "version": "V3.57",
+      "details": ""
+    },
     {
       "time": "2026-11-20 13:34:35",
       "src": "trigger",
@@ -5419,29 +5881,29 @@
     }
   ],
   "logSummary": {
-    "total": 428,
+    "total": 470,
     "byKind": {
-      "exec": 274,
-      "network": 128,
+      "exec": 302,
+      "network": 141,
+      "console": 5,
       "resource": 18,
-      "nav": 4,
-      "console": 4
+      "nav": 4
     },
     "bySource": {
-      "trigger": 77,
-      "web": 13,
-      "server": 184,
-      "client": 154
+      "web": 14,
+      "server": 210,
+      "client": 168,
+      "trigger": 78
     },
     "byStatus": {
-      "ok": 424,
-      "log": 4
+      "ok": 465,
+      "log": 5
     },
     "topConsole": [
       {
         "level": "log",
         "msg": "",
-        "count": 12
+        "count": 13
       }
     ],
     "topNetworkByResp": [
@@ -5465,9 +5927,27 @@
       },
       {
         "name": "getBookingsPage",
+        "time": "2026-11-20 13:44:10",
+        "ms": 4646,
+        "respBytes": 73318
+      },
+      {
+        "name": "getBookingsPage",
         "time": "2026-11-20 12:18:50",
         "ms": 3571,
         "respBytes": 73318
+      },
+      {
+        "name": "getBookingsPage",
+        "time": "2026-11-20 13:45:03",
+        "ms": 3590,
+        "respBytes": 73216
+      },
+      {
+        "name": "getBookingsPage",
+        "time": "2026-11-20 13:44:53",
+        "ms": 3330,
+        "respBytes": 73216
       },
       {
         "name": "getBookingsPage",
@@ -5477,39 +5957,21 @@
       },
       {
         "name": "getBookingsPage",
-        "time": "2026-11-20 05:57:25",
-        "ms": 3509,
+        "time": "2026-11-20 13:44:24",
+        "ms": 3109,
         "respBytes": 62362
       },
       {
-        "name": "getAppBootstrap",
-        "time": "2026-11-20 12:16:23",
-        "ms": 7489,
-        "respBytes": 47002
-      },
-      {
-        "name": "pollAppState",
-        "time": "2026-11-20 03:31:59",
-        "ms": 4394,
-        "respBytes": 45875
-      },
-      {
-        "name": "getMyNotifications",
-        "time": "2026-11-20 03:32:52",
-        "ms": 3316,
-        "respBytes": 45773
-      },
-      {
-        "name": "getMyNotifications",
-        "time": "2026-11-20 01:23:20",
-        "ms": 7291,
-        "respBytes": 45773
+        "name": "getBookingsPage",
+        "time": "2026-11-20 05:57:25",
+        "ms": 3509,
+        "respBytes": 62362
       }
     ]
   },
   "today": {
-    "totalCalls": 1232,
-    "avgMs": 5649,
+    "totalCalls": 1305,
+    "avgMs": 5416,
     "failRatePct": 0
   },
   "quotas": {
@@ -5518,11 +5980,11 @@
       "limit": 20000
     },
     "triggerMinutes": {
-      "used": 6.2,
+      "used": 6.3,
       "limit": 90
     },
-    "sheetReadsToday": 400,
-    "cacheOpsToday": 164,
+    "sheetReadsToday": 435,
+    "cacheOpsToday": 186,
     "lockAcquisitionsToday": 4
   },
   "health": {
@@ -5534,9 +5996,9 @@
     "diag": {
       "sheetRows": {
         "الورقة1": 0,
-        "PerfLog": 429,
-        "Perf": 336,
-        "PerfSlow": 295,
+        "PerfLog": 471,
+        "Perf": 361,
+        "PerfSlow": 308,
         "ZZ_Backup_Contracts_Master_20261119_232452": 2,
         "ZZ_Backup_Bookings_Master_20261119_232452": 5,
         "Performance_Hourly": 1,
@@ -5564,24 +6026,24 @@
       "totalCells": 668408,
       "cellLimit": 10000000,
       "Perf": {
-        "lastRow": 336,
+        "lastRow": 361,
         "maxRows": 1000,
         "maxCols": 26
       },
       "PerfSlow": {
-        "lastRow": 295,
+        "lastRow": 308,
         "maxRows": 1000,
         "maxCols": 26
       },
       "PerfLog": {
-        "lastRow": 429,
+        "lastRow": 471,
         "maxRows": 1000,
         "maxCols": 26
       },
-      "lastFlushedBucket": "202611201330",
+      "lastFlushedBucket": "202611201340",
       "lastFlushError": ""
     }
   },
-  "exportedAt": "2026-11-20T11:49:59.550Z",
+  "exportedAt": "2026-11-20T11:57:45.719Z",
   "detail": "redacted"
 }
