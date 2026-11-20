@@ -173,6 +173,7 @@ function _getSheetValues_(sheetName) {
 function _invalidateSheetCache_(sheetName) {
   if (sheetName) delete __SHEET_VALUES_CACHE[sheetName];
   else __SHEET_VALUES_CACHE = {};
+  if (!sheetName || sheetName === "Users_Master" || sheetName === "Permissions_Master") { try { _invalidateAuthCache_(); } catch (e) {} }
 }
 
 
@@ -300,6 +301,7 @@ function initializeSystem() {
       sheet.getRange(1, sheet.getLastColumn()+1, 1, missing.length).setValues([missing]);
     }
   });
+  _invalidateSheetCache_("Users_Master"); // V3.55 — يمسح لقطة الأدوار أيضاً
   var usersSheet = _getOrCreateSheet_("Users_Master");
   if (usersSheet.getLastRow() < 2) {
     var _adminSalt = _pwGenerateSalt_(); usersSheet.appendRow(["admin", _pwHash_("admin123", _adminSalt), "مدير النظام", "Admin", true, _adminSalt]);
@@ -419,14 +421,11 @@ function getUserPermissions(username, role) {
       : { canView:false, canAdd:false, canEdit:false, canDelete:false };
   });
   if (String(role).toLowerCase() === "admin") return perms;
-  var data = _getSheetValues_("Permissions_Master");
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === String(username)) {
-      var sid = data[i][1];
-      if (perms[sid]) perms[sid] = { canView:data[i][2]===true, canAdd:data[i][3]===true,
-                                      canEdit:data[i][4]===true, canDelete:data[i][5]===true };
-    }
-  }
+  var mine = _authSnapshot_().perms[String(username)] || {};
+  Object.keys(mine).forEach(function(sid) {
+    var r = mine[sid];
+    if (perms[sid]) perms[sid] = { canView:r[0]===true, canAdd:r[1]===true, canEdit:r[2]===true, canDelete:r[3]===true };
+  });
   return perms;
   } catch(e) { _logError_(_fn, e); throw e; }
 }
@@ -446,6 +445,7 @@ function saveUserPermissions(targetUsername, permsArray, actingUsername) {
   permsArray.forEach(function(p) {
     sheet.appendRow([targetUsername, p.screen, !!p.canView, !!p.canAdd, !!p.canEdit, !!p.canDelete]);
   });
+  _invalidateAuthCache_(); // V3.55 — بعد الكتابة أيضاً (يغلق نافذة إعادة بناء اللقطة بقيم قديمة أثناء الكتابة)
   logAudit("إدارة الصلاحيات","تعديل صلاحيات",targetUsername,"","","","تم تحديث صلاحيات "+targetUsername, actingUsername);
   _bumpNotifVersion_(); // الصلاحيات تحدد أنواع الإشعارات الظاهرة للمستخدم
   return { success: true };
@@ -456,11 +456,40 @@ function saveUserPermissions(targetUsername, permsArray, actingUsername) {
 
 // دالة مساعدة داخلية: تُعيد دور مستخدم معيّن (Admin/User) من شيت المستخدمين
 function _getUserRole_(username) {
-  var data = _getSheetValues_("Users_Master");
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]).toLowerCase() === String(username).toLowerCase()) return String(data[i][3]||"User");
+  var r = _authSnapshot_().roles[String(username).toLowerCase()];
+  return r == null ? "User" : r;
+}
+
+// V3.55 — لقطة الأدوار والصلاحيات: كل نداء خادم تقريباً يفحص الصلاحية، وكان يقرأ شيتي المستخدمين والصلاحيات كاملين
+// في كل نداء. الآن: نسخة في كاش السكريبت لمدة 60 ثانية + نسخة داخل التنفيذ، وتُمسح فور أي تعديل على الشيتين
+// (كل دوال الكتابة عليهما تستدعي _invalidateSheetCache_ للشيت، وهي تمسح اللقطة). لا تحوي كلمات مرور أو أملاح.
+var _AUTH_CACHE_KEY = "AUTH_SNAPSHOT_V1", _AUTH_CACHE_TTL_SEC = 60;
+var __AUTH_SNAPSHOT = null;
+function _authSnapshot_() {
+  if (__AUTH_SNAPSHOT) return __AUTH_SNAPSHOT;
+  try {
+    var raw = CacheService.getScriptCache().get(_AUTH_CACHE_KEY);
+    if (raw) return (__AUTH_SNAPSHOT = JSON.parse(raw));
+  } catch (e) {}
+  var snap = { roles: {}, perms: {} };
+  var users = _getSheetValues_("Users_Master");
+  // أول تطابق يفوز (نفس سلوك البحث الخطي السابق)
+  for (var i = users.length - 1; i >= 1; i--) {
+    if (users[i][0] === "" || users[i][0] == null) continue;
+    snap.roles[String(users[i][0]).toLowerCase()] = String(users[i][3] || "User");
   }
-  return "User";
+  var pd = _getSheetValues_("Permissions_Master");
+  for (var j = 1; j < pd.length; j++) {
+    var u = String(pd[j][0]); if (!u) continue;
+    var m = snap.perms[u] || (snap.perms[u] = {});
+    m[pd[j][1]] = [pd[j][2], pd[j][3], pd[j][4], pd[j][5]]; // آخر صف يفوز (نفس سلوك الحلقة السابقة)
+  }
+  try { var s = JSON.stringify(snap); if (s.length < 95000) CacheService.getScriptCache().put(_AUTH_CACHE_KEY, s, _AUTH_CACHE_TTL_SEC); } catch (e2) {}
+  return (__AUTH_SNAPSHOT = snap);
+}
+function _invalidateAuthCache_() {
+  __AUTH_SNAPSHOT = null;
+  try { CacheService.getScriptCache().remove(_AUTH_CACHE_KEY); } catch (e) {}
 }
 
 // دالة مساعدة: هل هذا المستخدم مدير؟ (مقاومة لاختلاف حالة الأحرف: Admin/admin/ADMIN كلها تُعامَل كمدير)
@@ -479,7 +508,10 @@ function _requirePermission_(username, screenId, action) {
 // ===================== 6. العداد الدائم =====================
 // دالة مساعدة مركزية للتعافي الذاتي: تُعيد الشيت المطلوب، وتُنشئه تلقائياً بالرؤوس الصحيحة إن لم يكن موجوداً بعد
 // (تحل مشكلة عدم تشغيل initializeSystem() يدوياً بعد إضافة شيتات جديدة للبنية - تمنع أخطاء "Cannot read properties of null")
+// V3.55 — مقبض كل شيت يُحفظ لكل تنفيذ: getSheetByName نداء خدمة كان يتكرر في كل قراءة/كتابة/سجل تدقيق
+var __SHEET_HANDLES = {};
 function _getOrCreateSheet_(sheetName) {
+  if (__SHEET_HANDLES[sheetName]) return __SHEET_HANDLES[sheetName];
   var ss = _getSS_();
   var sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
@@ -490,7 +522,7 @@ function _getOrCreateSheet_(sheetName) {
       sheet.setFrozenRows(1);
     }
   }
-  return sheet;
+  return (__SHEET_HANDLES[sheetName] = sheet);
 }
 
 function _getNextSequentialId_(prefix, digits) {
@@ -529,7 +561,7 @@ function logAudit(screen, actionType, recordId, fieldChanged, oldValue, newValue
   var _fn="[logAudit]"; _logInfo_(_fn, "START | "+"screen:"+String(JSON.stringify(screen)||"").slice(0, 80)+", "+"actionType:"+String(JSON.stringify(actionType)||"").slice(0, 80)+", "+"recordId:"+String(JSON.stringify(recordId)||"").slice(0, 80));
   try {
   var sheet = _getOrCreateSheet_("Global_Audit_Log");
-  var logId = "LOG-" + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyyMMddHHmmssSSS");
+  var logId = "LOG-" + _fmtDate_(new Date(), _tz_(), "yyyyMMddHHmmssSSS");
   sheet.appendRow([logId, new Date(), screen, actionType, recordId,
     fieldChanged||"", oldValue||"", newValue||"", changeSummary||"", user||""]);
   } catch(e) { _logError_(_fn, e); throw e; }
@@ -549,7 +581,7 @@ function getRecordAuditHistory(recordId, currentUser, recordType) {
     }
   }
   var data = _getOrCreateSheet_("Global_Audit_Log").getDataRange().getValues();
-  var tz = Session.getScriptTimeZone(), out = [];
+  var tz = _tz_(), out = [];
 
   // مجموعة معرّفات ذات صلة بهذا السجل: السجل نفسه + معرّفات اتفاقيات نسك المرتبطة به (إن كان حجزاً)
   // بحيث يظهر في سجل الحجز أيضاً كل ما جرى على اتفاقياته (إنشاء/تعديل/حذف)
@@ -566,7 +598,7 @@ function getRecordAuditHistory(recordId, currentUser, recordType) {
 
   for (var i=1; i<data.length; i++) {
     if (relatedIds[String(data[i][4]).trim()]) {
-      out.push({ timestamp: Utilities.formatDate(new Date(data[i][1]),tz,"dd/MM/yyyy HH:mm"),
+      out.push({ timestamp: _fmtDate_(new Date(data[i][1]),tz,"dd/MM/yyyy HH:mm"),
         screen:data[i][2], actionType:data[i][3], fieldChanged:data[i][5],
         oldValue:data[i][6], newValue:data[i][7], summary:data[i][8], user:data[i][9] });
     }
@@ -598,7 +630,7 @@ function getGlobalAuditLog(filters, currentUser) {
   if (!data || data.length <= 1) return []; // فارغ (رأس فقط) أو غير صالح
 
   var tz;
-  try { tz = Session.getScriptTimeZone(); } catch(e) { tz = "Asia/Riyadh"; }
+  try { tz = _tz_(); } catch(e) { tz = "Asia/Riyadh"; }
 
   // بناء خريطة فلترة الفنادق لغير المدير
   var allowed = null, recordHotelMap = null;
@@ -662,7 +694,7 @@ function getGlobalAuditLog(filters, currentUser) {
 
       var ts = "";
       try {
-        if (row[1]) ts = Utilities.formatDate(new Date(row[1]), tz, "dd/MM/yyyy HH:mm");
+        if (row[1]) ts = _fmtDate_(new Date(row[1]), tz, "dd/MM/yyyy HH:mm");
       } catch(e2) { ts = String(row[1]||""); }
 
       out.push({
@@ -842,7 +874,15 @@ function _getHijriCorrections_(hijriYear) {
 
 // التحويل الميلادي→هجري النهائي المُستخدَم بكل أنحاء النظام - يطبّق أي تصحيح يدوي محفوظ لبداية الشهر (من شاشة الصلاحيات)
 // فوق النتيجة الأساسية لتقويم أم القرى، لمعالجة فروق رؤية الهلال المحلية عن الحساب الفلكي
+// V3.55 — نتيجة كل يوم تُحفظ لكل تنفيذ (رؤوس أيام شارت التوافر/نسك تحوّل نفس الأيام مراراً)؛ تُعاد نسخة كي لا يُفسدها مستدعٍ
+var __HIJRI_DAY_MEMO = {};
 function _gregorianToHijri_(date) {
+  var k = date.getFullYear()*10000 + (date.getMonth()+1)*100 + date.getDate();
+  var hit = __HIJRI_DAY_MEMO[k];
+  if (!hit) hit = __HIJRI_DAY_MEMO[k] = _gregorianToHijriCore_(date);
+  return { day: hit.day, month: hit.month, year: hit.year, monthName: hit.monthName };
+}
+function _gregorianToHijriCore_(date) {
   var base = _gregorianToHijriRaw_(date);
   var corrections = _getHijriCorrections_(base.year);
   var offset = corrections[base.month] || 0;
@@ -865,15 +905,21 @@ function formatHijriDisplay(dateVal) {
   var h = _gregorianToHijri_(d);
   return (__HIJRI_DISPLAY_MEMO[k] = String(h.day).padStart(2,"0")+" "+h.monthName+" "+h.year+"هـ");
 }
-// v3.53 — Utilities.formatDate نداء خدمة؛ نحفظ نتيجته لكل (لحظة، نمط) ضمن التنفيذ الواحد
+// v3.53/V3.55 — Utilities.formatDate نداء خدمة (~0.3 مللي ثانية)، وكان يُستدعى في 120 موضعاً بعضها داخل حلقات
+// على آلاف الصفوف. كل المواضع تمر الآن عبر _fmtDate_ التي تحفظ النتيجة لكل (لحظة، منطقة، نمط) ضمن التنفيذ الواحد.
 var __FMT_DATE_MEMO = {};
-function _fmtDateMemo_(d, tz, pattern) {
+function _fmtDate_(d, tz, pattern) {
+  if (!(d instanceof Date)) return Utilities.formatDate(d, tz, pattern); // نفس سلوك/أخطاء الأصل لأي مدخل غير تاريخ
   var t = d.getTime();
   if (isNaN(t)) return Utilities.formatDate(d, tz, pattern);
-  var k = pattern + "|" + t, hit = __FMT_DATE_MEMO[k];
+  var k = pattern + "|" + tz + "|" + t, hit = __FMT_DATE_MEMO[k];
   if (hit !== undefined) return hit;
   return (__FMT_DATE_MEMO[k] = Utilities.formatDate(d, tz, pattern));
 }
+var _fmtDateMemo_ = _fmtDate_;
+// V3.55 — المنطقة الزمنية للسكريبت ثابتة طوال التنفيذ: قراءة واحدة بدل 57 موضعاً (بعضها داخل حلقات)
+var __SCRIPT_TZ = null;
+function _tz_() { return __SCRIPT_TZ || (__SCRIPT_TZ = Session.getScriptTimeZone()); }
 
 // ===================== 10. شاشة التعاقدات =====================
 
@@ -962,7 +1008,7 @@ function _buildContractLabelMap_() {
   if (_cached) { __REF_MAP_MEMO.contractLabel = _cached; return _cached; }
   var ss = _getSS_();
   var data = _getSheetValues_("Contracts_Master");
-  var tz = Session.getScriptTimeZone();
+  var tz = _tz_();
 
   // جمع كل التعاقدات وبناء خريطة الإضافيات
   var contracts = {}, supplementsByParent = {};
@@ -985,8 +1031,8 @@ function _buildContractLabelMap_() {
     var sups=supplementsByParent[mainId]||[];
     sups.forEach(function(sid){ var s=contracts[sid]; if(s&&!s.isDeleted&&s.endDate>maxEnd) maxEnd=s.endDate; });
     labelMap[cid]=c.hotelName+
-      " ("+Utilities.formatDate(mainC.startDate,tz,"dd/MM/yyyy")+
-      " — "+Utilities.formatDate(maxEnd,tz,"dd/MM/yyyy")+")";
+      " ("+_fmtDate_(mainC.startDate,tz,"dd/MM/yyyy")+
+      " — "+_fmtDate_(maxEnd,tz,"dd/MM/yyyy")+")";
   });
   _putInCache_(_REF_CACHE_KEY_CONTRACT_LABEL_MAP, labelMap);
   __REF_MAP_MEMO.contractLabel = labelMap;
@@ -1000,7 +1046,7 @@ function getContracts(currentUser) {
   _requirePermission_(currentUser,"contracts","canView");
   var ss=_getSS_();
   var data=_getSheetValues_("Contracts_Master");
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   var mains=[], supplementsMap={};
   // v3.16 — تصفية حسب الفنادق المسموح بها للمستخدم (كانت مفقودة هنا رغم وجودها في كل الشاشات الأخرى)
   var allowed=_getUserAllowedHotels_(currentUser);
@@ -1018,10 +1064,10 @@ function getContracts(currentUser) {
 
     var item={
       contractId:row[0], hotelName:row[1], contractingParty:row[2],
-      startDate:Utilities.formatDate(sd,tz,"dd/MM/yyyy"), startDateHijri:formatHijriDisplay(sd),
-      endDate:Utilities.formatDate(ed,tz,"dd/MM/yyyy"),   endDateHijri:formatHijriDisplay(ed),
+      startDate:_fmtDate_(sd,tz,"dd/MM/yyyy"), startDateHijri:formatHijriDisplay(sd),
+      endDate:_fmtDate_(ed,tz,"dd/MM/yyyy"),   endDateHijri:formatHijriDisplay(ed),
       nights:row[5], roomCount:row[6], roomPrice:row[7], totalValue:row[8],
-      createdBy:row[9], createdAt:Utilities.formatDate(ca,tz,"dd/MM/yyyy HH:mm"),
+      createdBy:row[9], createdAt:_fmtDate_(ca,tz,"dd/MM/yyyy HH:mm"),
       lastEditSummary:row[11]||"",
       city:row[13]||"", contractType:cType, parentContractId:pId, notes:row[16]||"",
       nusukCapacity:nusukCap, nusukAvgOccupancy:nusukAvg
@@ -1055,7 +1101,7 @@ function getContractForEdit(contractId, currentUser) {
   var _fn="[getContractForEdit]"; _logInfo_(_fn, "START | "+"contractId:"+String(JSON.stringify(contractId)||"").slice(0, 80));
   try {
   var data=_getSheetValues_("Contracts_Master");
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   for (var i=1; i<data.length; i++) {
     if (String(data[i][0])===String(contractId)) {
       var row=data[i];
@@ -1063,8 +1109,8 @@ function getContractForEdit(contractId, currentUser) {
       var ed=row[4] instanceof Date?row[4]:new Date(row[4]);
       return {
         contractId:row[0], hotelName:row[1], contractingParty:row[2],
-        startDate:Utilities.formatDate(sd,tz,"yyyy-MM-dd"),
-        endDate:Utilities.formatDate(ed,tz,"yyyy-MM-dd"),
+        startDate:_fmtDate_(sd,tz,"yyyy-MM-dd"),
+        endDate:_fmtDate_(ed,tz,"yyyy-MM-dd"),
         roomCount:row[6], roomPrice:row[7],
         city:row[13]||"",
         contractType:String(row[14]||"رئيسي").trim(),
@@ -1083,7 +1129,7 @@ function getMainContractsForHotel(hotelName) {
   var _fn="[getMainContractsForHotel]"; _logInfo_(_fn, "START | "+"hotelName:"+String(JSON.stringify(hotelName)||"").slice(0, 80));
   try {
   var data=_getSheetValues_("Contracts_Master");
-  var tz=Session.getScriptTimeZone(), out=[];
+  var tz=_tz_(), out=[];
   for (var i=1; i<data.length; i++) {
     var row=data[i]; if (!row[0]||row[12]===true) continue;
     if (String(row[1]).trim()!==String(hotelName).trim()) continue;
@@ -1091,7 +1137,7 @@ function getMainContractsForHotel(hotelName) {
     var sd=row[3] instanceof Date?row[3]:new Date(row[3]);
     var ed=row[4] instanceof Date?row[4]:new Date(row[4]);
     out.push({ contractId:row[0],
-      label:"عقد "+row[0]+" — "+Utilities.formatDate(sd,tz,"dd/MM/yyyy")+" إلى "+Utilities.formatDate(ed,tz,"dd/MM/yyyy") });
+      label:"عقد "+row[0]+" — "+_fmtDate_(sd,tz,"dd/MM/yyyy")+" إلى "+_fmtDate_(ed,tz,"dd/MM/yyyy") });
   }
   return out;
   } catch(e) { _logError_(_fn, e); throw e; }
@@ -1109,7 +1155,7 @@ function saveContract(c, currentUser) {
   _requirePermission_(currentUser,"contracts",c.editId?"canEdit":"canAdd");
   var ss=_getSS_();
   var sheet=_getOrCreateSheet_("Contracts_Master");
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
 
   var startDate=new Date(c.startDate), endDate=new Date(c.endDate);
   if (isNaN(startDate.getTime())||isNaN(endDate.getTime())) throw new Error("تاريخ بداية/نهاية العقد غير صحيح.");
@@ -1147,8 +1193,8 @@ function saveContract(c, currentUser) {
           {label:"نوع التعاقد",   old:String(oldRow[14]||"رئيسي"),             new:contractType},
           {label:"اسم الفندق",    old:oldRow[1],                               new:hotelName},
           {label:"جهة التعاقد",   old:oldRow[2],                               new:contractingParty},
-          {label:"تاريخ البداية", old:Utilities.formatDate(new Date(oldRow[3]),tz,"dd/MM/yyyy"), new:Utilities.formatDate(startDate,tz,"dd/MM/yyyy")},
-          {label:"تاريخ النهاية", old:Utilities.formatDate(new Date(oldRow[4]),tz,"dd/MM/yyyy"), new:Utilities.formatDate(endDate,tz,"dd/MM/yyyy")},
+          {label:"تاريخ البداية", old:_fmtDate_(new Date(oldRow[3]),tz,"dd/MM/yyyy"), new:_fmtDate_(startDate,tz,"dd/MM/yyyy")},
+          {label:"تاريخ النهاية", old:_fmtDate_(new Date(oldRow[4]),tz,"dd/MM/yyyy"), new:_fmtDate_(endDate,tz,"dd/MM/yyyy")},
           {label:"عدد الغرف",     old:oldRow[6],                               new:roomCount},
           {label:"سعر الغرفة",    old:oldRow[7],                               new:roomPrice},
           {label:"ملاحظات",       old:oldRow[16]||"",                          new:notes},
@@ -1162,7 +1208,7 @@ function saveContract(c, currentUser) {
           }
         });
         var editSummary=changedParts.length
-          ?(changedParts.join(" | ")+" — "+Utilities.formatDate(now,tz,"dd/MM/yyyy HH:mm")+" — "+currentUser)
+          ?(changedParts.join(" | ")+" — "+_fmtDate_(now,tz,"dd/MM/yyyy HH:mm")+" — "+currentUser)
           :oldRow[11];
         // تحديث الأعمدة الأصلية B–I (1-indexed: 2–9)
         sheet.getRange(rowNum,2,1,8).setValues([[hotelName,contractingParty,startDate,endDate,nights,roomCount,roomPrice,totalValue]]);
@@ -1253,7 +1299,7 @@ function getContractPayments(contractId, currentUser) {
   var ss=_getSS_();
   var sheet=_getOrCreateSheet_("Contract_Payments");
   var data=sheet.getDataRange().getValues();
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   var receiptsSumMap = _buildContractReceiptsSumMap_();
   var payments=[], totalScheduled=0, totalPaid=0;
   for (var i=1; i<data.length; i++) {
@@ -1266,11 +1312,11 @@ function getContractPayments(contractId, currentUser) {
     var status = paidAmount<=0 ? "مستحق" : (paidAmount>=amount ? "تم السداد" : "مسدد جزئي");
     payments.push({
       paymentId:row[0], contractId:row[1], amount:amount,
-      dueDate:Utilities.formatDate(dueDate,tz,"dd/MM/yyyy"), dueDateHijri:formatHijriDisplay(dueDate),
+      dueDate:_fmtDate_(dueDate,tz,"dd/MM/yyyy"), dueDateHijri:formatHijriDisplay(dueDate),
       paidAmount:paidAmount, remaining:Math.round((amount-paidAmount)*100)/100,
-      paidDate: rInfo.lastDate ? Utilities.formatDate(rInfo.lastDate,tz,"dd/MM/yyyy") : "",
+      paidDate: rInfo.lastDate ? _fmtDate_(rInfo.lastDate,tz,"dd/MM/yyyy") : "",
       notes:row[6]||"", status:status, receiptsCount: rInfo.count,
-      createdBy:row[7], createdAt:Utilities.formatDate(row[8] instanceof Date?row[8]:new Date(row[8]),tz,"dd/MM/yyyy HH:mm")
+      createdBy:row[7], createdAt:_fmtDate_(row[8] instanceof Date?row[8]:new Date(row[8]),tz,"dd/MM/yyyy HH:mm")
     });
     totalScheduled+=amount; totalPaid+=paidAmount;
   }
@@ -1306,7 +1352,7 @@ function saveContractPayment(p, currentUser) {
       if (String(data[i][0])===String(p.editId)) {
         sheet.getRange(i+1,3,1,2).setValues([[amount,dueDate]]);
         sheet.getRange(i+1,7).setValue(notes);
-        logAudit("التعاقدات","تعديل قسط سداد",contractId,"","","","تم تعديل قسط سداد بقيمة "+amount+" — استحقاق "+Utilities.formatDate(dueDate,Session.getScriptTimeZone(),"dd/MM/yyyy"),currentUser);
+        logAudit("التعاقدات","تعديل قسط سداد",contractId,"","","","تم تعديل قسط سداد بقيمة "+amount+" — استحقاق "+_fmtDate_(dueDate,_tz_(),"dd/MM/yyyy"),currentUser);
         return {success:true, paymentId:p.editId};
       }
     }
@@ -1314,7 +1360,7 @@ function saveContractPayment(p, currentUser) {
   } else {
     var paymentId=_getNextSequentialId_("P",4);
     sheet.appendRow([paymentId,contractId,amount,dueDate,0,"",notes,currentUser,now,false]);
-    logAudit("التعاقدات","إضافة قسط سداد",contractId,"","","","تمت إضافة قسط سداد جديد بقيمة "+amount+" — استحقاق "+Utilities.formatDate(dueDate,Session.getScriptTimeZone(),"dd/MM/yyyy"),currentUser);
+    logAudit("التعاقدات","إضافة قسط سداد",contractId,"","","","تمت إضافة قسط سداد جديد بقيمة "+amount+" — استحقاق "+_fmtDate_(dueDate,_tz_(),"dd/MM/yyyy"),currentUser);
     return {success:true,paymentId:paymentId};
   }
 
@@ -1390,7 +1436,7 @@ function recordContractPaymentReceipt(p, currentUser) {
   _recalcContractPaymentPaidAmount_(paymentId);
   logAudit("التعاقدات","تسجيل سداد",contractId,"","","",
     "تم تسجيل سداد بقيمة "+amount.toLocaleString('en-US')+" ر.س على القسط #"+paymentId
-    +(statement?" — "+statement:"")+" بتاريخ "+Utilities.formatDate(payDate,Session.getScriptTimeZone(),"dd/MM/yyyy")
+    +(statement?" — "+statement:"")+" بتاريخ "+_fmtDate_(payDate,_tz_(),"dd/MM/yyyy")
     +(linkedAccountPaymentId?" (🔗 دفعة مزدوجة — مرتبطة بدفعة عميل #"+linkedAccountPaymentId+")":""),
     currentUser);
   return {success:true, receiptId:receiptId, paymentId:paymentId, contractId:contractId};
@@ -1406,7 +1452,7 @@ function getContractPaymentReceipts(paymentId, currentUser) {
   _requireFinancePermission_(currentUser);
   paymentId = String(paymentId||"").trim();
   var data=_getSheetValues_("Contract_Payment_Receipts");
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   var out=[];
   for (var i=1; i<data.length; i++) {
     var row=data[i];
@@ -1414,10 +1460,10 @@ function getContractPaymentReceipts(paymentId, currentUser) {
     var pd=row[4] instanceof Date?row[4]:new Date(row[4]);
     out.push({
       receiptId:row[0], paymentId:row[1], contractId:row[2], amount:parseFloat(row[3])||0,
-      payDate: isNaN(pd.getTime())?"":Utilities.formatDate(pd,tz,"dd/MM/yyyy"),
-      payDateIso: isNaN(pd.getTime())?"":Utilities.formatDate(pd,tz,"yyyy-MM-dd"),
+      payDate: isNaN(pd.getTime())?"":_fmtDate_(pd,tz,"dd/MM/yyyy"),
+      payDateIso: isNaN(pd.getTime())?"":_fmtDate_(pd,tz,"yyyy-MM-dd"),
       statement:row[5]||"", notes:row[6]||"", createdBy:row[7]||"",
-      createdAt:Utilities.formatDate(row[8] instanceof Date?row[8]:new Date(row[8]),tz,"dd/MM/yyyy HH:mm"),
+      createdAt:_fmtDate_(row[8] instanceof Date?row[8]:new Date(row[8]),tz,"dd/MM/yyyy HH:mm"),
       linkedAccountPaymentId: row[10]||""
     });
   }
@@ -1568,7 +1614,7 @@ function checkDuePaymentsAndNotify(currentUser) {
   }
   var today=_dateOnly_(new Date());
   var weekFromNow=new Date(today.getFullYear(),today.getMonth(),today.getDate()+7);
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   var count=0;
   for (var i=1; i<paymentsData.length; i++) {
     var row=paymentsData[i];
@@ -1582,7 +1628,7 @@ function checkDuePaymentsAndNotify(currentUser) {
     var isOverdue = dueDate<today;
     var msg = (isOverdue?"⚠️ تجاوز موعد سداد قسط تعاقد "+contractId:"⏰ اقتراب موعد سداد قسط تعاقد "+contractId)+" — "+hotelName;
     var details = "قسط سداد بقيمة "+amount.toLocaleString('en-US')+" لتعاقد "+contractId+" ("+hotelName+" — "+party+")"
-      +"\nتاريخ الاستحقاق: "+Utilities.formatDate(dueDate,tz,"dd/MM/yyyy")+(isOverdue?" (متأخر)":"")
+      +"\nتاريخ الاستحقاق: "+_fmtDate_(dueDate,tz,"dd/MM/yyyy")+(isOverdue?" (متأخر)":"")
       +"\nالمبلغ المتبقي: "+remaining.toLocaleString('en-US');
     _createNotification_("notif_payment_due", contractId, hotelName, msg, details, "النظام");
     count++;
@@ -1604,7 +1650,7 @@ function getActiveContractsForDropdown(currentUser) {
   var _fn="[getActiveContractsForDropdown]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   var data=_getSheetValues_("Contracts_Master");
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   var allowed = currentUser ? _getUserAllowedHotels_(currentUser) : null;
   var contracts={}, supplementsByParent={};
 
@@ -1630,7 +1676,7 @@ function getActiveContractsForDropdown(currentUser) {
     var sups=supplementsByParent[cid]||[];
     sups.forEach(function(sid){ var s=contracts[sid]; if(s&&s.endDate>maxEnd) maxEnd=s.endDate; });
     // تاريخ النهاية الفعلي = أبعد تاريخ نهاية بين التعاقد الرئيسي وكل ملاحقه الإضافية (مدمجة ضمن نطاق واحد)
-    var label=c.hotelName+" — ("+Utilities.formatDate(c.startDate,tz,"dd/MM/yyyy")+" إلى "+Utilities.formatDate(maxEnd,tz,"dd/MM/yyyy")+")";
+    var label=c.hotelName+" — ("+_fmtDate_(c.startDate,tz,"dd/MM/yyyy")+" إلى "+_fmtDate_(maxEnd,tz,"dd/MM/yyyy")+")";
     out.push({contractId:cid,hotelName:c.hotelName,label:label,city:c.city});
   });
   return out;
@@ -1711,7 +1757,7 @@ function getBookings(currentUser) {
   _requirePermission_(currentUser,"bookings","canView");
   var ss=_getSS_();
   var data=_getSheetValues_("Bookings_Master");
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   var hotelMap=_buildContractHotelMap_();
   var collMap=_buildCollectionAccountMap_();
   var labelMap=_buildContractLabelMap_();
@@ -1759,7 +1805,7 @@ function getBookingForEdit(bookingId) {
   var _fn="[getBookingForEdit]"; _logInfo_(_fn, "START | "+"bookingId:"+String(JSON.stringify(bookingId)||"").slice(0, 80));
   try {
   var data=_getSheetValues_("Bookings_Master");
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   for (var i=1; i<data.length; i++) {
     if (String(data[i][0])===String(bookingId)) {
       var row=data[i];
@@ -1767,8 +1813,8 @@ function getBookingForEdit(bookingId) {
       var co=row[7] instanceof Date?row[7]:new Date(row[7]);
       return { bookingId:row[0],contractId:row[1],clientName:row[2],collectionAccountId:row[3],
         status:row[4],roomCount:row[5],
-        checkIn:Utilities.formatDate(ci,tz,"yyyy-MM-dd"),
-        checkOut:Utilities.formatDate(co,tz,"yyyy-MM-dd"),salePrice:row[9], notes:row[15]||"" };
+        checkIn:_fmtDate_(ci,tz,"yyyy-MM-dd"),
+        checkOut:_fmtDate_(co,tz,"yyyy-MM-dd"),salePrice:row[9], notes:row[15]||"" };
     }
   }
   throw new Error("لم يتم العثور على الحجز.");
@@ -1782,7 +1828,7 @@ function getBookingFullDetails(bookingId, currentUser) {
   try {
   if (currentUser) _requirePermission_(currentUser,"bookings","canView"); _logRead_("الحجوزات", bookingId, "عرض تفاصيل حجز #"+bookingId, currentUser);
   var data=_getOrCreateSheet_("Bookings_Master").getDataRange().getValues();
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   var hotelMap=_buildContractHotelMap_(), collMap=_buildCollectionAccountMap_();
   var labelMap=_buildContractLabelMap_();
   var allowed = currentUser ? _getUserAllowedHotels_(currentUser) : null;
@@ -1805,10 +1851,10 @@ function getBookingFullDetails(bookingId, currentUser) {
         hotelName:hn,
         hotelContractLabel:labelMap[row[1]]||hn,
         clientName:row[2], collectionAccount:collMap[row[3]]||row[3], status:row[4], roomCount:row[5],
-        checkIn:Utilities.formatDate(ci,tz,"dd/MM/yyyy"),   checkInHijri:formatHijriDisplay(ci),
-        checkOut:Utilities.formatDate(co,tz,"dd/MM/yyyy"),  checkOutHijri:formatHijriDisplay(co),
+        checkIn:_fmtDate_(ci,tz,"dd/MM/yyyy"),   checkInHijri:formatHijriDisplay(ci),
+        checkOut:_fmtDate_(co,tz,"dd/MM/yyyy"),  checkOutHijri:formatHijriDisplay(co),
         nights:row[8],
-        createdBy:row[11],createdAt:Utilities.formatDate(ca,tz,"dd/MM/yyyy HH:mm"),
+        createdBy:row[11],createdAt:_fmtDate_(ca,tz,"dd/MM/yyyy HH:mm"),
         lastEditSummary:row[13]||"",
         notes:row[15]||"", overCapacity:!!(row[16]===true||row[16]==="TRUE"||row[16]==="true"||row[16]===1), overCapacityType:row[17]||""
       };
@@ -1830,7 +1876,7 @@ function saveBooking(b, currentUser) {
   _requirePermission_(currentUser,"bookings",b.editId?"canEdit":"canAdd");
   var ss=_getSS_();
   var sheet=_getOrCreateSheet_("Bookings_Master");
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   var contractId=String(b.contractId||"").trim(), clientName=String(b.clientName||"").trim();
   var collectionAccountId=String(b.collectionAccountId||"").trim(), status=String(b.status||"").trim();
   var checkIn=new Date(b.checkIn), checkOut=new Date(b.checkOut);
@@ -1853,8 +1899,11 @@ function saveBooking(b, currentUser) {
 
   // ─── فحص التوافر مقابل السعة المتاحة (لا يشمل حجوزات الشراء أو الحالات الملغاة) ───
   var overCapacity=false, overCapacityType="";
+  // V3.55 — شيت الحجوزات يُقرأ مرة واحدة هنا ويُمرَّر لفحص التوافر (كان الفحص يقرأ الشيتين كاملين ثم نعيد القراءة أدناه)
+  var data=sheet.getDataRange().getValues();
   if (status!=="ملغي") {
-    var avail=_checkBookingAvailability_(contractId, checkIn, checkOut, roomCount, b.editId||null);
+    var avail=_checkBookingAvailability_(contractId, checkIn, checkOut, roomCount, b.editId||null, false,
+      { bookingsData: data, contractsData: _getSheetValues_("Contracts_Master") });
     if (!avail.ok) {
       if (!forceOverCapacity) {
         return { success:false, needsOverCapacityConfirm:true, shortfallDays:avail.shortfallDays };
@@ -1863,8 +1912,6 @@ function saveBooking(b, currentUser) {
       overCapacityType = b.editId ? "معدل اوفر" : "مسجل اوفر";
     }
   }
-
-  var data=sheet.getDataRange().getValues();
 
   // ─── منع التكرار: رفض الحفظ إن وُجد حجز آخر (غير محذوف) مطابق تماماً لكل بياناته الجوهرية ───
   // يحمي من التسجيل المزدوج (ضغط زر الحفظ مرتين بسرعة فينشأ رقما حجز مختلفان بنفس البيانات) ومن إدخال حجز مكرر يدوياً
@@ -1897,8 +1944,8 @@ function saveBooking(b, currentUser) {
           {label:"جهة التحصيل",old:collMap[oldRow[3]]||oldRow[3], new:collMap[collectionAccountId]||collectionAccountId},
           {label:"حالة الحجز", old:oldRow[4], new:status},
           {label:"عدد الغرف",  old:oldRow[5], new:roomCount},
-          {label:"تاريخ الدخول",old:Utilities.formatDate(new Date(oldRow[6]),tz,"dd/MM/yyyy"),new:Utilities.formatDate(checkIn,tz,"dd/MM/yyyy")},
-          {label:"تاريخ الخروج",old:Utilities.formatDate(new Date(oldRow[7]),tz,"dd/MM/yyyy"),new:Utilities.formatDate(checkOut,tz,"dd/MM/yyyy")},
+          {label:"تاريخ الدخول",old:_fmtDate_(new Date(oldRow[6]),tz,"dd/MM/yyyy"),new:_fmtDate_(checkIn,tz,"dd/MM/yyyy")},
+          {label:"تاريخ الخروج",old:_fmtDate_(new Date(oldRow[7]),tz,"dd/MM/yyyy"),new:_fmtDate_(checkOut,tz,"dd/MM/yyyy")},
           {label:"سعر البيع",  old:oldRow[9], new:salePrice},
           {label:"ملاحظات",    old:oldRow[15]||"", new:notes}
         ];
@@ -1910,13 +1957,16 @@ function saveBooking(b, currentUser) {
           }
         });
         var oldStatus = oldRow[4];
-        var editSummary=changedParts.length?(changedParts.join(" | ")+" — "+Utilities.formatDate(now,tz,"dd/MM/yyyy HH:mm")+" — "+currentUser):oldRow[13];
-        sheet.getRange(rowNum,2,1,9).setValues([[contractId,clientName,collectionAccountId,status,roomCount,checkIn,checkOut,nights,salePrice]]);
-        sheet.getRange(rowNum,11).setValue(bookingValue);
-        sheet.getRange(rowNum,14).setValue(editSummary);
-        sheet.getRange(rowNum,16).setValue(notes);
+        var editSummary=changedParts.length?(changedParts.join(" | ")+" — "+_fmtDate_(now,tz,"dd/MM/yyyy HH:mm")+" — "+currentUser):oldRow[13];
+        // V3.55 — كتابة واحدة للأعمدة 2..18 (كانت 5 كتابات منفصلة)؛ الأعمدة غير المعدَّلة (المُنشئ، تاريخ الإنشاء،
+        // علامة الحذف) تُعاد كما قُرئت للتو داخل نفس القفل
+        var newVals = oldRow.slice(1, 18);
+        newVals[0]=contractId; newVals[1]=clientName; newVals[2]=collectionAccountId; newVals[3]=status; newVals[4]=roomCount;
+        newVals[5]=checkIn; newVals[6]=checkOut; newVals[7]=nights; newVals[8]=salePrice; newVals[9]=bookingValue;
+        newVals[12]=editSummary; newVals[14]=notes; newVals[15]=overCapacity; newVals[16]=overCapacityType;
+        while (newVals.length < 17) newVals.push("");
+        sheet.getRange(rowNum,2,1,17).setValues([newVals]);
         if (b.paymentDate !== undefined) sheet.getRange(rowNum,22).setValue(paymentDate||"");
-        sheet.getRange(rowNum,17,1,2).setValues([[overCapacity, overCapacityType]]);
         if (overCapacity) {
           logAudit("الحجوزات","تعديل أوفر",b.editId,"","","","تم حفظ التعديل رغم عدم توفر إمكانية كافية (معدل اوفر)",currentUser);
         }
@@ -2079,7 +2129,7 @@ function _checkBookingAvailability_(contractId, checkInDate, checkOutDate, roomC
     });
   }
 
-  var tz=Session.getScriptTimeZone(), shortfallDays=[];
+  var tz=_tz_(), shortfallDays=[];
   var cur=_dateOnly_(checkInDate), end=_dateOnly_(checkOutDate);
   while (cur<end) {
     var cap=0;
@@ -2088,7 +2138,7 @@ function _checkBookingAvailability_(contractId, checkInDate, checkOutDate, roomC
     otherBookings.forEach(function(ob){ if (cur>=ob.checkIn&&cur<ob.checkOut) booked+=ob.roomCount; });
     var available=cap-booked;
     if (available-roomCount<0) {
-      shortfallDays.push({date:Utilities.formatDate(cur,tz,"dd/MM/yyyy"), available:available, needed:roomCount});
+      shortfallDays.push({date:_fmtDate_(cur,tz,"dd/MM/yyyy"), available:available, needed:roomCount});
     }
     cur=new Date(cur.getFullYear(), cur.getMonth(), cur.getDate()+1); // زيادة تقويمية آمنة (لا تتأثر بالتوقيت الصيفي)
   }
@@ -2110,7 +2160,7 @@ function getOverCapacityNotifications(currentUser) {
   }
   var ss=_getSS_();
   var data=_getSheetValues_("Bookings_Master"); // V3.54 — مشتركة مع getBookings عند النداء من getBookingsPage
-  var hotelMap=_buildContractHotelMap_(), tz=Session.getScriptTimeZone();
+  var hotelMap=_buildContractHotelMap_(), tz=_tz_();
   var allowed=_getUserAllowedHotels_(currentUser);
   var _pre=null; // v3.53 — تُقرأ مرة واحدة فقط عند وجود أول حجز أوفر (بدل مرتين لكل حجز)
   var out=[];
@@ -2128,13 +2178,13 @@ function getOverCapacityNotifications(currentUser) {
     if (avail.ok) {
       out.push({
         bookingId:row[0], clientName:row[2], hotelName:hn,
-        roomCount:row[5], checkIn:Utilities.formatDate(ci,tz,"dd/MM/yyyy"), checkOut:Utilities.formatDate(co,tz,"dd/MM/yyyy"),
+        roomCount:row[5], checkIn:_fmtDate_(ci,tz,"dd/MM/yyyy"), checkOut:_fmtDate_(co,tz,"dd/MM/yyyy"),
         overCapacityType:row[17]||""
       });
       // إنشاء تنبيه دائم بمجرد اكتشاف توفر الإمكانية (مرة واحدة فقط بفضل الحارس الداخلي لمنع التكرار)
       _createNotification_("notif_overcap_resolved", row[0], hn,
         "توفرت إمكانية للحجز #"+row[0]+" ("+row[2]+")",
-        "الحجز #"+row[0]+" للعميل "+row[2]+" في "+hn+" كان مسجلاً كـ'"+ (row[17]||"أوفر") +"' وأصبح له الآن إمكانية كافية خلال الفترة "+Utilities.formatDate(ci,tz,"dd/MM/yyyy")+" — "+Utilities.formatDate(co,tz,"dd/MM/yyyy")+".",
+        "الحجز #"+row[0]+" للعميل "+row[2]+" في "+hn+" كان مسجلاً كـ'"+ (row[17]||"أوفر") +"' وأصبح له الآن إمكانية كافية خلال الفترة "+_fmtDate_(ci,tz,"dd/MM/yyyy")+" — "+_fmtDate_(co,tz,"dd/MM/yyyy")+".",
         "النظام");
     }
   }
@@ -2259,8 +2309,8 @@ function _telegramDedupCheckAndMark_(type, bookingId) {
 // v3.29 — يبني كتلة تفاصيل كاملة لحجز لاستخدامها في نص التنبيه (زر الجرس + تليجرام) بدل النص المختصر.
 // تُعرض كل بيانات الحجز الجوهرية في أسطر مرتبة؛ تُستخدم بموحّد لكل أنواع تنبيهات الحجز (جديد/أوفر/تعديل).
 function _bookingNotifDetails_(p) {
-  var tz = Session.getScriptTimeZone();
-  function d(x){ try { return Utilities.formatDate(x instanceof Date ? x : new Date(x), tz, "dd/MM/yyyy"); } catch(e){ return String(x||""); } }
+  var tz = _tz_();
+  function d(x){ try { return _fmtDate_(x instanceof Date ? x : new Date(x), tz, "dd/MM/yyyy"); } catch(e){ return String(x||""); } }
   function m(n){ var v = Number(n); if (isNaN(v)) v = 0; return v.toLocaleString('en-US'); }
   var L = [];
   if (p.headline) L.push(p.headline);
@@ -2286,21 +2336,18 @@ function _createNotification_(type, bookingId, hotelName, message, details, crea
   if (!generalEnabled && !telegramEnabled) return; // مُعطَّل بالكامل من الجهتين — لا داعي لأي عمل
 
   if (generalEnabled) {
-    _invalidateSheetCache_("Notifications_Master"); // ضمان قراءة حديثة بعد أي كتابة ضمن نفس التنفيذ
     var sheet = _getOrCreateSheet_("Notifications_Master");
-    var data = sheet.getDataRange().getValues();
     // تحقق: هل يوجد تنبيه بنفس النوع لنفس الحجز خلال آخر 24 ساعة؟ (لتفادي التكرار عند الفحوصات المتكررة)
+    // V3.55 — فهرس واحد لكل تنفيذ بدل قراءة شيت الإشعارات كاملاً (ينمو بلا حد) عند كل تنبيه — كانت الفحوصات
+    // وشريط الأوفر تنادي هذه الدالة داخل حلقات فتقرأ الشيت كله مرة لكل عنصر
     var now = new Date();
-    var isDup = false;
-    for (var i=1; i<data.length; i++) {
-      if (data[i][1]===type && String(data[i][2])===String(bookingId)) {
-        var ageMs = now - new Date(data[i][6]);
-        if (ageMs < 24*60*60*1000) { isDup = true; break; } // تنبيه مطابق حديث موجود بالفعل - لا تُنشئ نسخة مكررة
-      }
-    }
+    var dedup = _notifDedupIndex_(sheet), dkey = type + "\u0001" + String(bookingId);
+    var isDup = dedup[dkey] != null && (now.getTime() - dedup[dkey]) < 24*60*60*1000;
     if (!isDup) {
       var notifId = _getNextSequentialId_("N", 5);
       sheet.appendRow([notifId, type, bookingId, hotelName||"", message, details||"", now, createdBy||"النظام"]);
+      dedup[dkey] = now.getTime();
+      _invalidateSheetCache_("Notifications_Master"); // قراءة لاحقة بنفس التنفيذ (getMyNotifications) ترى الجديد
       _bumpNotifVersion_();
     }
   }
@@ -2319,6 +2366,27 @@ function _createNotification_(type, bookingId, hotelName, message, details, crea
   } catch(genErr) { _logError_("[_createNotification_]", genErr); }
 }
 
+// V3.55 — {نوع + رقم الحجز → أحدث وقت إنشاء} من آخر 3000 تنبيه فقط (الشيت يُلحَق زمنياً، ونافذة منع التكرار 24 ساعة)
+var __NOTIF_DEDUP = null;
+var _NOTIF_DEDUP_TAIL = 3000;
+function _notifDedupIndex_(sheet) {
+  if (__NOTIF_DEDUP) return __NOTIF_DEDUP;
+  var idx = {};
+  var last = sheet.getLastRow();
+  if (last >= 2) {
+    var n = Math.min(last - 1, _NOTIF_DEDUP_TAIL);
+    var rows = sheet.getRange(last - n + 1, 1, n, 7).getValues();
+    for (var i = 0; i < rows.length; i++) {
+      if (!rows[i][0]) continue;
+      var t = new Date(rows[i][6]).getTime();
+      if (isNaN(t)) continue;
+      var k = rows[i][1] + "\u0001" + String(rows[i][2]);
+      if (idx[k] == null || t > idx[k]) idx[k] = t;
+    }
+  }
+  return (__NOTIF_DEDUP = idx);
+}
+
 // يجلب كل التنبيهات التي يحق لهذا المستخدم استقبالها (حسب صلاحيات نوع التنبيه + الفنادق المسموح بها) مع حالة القراءة الخاصة به
 function getMyNotifications(currentUser) {
   var _fn="[getMyNotifications]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
@@ -2330,7 +2398,7 @@ function getMyNotifications(currentUser) {
   var ss = _getSS_();
   var notifData = _getSheetValues_("Notifications_Master");
   var readData = _getSheetValues_("Notification_Reads");
-  var tz = Session.getScriptTimeZone();
+  var tz = _tz_();
 
   // فهرسة قراءات هذا المستخدم فقط لسرعة البحث
   var readSet = {};
@@ -2352,7 +2420,7 @@ function getMyNotifications(currentUser) {
     out.push({
       notificationId: row[0], type: type, bookingId: row[2], hotelName: row[3],
       message: row[4], details: row[5],
-      createdAt: Utilities.formatDate(new Date(row[6]), tz, "dd/MM/yyyy HH:mm"),
+      createdAt: _fmtDate_(new Date(row[6]), tz, "dd/MM/yyyy HH:mm"),
       isRead: !!readSet[row[0]]
     });
     if (out.length >= 100) break; // حد أقصى معقول لعدد التنبيهات المُعادة
@@ -2475,30 +2543,58 @@ function _dateOnly_(d){ return new Date(d.getFullYear(),d.getMonth(),d.getDate()
 function getAvailabilityData(hotelName, year, month, currentUser) {
   var _fn="[getAvailabilityData]"; _logInfo_(_fn, "START | "+"hotelName:"+String(JSON.stringify(hotelName)||"").slice(0, 80)+", "+"year:"+String(JSON.stringify(year)||"").slice(0, 80)+", "+"month:"+String(JSON.stringify(month)||"").slice(0, 80));
   try {
-  // ⚡ v3.0 — استخدام كاش شارت التوافر لكل (فندق × شهر): نتيجة فورية بعد أول تحميل
-  // يُبطَل تلقائياً عبر _invalidateAvailCacheForRange_ عند أي تعديل يمسّ نفس الفترة (تعاقد/حجز/دفعات)
-  if (hotelName && year && month) {
-    var _cachedAv = _getAvailFromCache_(hotelName, year, month);
-    if (_cachedAv) {
-      // نطبّق تصفية الفنادق المسموح بها فقط (سريعة، لا تُلغي منفعة الكاش)
-      var _allowedX = currentUser ? _getUserAllowedHotels_(currentUser) : null;
-      if (!_allowedX || _allowedX[hotelName]) return _cachedAv;
-    }
-  }
+  // V3.55 — إصلاح أمني + أداء: الكاش كان مفتاحه (فندق × شهر) فقط بينما محتواه يعتمد على صلاحيات أول من فتح الشارت
+  // (بيانات الحجز/الأسعار)، والمسار المخزَّن كان يتخطى فحص صلاحية الشاشة. الآن: فحص الصلاحيات دائماً أولاً، والكاش
+  // يحفظ النسخة الكاملة، وتُحذف منها الحقول غير المسموحة لكل مستخدم عند الإرجاع (_availForUser_).
   _requirePermission_(currentUser,"availability","canView");
-  // v3.16 — تحقق صريح من صلاحية الوصول لهذا الفندق تحديداً (لم يكن موجوداً بالمسار غير المخزَّن كاش، بخلاف بقية شاشات الفندق الواحد)
   var _allowedAv = currentUser ? _getUserAllowedHotels_(currentUser) : null;
   if (_allowedAv && hotelName && !_allowedAv[hotelName]) throw new Error("ليس لديك صلاحية الوصول لهذا الفندق.");
   var role=_getUserRole_(currentUser), perms=getUserPermissions(currentUser,role);
-  var canViewBookingData=perms.availability_booking_data&&perms.availability_booking_data.canView;
-  var canViewFinance=perms.availability_finance&&perms.availability_finance.canView;
-  var ss=_getSS_(), tz=Session.getScriptTimeZone();
+  var canViewBookingData=!!(perms.availability_booking_data&&perms.availability_booking_data.canView);
+  var canViewFinance=!!(perms.availability_finance&&perms.availability_finance.canView);
+  var full = (hotelName && year && month) ? _getAvailFromCache_(hotelName, year, month) : null;
+  if (!full) {
+    full = _buildAvailabilityFull_(hotelName, year, month);
+    if (hotelName && year && month) _putAvailInCache_(hotelName, year, month, full);
+  }
+  return _availForUser_(full, canViewBookingData, canViewFinance);
+  } catch(e) { _logError_(_fn, e); throw e; }
+}
+
+// V3.55 — يحذف من النسخة الكاملة ما لا يحق للمستخدم رؤيته (نفس شكل الناتج القديم تماماً لكل حالة صلاحية)
+function _availForUser_(full, canViewBookingData, canViewFinance) {
+  var out = {};
+  Object.keys(full).forEach(function(k) { out[k] = full[k]; });
+  out.dailySales = canViewFinance ? full.dailySales : null;
+  out.dailyCost = canViewFinance ? full.dailyCost : null;
+  out.bookingDataHidden = !canViewBookingData;
+  out.financeHidden = !canViewFinance;
+  if (!canViewBookingData) out.bookingRows = [];
+  else if (!canViewFinance) out.bookingRows = (full.bookingRows || []).map(function(r) {
+    var c = {}; Object.keys(r).forEach(function(k) { if (k !== "salePrice" && k !== "bookingValue") c[k] = r[k]; }); return c;
+  });
+  return out;
+}
+
+// V3.55 — عرض نطاق تاريخ متعدد الأشهر في نداء واحد (كان حتى 14 نداءً متوازياً يقرأ كل منها الشيتين كاملين)
+function getAvailabilityDataMulti(hotelName, months, currentUser) {
+  var _fn="[getAvailabilityDataMulti]";
+  try {
+  months = (months || []).slice(0, 14);
+  return months.map(function(m) { return getAvailabilityData(hotelName, m.year, m.month, currentUser); });
+  } catch(e) { _logError_(_fn, e); throw e; }
+}
+
+// النسخة الكاملة (كل الحقول) لشارت فندق × شهر — لا فحص صلاحيات هنا (يتم في getAvailabilityData)
+function _buildAvailabilityFull_(hotelName, year, month) {
+  var canViewBookingData = true, canViewFinance = true;
+  var tz=_tz_();
   year=parseInt(year,10); month=parseInt(month,10);
   var daysInMonth=new Date(year,month,0).getDate();
   var monthStart=new Date(year,month-1,1), monthEnd=new Date(year,month-1,daysInMonth);
 
-  // التعاقدات (رئيسية + إضافية) تساهم كلها في السعة اليومية
-  var contractsData=_getOrCreateSheet_("Contracts_Master").getDataRange().getValues();
+  // التعاقدات (رئيسية + إضافية) تساهم كلها في السعة اليومية — قراءة للعرض فقط: محفوظة لكل تنفيذ (تشترك فيها الأشهر المتعددة)
+  var contractsData=_getSheetValues_("Contracts_Master");
   var hotelContracts=[], hotelContractIds={};
   for (var i=1; i<contractsData.length; i++) {
     var crow=contractsData[i];
@@ -2521,7 +2617,7 @@ function getAvailabilityData(hotelName, year, month, currentUser) {
     dailyCapacity.push(cap);
     dailyCost.push(Math.round(costD*100)/100);
   }
-  var bookingsData=_getOrCreateSheet_("Bookings_Master").getDataRange().getValues();
+  var bookingsData=_getSheetValues_("Bookings_Master");
   var collMap=_buildCollectionAccountMap_();
   // v3.15 — dailySales: مبيعات اليوم = مجموع (عدد الغرف × سعر البيع لليلة) لكل حجز فعّال ذلك اليوم
   // v3.35 — حجوزات الشراء (عدد سالب) تدخل الآن ضمن المبيعات بإشارتها السالبة فتُخصَم من الإيراد المعروض تلقائياً
@@ -2547,12 +2643,12 @@ function getAvailabilityData(hotelName, year, month, currentUser) {
       var bCreatedAt = brow[12] instanceof Date ? brow[12] : new Date(brow[12]);
       var bObj={bookingId:brow[0],clientName:brow[2],collectionAccount:collMap[brow[3]]||brow[3],
         status:bStatus,roomCount:bRC,
-        checkIn:Utilities.formatDate(ci,tz,"dd/MM/yyyy"),checkOut:Utilities.formatDate(co,tz,"dd/MM/yyyy"),
+        checkIn:_fmtDate_(ci,tz,"dd/MM/yyyy"),checkOut:_fmtDate_(co,tz,"dd/MM/yyyy"),
         nights:brow[8],createdBy:brow[11],dayValues:dayValues,
-        createdAt:Utilities.formatDate(bCreatedAt,tz,"dd/MM/yyyy HH:mm"), createdAtSort:bCreatedAt.getTime(),
+        createdAt:_fmtDate_(bCreatedAt,tz,"dd/MM/yyyy HH:mm"), createdAtSort:bCreatedAt.getTime(),
         notes:brow[15]||"",
-        paymentDate:brow[21]&&brow[21]!==""?Utilities.formatDate(brow[21] instanceof Date?brow[21]:new Date(brow[21]),tz,"dd/MM/yyyy"):"",
-        paymentDateIso:brow[21]&&brow[21]!==""?Utilities.formatDate(brow[21] instanceof Date?brow[21]:new Date(brow[21]),tz,"yyyy-MM-dd"):"", overCapacity:!!(brow[16]===true||brow[16]==="TRUE"||brow[16]==="true"||brow[16]===1)};
+        paymentDate:brow[21]&&brow[21]!==""?_fmtDate_(brow[21] instanceof Date?brow[21]:new Date(brow[21]),tz,"dd/MM/yyyy"):"",
+        paymentDateIso:brow[21]&&brow[21]!==""?_fmtDate_(brow[21] instanceof Date?brow[21]:new Date(brow[21]),tz,"yyyy-MM-dd"):"", overCapacity:!!(brow[16]===true||brow[16]==="TRUE"||brow[16]==="true"||brow[16]===1)};
       if (canViewFinance) { bObj.salePrice=brow[9]; bObj.bookingValue=brow[10]; }
       bookingRows.push(bObj);
     }
@@ -2571,8 +2667,8 @@ function getAvailabilityData(hotelName, year, month, currentUser) {
   // مُتاحة فقط لمن يملك صلاحية الجانب المالي (نفس صلاحية availability_finance المستخدمة للأعمدة المالية الأخرى)
   var _outAV = {daysInMonth:daysInMonth,dayHeaders:dayHeaders,dailyCapacity:dailyCapacity,dailyBooked:dailyBooked,
     dailySales:canViewFinance?dailySales:null, dailyCost:canViewFinance?dailyCost:null,
-    bookingDataHidden:!canViewBookingData,financeHidden:!canViewFinance,bookingRows:bookingRows}; if (hotelName && year && month) _putAvailInCache_(hotelName, year, month, _outAV); return _outAV;
-  } catch(e) { _logError_(_fn, e); throw e; }
+    bookingDataHidden:!canViewBookingData,financeHidden:!canViewFinance,bookingRows:bookingRows};
+  return _outAV;
 }
 
 /**
@@ -2636,6 +2732,7 @@ function addUser(username, password, fullName, role, currentUser) {
     if (String(data[i][0]).toLowerCase()===username.toLowerCase()) throw new Error("اسم المستخدم موجود بالفعل.");
   }
   var _s = _pwGenerateSalt_(); sheet.appendRow([username, _pwHash_(password, _s), fullName, role, true, _s]);
+  _invalidateAuthCache_(); // V3.55 — بعد الكتابة أيضاً (يغلق نافذة إعادة بناء اللقطة بقيم قديمة أثناء الكتابة)
   logAudit("إدارة المستخدمين","إضافة مستخدم",username,"","","",
     "تمت إضافة مستخدم جديد: "+fullName+" ("+(role==="Admin"?"مدير":"مستخدم عادي")+")",currentUser);
   return {success:true};
@@ -2705,6 +2802,7 @@ function deleteUser(username, currentUser) {
       if (String(pdata[j][0])===String(username)) permsSheet.deleteRow(j+1);
     }
   }
+  _invalidateAuthCache_(); // V3.55 — بعد الكتابة أيضاً (يغلق نافذة إعادة بناء اللقطة بقيم قديمة أثناء الكتابة)
   logAudit("إدارة المستخدمين","حذف مستخدم",username,"","","","تم حذف المستخدم: "+fullName+" ("+username+")",currentUser);
   return {success:true};
   } catch(e) { _logError_(_fn, e); throw e; }
@@ -2842,8 +2940,8 @@ function getFullProfitReport(hotelName, currentUser, periodStartMonth, periodSta
   // فترة مخصصة غير منطقية (بداية بعد نهاية) — إرجاع تقرير فارغ بدلاً من حلقة لا نهائية أو نتائج خاطئة
   if (curYear>endYear || (curYear===endYear && curMonth>endMonth)) {
     return {months:[],totalSales:0,totalCost:0,totalDiff:0,totalMarginPct:0,
-      contractStart:Utilities.formatDate(minDate,Session.getScriptTimeZone(),'dd/MM/yyyy'),
-      contractEnd:Utilities.formatDate(maxDate,Session.getScriptTimeZone(),'dd/MM/yyyy')};
+      contractStart:_fmtDate_(minDate,_tz_(),'dd/MM/yyyy'),
+      contractEnd:_fmtDate_(maxDate,_tz_(),'dd/MM/yyyy')};
   }
 
   while (curYear < endYear || (curYear===endYear && curMonth<=endMonth)) {
@@ -2903,8 +3001,8 @@ function getFullProfitReport(hotelName, currentUser, periodStartMonth, periodSta
     if (salesLines.length>MAXLINES) salesLinesShown += '\n... و'+(salesLines.length-MAXLINES)+' حجز آخر';
 
     // فترة احتساب الليالي الفعلية لهذا الشهر (تُعرض بخط صغير أعلى التلميح لتوضيح أساس الحساب)
-    var tzR = Session.getScriptTimeZone();
-    var periodLine = "🗓 فترة الاحتساب: "+Utilities.formatDate(nightsWinStart,tzR,'dd/MM/yyyy')+" — "+Utilities.formatDate(nightsWinEnd,tzR,'dd/MM/yyyy');
+    var tzR = _tz_();
+    var periodLine = "🗓 فترة الاحتساب: "+_fmtDate_(nightsWinStart,tzR,'dd/MM/yyyy')+" — "+_fmtDate_(nightsWinEnd,tzR,'dd/MM/yyyy');
 
     var calcDetail=periodLine
       +"\n──────────────"
@@ -2925,15 +3023,15 @@ function getFullProfitReport(hotelName, currentUser, periodStartMonth, periodSta
     if (curMonth>12) { curMonth=1; curYear++; }
   }
 
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   var totalDiffFinal = Math.round((totalSales-totalCost)*100)/100;
   return { months:months,
     totalSales:Math.round(totalSales*100)/100,
     totalCost:Math.round(totalCost*100)/100,
     totalDiff:totalDiffFinal,
     totalMarginPct: totalSales>0 ? Math.round((totalDiffFinal/totalSales)*1000)/10 : 0,
-    contractStart:Utilities.formatDate(minDate,tz,'dd/MM/yyyy'),
-    contractEnd:Utilities.formatDate(maxDate,tz,'dd/MM/yyyy') };
+    contractStart:_fmtDate_(minDate,tz,'dd/MM/yyyy'),
+    contractEnd:_fmtDate_(maxDate,tz,'dd/MM/yyyy') };
   } catch(e) { _logError_(_fn, e); throw e; }
 }
 
@@ -3005,7 +3103,7 @@ function getDailyStatementSummary(hotelName, fromIso, toIso, currentUser) {
   var hd = _dsBuildHotelData_(hotelName);
   if (!hd.minDate) return {months:[], totalSales:0, totalCost:0, totalDiff:0, totalMarginPct:0, contractStart:'', contractEnd:'', effectiveFrom:'', effectiveTo:''};
 
-  var tz = Session.getScriptTimeZone();
+  var tz = _tz_();
   var effFrom = fromIso ? _dateOnly_(new Date(fromIso+'T00:00:00')) : hd.minDate;
   var effTo   = toIso   ? _dateOnly_(new Date(toIso+'T00:00:00'))   : hd.maxDate;
   if (effFrom < hd.minDate) effFrom = hd.minDate;
@@ -3013,8 +3111,8 @@ function getDailyStatementSummary(hotelName, fromIso, toIso, currentUser) {
 
   if (effFrom > effTo) {
     return {months:[], totalSales:0, totalCost:0, totalDiff:0, totalMarginPct:0,
-      contractStart:Utilities.formatDate(hd.minDate,tz,'dd/MM/yyyy'), contractEnd:Utilities.formatDate(hd.maxDate,tz,'dd/MM/yyyy'),
-      effectiveFrom:Utilities.formatDate(effFrom,tz,'dd/MM/yyyy'), effectiveTo:Utilities.formatDate(effTo,tz,'dd/MM/yyyy')};
+      contractStart:_fmtDate_(hd.minDate,tz,'dd/MM/yyyy'), contractEnd:_fmtDate_(hd.maxDate,tz,'dd/MM/yyyy'),
+      effectiveFrom:_fmtDate_(effFrom,tz,'dd/MM/yyyy'), effectiveTo:_fmtDate_(effTo,tz,'dd/MM/yyyy')};
   }
 
   var MONTH_NAMES_AR=["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
@@ -3036,7 +3134,7 @@ function getDailyStatementSummary(hotelName, fromIso, toIso, currentUser) {
     while (dcur <= rangeEnd) {
       var fig = _dsDayFigures_(hd.hotelContracts, hd.hotelBookings, dcur);
       mSales += fig.sales; mCost += fig.cost;
-      if (isLastMonth) days.push({day:dcur.getDate(), dateLabel:Utilities.formatDate(dcur,tz,'dd/MM'), dateIso:Utilities.formatDate(dcur,tz,'yyyy-MM-dd'), sales:fig.sales, cost:fig.cost, diff:Math.round((fig.sales-fig.cost)*100)/100, noPriceCount:fig.noPriceCount});
+      if (isLastMonth) days.push({day:dcur.getDate(), dateLabel:_fmtDate_(dcur,tz,'dd/MM'), dateIso:_fmtDate_(dcur,tz,'yyyy-MM-dd'), sales:fig.sales, cost:fig.cost, diff:Math.round((fig.sales-fig.cost)*100)/100, noPriceCount:fig.noPriceCount});
       dcur = new Date(dcur.getFullYear(), dcur.getMonth(), dcur.getDate()+1);
     }
     mSales=Math.round(mSales*100)/100; mCost=Math.round(mCost*100)/100;
@@ -3058,8 +3156,8 @@ function getDailyStatementSummary(hotelName, fromIso, toIso, currentUser) {
     months: months,
     totalSales: Math.round(totalSales*100)/100, totalCost: Math.round(totalCost*100)/100,
     totalDiff: totalDiff, totalMarginPct: totalSales>0 ? Math.round((totalDiff/totalSales)*1000)/10 : 0,
-    contractStart: Utilities.formatDate(hd.minDate,tz,'dd/MM/yyyy'), contractEnd: Utilities.formatDate(hd.maxDate,tz,'dd/MM/yyyy'),
-    effectiveFrom: Utilities.formatDate(effFrom,tz,'dd/MM/yyyy'), effectiveTo: Utilities.formatDate(effTo,tz,'dd/MM/yyyy')
+    contractStart: _fmtDate_(hd.minDate,tz,'dd/MM/yyyy'), contractEnd: _fmtDate_(hd.maxDate,tz,'dd/MM/yyyy'),
+    effectiveFrom: _fmtDate_(effFrom,tz,'dd/MM/yyyy'), effectiveTo: _fmtDate_(effTo,tz,'dd/MM/yyyy')
   };
   } catch(e) { _logError_(_fn, e); throw e; }
 }
@@ -3072,7 +3170,7 @@ function getDailyStatementMonthDetail(hotelName, year, month, fromIso, toIso, cu
   if (allowed && !allowed[hotelName]) throw new Error("ليس لديك صلاحية الوصول لهذا الفندق.");
 
   var hd = _dsBuildHotelData_(hotelName);
-  var tz = Session.getScriptTimeZone();
+  var tz = _tz_();
   var monthStart = new Date(year, month-1, 1);
   var monthEnd = new Date(year, month, 0);
   var effFrom = fromIso ? _dateOnly_(new Date(fromIso+'T00:00:00')) : (hd.minDate||monthStart);
@@ -3086,7 +3184,7 @@ function getDailyStatementMonthDetail(hotelName, year, month, fromIso, toIso, cu
     while (dcur <= rangeEnd) {
       var fig = _dsDayFigures_(hd.hotelContracts, hd.hotelBookings, dcur);
       mSales += fig.sales; mCost += fig.cost;
-      days.push({day:dcur.getDate(), dateLabel:Utilities.formatDate(dcur,tz,'dd/MM'), dateIso:Utilities.formatDate(dcur,tz,'yyyy-MM-dd'), sales:fig.sales, cost:fig.cost, diff:Math.round((fig.sales-fig.cost)*100)/100, noPriceCount:fig.noPriceCount});
+      days.push({day:dcur.getDate(), dateLabel:_fmtDate_(dcur,tz,'dd/MM'), dateIso:_fmtDate_(dcur,tz,'yyyy-MM-dd'), sales:fig.sales, cost:fig.cost, diff:Math.round((fig.sales-fig.cost)*100)/100, noPriceCount:fig.noPriceCount});
       dcur = new Date(dcur.getFullYear(), dcur.getMonth(), dcur.getDate()+1);
     }
   }
@@ -3113,7 +3211,7 @@ function getDashboardData(currentUser) {
   }
   var allowed = _getUserAllowedHotels_(currentUser);
   var ss = _getSS_();
-  var tz = Session.getScriptTimeZone();
+  var tz = _tz_();
   var today = _dateOnly_(new Date());
 
   var contractsData = _getOrCreateSheet_("Contracts_Master").getDataRange().getValues();
@@ -3162,7 +3260,7 @@ function getDashboardData(currentUser) {
     if (ci >= today && ci <= weekLater) {
       upcomingBookings.push({
         bookingId:brow[0], hotelName:hn2, clientName:brow[2], collectionAccount:collName,
-        checkIn:Utilities.formatDate(ci,tz,"dd/MM/yyyy"), checkOut:Utilities.formatDate(co,tz,"dd/MM/yyyy"),
+        checkIn:_fmtDate_(ci,tz,"dd/MM/yyyy"), checkOut:_fmtDate_(co,tz,"dd/MM/yyyy"),
         roomCount:roomCount, status:_bkDisplayStatusForRow_(brow),
         _sortKey: ci.getTime()
       });
@@ -3232,7 +3330,7 @@ function getDashboardData(currentUser) {
           var re=new Date(minStart.getFullYear(),minStart.getMonth(),minStart.getDate()+d4-1);
           var avgOcc=0; for(var k=runStart;k<d4;k++){ avgOcc += dailyCap[k]>0?(dailyBooked[k]/dailyCap[k]):0; }
           avgOcc = Math.round((avgOcc/runLen)*100);
-          lowOccPeriods.push({hotelName:hn5, startDate:Utilities.formatDate(rs,tz,"dd/MM/yyyy"), endDate:Utilities.formatDate(re,tz,"dd/MM/yyyy"), nights:runLen, avgOccupancy:avgOcc});
+          lowOccPeriods.push({hotelName:hn5, startDate:_fmtDate_(rs,tz,"dd/MM/yyyy"), endDate:_fmtDate_(re,tz,"dd/MM/yyyy"), nights:runLen, avgOccupancy:avgOcc});
         }
         runStart=-1;
       }
@@ -3322,7 +3420,7 @@ function getWaitlist(currentUser) {
   try {
   _requirePermission_(currentUser, "waitlist", "canView");
   var data=_getOrCreateSheet_("Waitlist_Master").getDataRange().getValues();
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   var hotelMap=_buildContractHotelMap_(), collMap=_buildCollectionAccountMap_();
   var allowed=_getUserAllowedHotels_(currentUser);
   // صلاحية الجزء المالي موحّدة (نفس availability_finance المستخدمة بالتوافر والحجوزات)
@@ -3343,9 +3441,9 @@ function getWaitlist(currentUser) {
     var obj={
       waitlistId:row[0], contractId:row[1], hotelName:hn,
       clientName:row[2], collectionAccount:collMap[row[3]]||row[3],
-      checkIn:Utilities.formatDate(ci,tz,"dd/MM/yyyy"), checkOut:Utilities.formatDate(co,tz,"dd/MM/yyyy"),
+      checkIn:_fmtDate_(ci,tz,"dd/MM/yyyy"), checkOut:_fmtDate_(co,tz,"dd/MM/yyyy"),
       roomCount:row[6], notes:row[8]||"", status:row[9],
-      createdBy:row[10], createdAt:Utilities.formatDate(row[11] instanceof Date?row[11]:new Date(row[11]),tz,"dd/MM/yyyy HH:mm"),
+      createdBy:row[10], createdAt:_fmtDate_(row[11] instanceof Date?row[11]:new Date(row[11]),tz,"dd/MM/yyyy HH:mm"),
       lastEditSummary:row[13]||""
     };
     if (canViewFinance) obj.salePrice = row[7];
@@ -3390,8 +3488,8 @@ function convertWaitlistToBooking(waitlistId, currentUser) {
       var bookingObj={
         contractId:row[1], clientName:row[2], collectionAccountId:row[3],
         status:"مبدئي",
-        checkIn:Utilities.formatDate(row[4] instanceof Date?row[4]:new Date(row[4]),Session.getScriptTimeZone(),"yyyy-MM-dd"),
-        checkOut:Utilities.formatDate(row[5] instanceof Date?row[5]:new Date(row[5]),Session.getScriptTimeZone(),"yyyy-MM-dd"),
+        checkIn:_fmtDate_(row[4] instanceof Date?row[4]:new Date(row[4]),_tz_(),"yyyy-MM-dd"),
+        checkOut:_fmtDate_(row[5] instanceof Date?row[5]:new Date(row[5]),_tz_(),"yyyy-MM-dd"),
         roomCount:row[6], salePrice:row[7], notes:row[8], forceOverCapacity:false
       };
       var result=saveBooking(bookingObj, currentUser);
@@ -3411,12 +3509,13 @@ function convertWaitlistToBooking(waitlistId, currentUser) {
 // يفحص كل طلبات قائمة الانتظار النشطة، وينشئ تنبيهاً لكل طلب أصبحت له سعة كافية متاحة الآن
 // يُعيد تفصيل السعة/الحجز/المتاح لكل ليلة ضمن فترة معيّنة لتعاقد معيّن (نسخة تفصيلية من _checkBookingAvailability_
 // تُعيد كل ليلة على حدة بدل مجرد نعم/لا إجمالية - تُستخدم لتصنيف حالة طلبات قائمة الانتظار وشاشة تفاصيلها)
-function _getNightlyAvailability_(contractId, checkInDate, checkOutDate, excludeBookingId) {
+// V3.55 — preloaded (اختياري): {contractsData, bookingsData} مقروءة مسبقاً — فحص قائمة الانتظار كان يقرأ الشيتين كاملين لكل طلب
+function _getNightlyAvailability_(contractId, checkInDate, checkOutDate, excludeBookingId, preloaded) {
   var hotelMap = _buildContractHotelMap_();
   var hotelName = hotelMap[contractId];
   if (!hotelName) return [];
 
-  var contractsData = _getOrCreateSheet_("Contracts_Master").getDataRange().getValues();
+  var contractsData = (preloaded && preloaded.contractsData) || _getOrCreateSheet_("Contracts_Master").getDataRange().getValues();
   var hotelContractIds = {}, hotelContracts = [];
   for (var i=1; i<contractsData.length; i++) {
     var crow = contractsData[i];
@@ -3429,7 +3528,7 @@ function _getNightlyAvailability_(contractId, checkInDate, checkOutDate, exclude
     });
   }
 
-  var bookingsData = _getOrCreateSheet_("Bookings_Master").getDataRange().getValues();
+  var bookingsData = (preloaded && preloaded.bookingsData) || _getOrCreateSheet_("Bookings_Master").getDataRange().getValues();
   var otherBookings = [];
   for (var j=1; j<bookingsData.length; j++) {
     var brow = bookingsData[j];
@@ -3444,14 +3543,14 @@ function _getNightlyAvailability_(contractId, checkInDate, checkOutDate, exclude
     });
   }
 
-  var tz = Session.getScriptTimeZone(), nights = [];
+  var tz = _tz_(), nights = [];
   var cur = _dateOnly_(checkInDate), end = _dateOnly_(checkOutDate);
   while (cur < end) {
     var cap = 0;
     hotelContracts.forEach(function(hc){ if (cur>=hc.startDate && cur<=hc.endDate) cap += hc.roomCount; });
     var booked = 0;
     otherBookings.forEach(function(ob){ if (cur>=ob.checkIn && cur<ob.checkOut) booked += ob.roomCount; });
-    nights.push({ date: Utilities.formatDate(cur, tz, "dd/MM/yyyy"), capacity: cap, booked: booked, available: cap-booked });
+    nights.push({ date: _fmtDate_(cur, tz, "dd/MM/yyyy"), capacity: cap, booked: booked, available: cap-booked });
     cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate()+1);
   }
   return nights;
@@ -3489,8 +3588,8 @@ function checkWaitlistAvailabilityAndNotify() {
   var sheet = _getOrCreateSheet_("Waitlist_Master");
   var data = sheet.getDataRange().getValues();
   var hotelMap = _buildContractHotelMap_();
-  var tz = Session.getScriptTimeZone();
-  var count = 0;
+  var tz = _tz_();
+  var count = 0, _wlPre = null; // V3.55 — قراءة واحدة للشيتين لكل الطلبات (تُقرأ فقط إن وُجد طلب نشط)
   for (var i=1; i<data.length; i++) {
     var row = data[i];
     if (!row[0]||row[12]===true) continue;
@@ -3499,7 +3598,8 @@ function checkWaitlistAvailabilityAndNotify() {
     var ci = row[4] instanceof Date?row[4]:new Date(row[4]);
     var co = row[5] instanceof Date?row[5]:new Date(row[5]);
     var roomCount = parseFloat(row[6])||0;
-    var nights = _getNightlyAvailability_(row[1], ci, co, null);
+    if (!_wlPre) _wlPre = { contractsData: _getSheetValues_("Contracts_Master"), bookingsData: _getSheetValues_("Bookings_Master") };
+    var nights = _getNightlyAvailability_(row[1], ci, co, null, _wlPre);
     var newStatus = _classifyWaitlistAvailability_(nights, roomCount);
     if (newStatus && newStatus !== row[9]) {
       sheet.getRange(i+1, 10).setValue(newStatus); // العمود 10 = Status
@@ -3507,7 +3607,7 @@ function checkWaitlistAvailabilityAndNotify() {
       _createNotification_("notif_waitlist_available", row[0], hn,
         "✅ "+newStatus+" — طلب انتظار "+row[2]+" ("+hn+") — "+roomCount+" غرفة",
         "طلب الانتظار #"+row[0]+" للعميل "+row[2]+" في "+hn+" — "+roomCount+" غرفة — أصبحت حالته: \""+newStatus+"\" خلال الفترة "
-        +Utilities.formatDate(ci,tz,"dd/MM/yyyy")+" — "+Utilities.formatDate(co,tz,"dd/MM/yyyy")+". يمكن مراجعته وتحويله لحجز فعلي.",
+        +_fmtDate_(ci,tz,"dd/MM/yyyy")+" — "+_fmtDate_(co,tz,"dd/MM/yyyy")+". يمكن مراجعته وتحويله لحجز فعلي.",
         "النظام");
       count++;
     }
@@ -3523,7 +3623,7 @@ function getWaitlistEntryDetails(waitlistId, currentUser) {
   _requirePermission_(currentUser, "waitlist", "canView");
   var data = _getOrCreateSheet_("Waitlist_Master").getDataRange().getValues();
   var hotelMap = _buildContractHotelMap_(), collMap = _buildCollectionAccountMap_();
-  var tz = Session.getScriptTimeZone();
+  var tz = _tz_();
   for (var i=1; i<data.length; i++) {
     var row = data[i];
     if (String(row[0]) !== String(waitlistId)) continue;
@@ -3534,7 +3634,7 @@ function getWaitlistEntryDetails(waitlistId, currentUser) {
     return {
       waitlistId: row[0], hotelName: hotelMap[row[1]]||"(فندق محذوف)",
       clientName: row[2], collectionAccount: collMap[row[3]]||row[3],
-      checkIn: Utilities.formatDate(ci,tz,"dd/MM/yyyy"), checkOut: Utilities.formatDate(co,tz,"dd/MM/yyyy"),
+      checkIn: _fmtDate_(ci,tz,"dd/MM/yyyy"), checkOut: _fmtDate_(co,tz,"dd/MM/yyyy"),
       roomCount: roomCount, status: row[9], nights: nights
     };
   }
@@ -3567,7 +3667,7 @@ function editWaitlistEntry(obj, currentUser) {
     sheet.getRange(i+1, 7, 1, 3).setValues([[newRoomCount, newSalePrice, newNotes]]);
     // إعادة الحالة إلى "نشط" بعد التعديل (سيُعاد تصنيف الإمكانية تلقائياً في الفحص الدوري التالي)
     sheet.getRange(i+1, 10).setValue("نشط");
-    var summary = (changes.length ? changes.join(" | ") : "تعديل بلا تغييرات فعلية") + " — " + Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"dd/MM/yyyy HH:mm") + " — " + currentUser;
+    var summary = (changes.length ? changes.join(" | ") : "تعديل بلا تغييرات فعلية") + " — " + _fmtDate_(new Date(),_tz_(),"dd/MM/yyyy HH:mm") + " — " + currentUser;
     sheet.getRange(i+1, 14).setValue(summary); // العمود 14 = Last_Edit_Summary
     logAudit("قائمة الانتظار","تعديل طلب انتظار",waitlistId,"","","",summary,currentUser);
     return {success:true};
@@ -3685,16 +3785,16 @@ function sendTelegramCheckinReminders(force) {
   // حارس يومي: يمنع الإرسال المكرر إن استدعاه أكثر من مستخدم بنفس اليوم (يُسمح فقط بمحاولة واحدة ناجحة يومياً)
   // إلا إذا مرَّر المستخدم force=true (الإرسال اليدوي من شاشة الإعدادات يتجاوز الحارس عمداً)
   var props = PropertiesService.getScriptProperties();
-  var todayKey = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+  var todayKey = _fmtDate_(new Date(), _tz_(), "yyyy-MM-dd");
   if (!force && props.getProperty("TELEGRAM_LAST_SENT_DATE") === todayKey) {
     return { success:true, sent:false, count:0, alreadySentToday:true };
   }
   var ss = _getSS_();
   var bookingsData = _getOrCreateSheet_("Bookings_Master").getDataRange().getValues();
   var hotelMap = _buildContractHotelMap_(), collMap = _buildCollectionAccountMap_();
-  var tz = Session.getScriptTimeZone();
+  var tz = _tz_();
   var tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
-  var tomorrowStr = Utilities.formatDate(tomorrow, tz, "yyyy-MM-dd");
+  var tomorrowStr = _fmtDate_(tomorrow, tz, "yyyy-MM-dd");
 
   var lines = [];
   for (var i=1; i<bookingsData.length; i++) {
@@ -3703,7 +3803,7 @@ function sendTelegramCheckinReminders(force) {
     var roomCount = parseFloat(row[5])||0;
     if (roomCount < 0) continue; // حجوزات الشراء لا تحتاج تذكير دخول
     var ci = row[6] instanceof Date ? row[6] : new Date(row[6]);
-    var ciStr = Utilities.formatDate(ci, tz, "yyyy-MM-dd");
+    var ciStr = _fmtDate_(ci, tz, "yyyy-MM-dd");
     if (ciStr !== tomorrowStr) continue;
     var hn = hotelMap[row[1]] || "فندق محذوف";
     lines.push("🏨 <b>"+hn+"</b> — "+row[2]+" ("+(collMap[row[3]]||row[3])+") — "+roomCount+" غرفة — حجز #"+row[0]);
@@ -3711,7 +3811,7 @@ function sendTelegramCheckinReminders(force) {
 
   if (!lines.length) return { success:true, sent:false, count:0 };
 
-  var msg = "📅 <b>تذكير: حجوزات تدخل غداً ("+Utilities.formatDate(tomorrow,tz,"dd/MM/yyyy")+")</b>\\n\\n" + lines.join("\\n");
+  var msg = "📅 <b>تذكير: حجوزات تدخل غداً ("+_fmtDate_(tomorrow,tz,"dd/MM/yyyy")+")</b>\\n\\n" + lines.join("\\n");
   var result = _sendTelegramMessage_(msg);
   if (result.success) props.setProperty("TELEGRAM_LAST_SENT_DATE", todayKey);
   return { success: result.success, sent: result.success, count: lines.length, error: result.error||"" };
@@ -3831,6 +3931,7 @@ function updateUserDetails(oldUsername, newUsername, newFullName, currentUser) {
     });
   }
 
+  _invalidateAuthCache_(); // V3.55 — بعد الكتابة أيضاً (يغلق نافذة إعادة بناء اللقطة بقيم قديمة أثناء الكتابة)
   logAudit("إدارة المستخدمين","تعديل بيانات مستخدم", newUsername, "", oldUsername, newUsername,
     "تم تعديل بيانات المستخدم: "+(usernameChanged?("اسم الدخول من '"+oldUsername+"' إلى '"+newUsername+"'، "):"")+"الاسم الكامل: "+newFullName, currentUser);
   return {success:true, usernameChanged:usernameChanged};
@@ -3886,7 +3987,7 @@ function getBookingForConfirmation(bookingId, currentUser) {
   _requirePermission_(currentUser, "bookings", "canView");
   _requirePermission_(currentUser, "booking_confirmation", "canView"); // v3.40 — صلاحية مستقلة خاصة بإصدار تأكيد الحجز
   var data = _getOrCreateSheet_("Bookings_Master").getDataRange().getValues();
-  var tz = Session.getScriptTimeZone();
+  var tz = _tz_();
   var hotelMap = _buildContractHotelMap_(), collMap = _buildCollectionAccountMap_();
   var allowed = _getUserAllowedHotels_(currentUser);
   for (var i=1; i<data.length; i++) {
@@ -3899,11 +4000,11 @@ function getBookingForConfirmation(bookingId, currentUser) {
     return {
       bookingId: row[0], hotelName: hn, clientName: row[2], collectionAccount: collMap[row[3]]||row[3],
       status: row[4], roomCount: row[5],
-      checkIn: Utilities.formatDate(ci,tz,"dd/MM/yyyy"), checkInHijri: formatHijriDisplay(ci),
-      checkOut: Utilities.formatDate(co,tz,"dd/MM/yyyy"), checkOutHijri: formatHijriDisplay(co),
-      checkInFile: Utilities.formatDate(ci,tz,"yyyy-MM-dd"),
+      checkIn: _fmtDate_(ci,tz,"dd/MM/yyyy"), checkInHijri: formatHijriDisplay(ci),
+      checkOut: _fmtDate_(co,tz,"dd/MM/yyyy"), checkOutHijri: formatHijriDisplay(co),
+      checkInFile: _fmtDate_(ci,tz,"yyyy-MM-dd"),
       nights: row[8], salePrice: row[9], bookingValue: row[10], notes: row[15]||"",
-      confirmationType: row[18]||"", reservationManager: row[19]||"", clientOptionDateStr: row[20] ? Utilities.formatDate(row[20] instanceof Date?row[20]:new Date(row[20]),tz,"dd/MM/yyyy") : ""
+      confirmationType: row[18]||"", reservationManager: row[19]||"", clientOptionDateStr: row[20] ? _fmtDate_(row[20] instanceof Date?row[20]:new Date(row[20]),tz,"dd/MM/yyyy") : ""
     };
   }
   throw new Error("لم يتم العثور على الحجز.");
@@ -4036,7 +4137,7 @@ function checkConfirmationOptionDatesAndNotify() {
   try {
   var data = _getOrCreateSheet_("Bookings_Master").getDataRange().getValues();
   var hotelMap = _buildContractHotelMap_();
-  var tz = Session.getScriptTimeZone();
+  var tz = _tz_();
   var today = _dateOnly_(new Date());
   var threeDaysOut = new Date(today.getFullYear(), today.getMonth(), today.getDate()+3);
   var count = 0;
@@ -4050,7 +4151,7 @@ function checkConfirmationOptionDatesAndNotify() {
     var isOverdue = optDate < today;
     _createNotification_("notif_confirmation_option_due", row[0], hn,
       (isOverdue?"⚠️ فات تاريخ سداد تأكيد الحجز #":"⏰ اقتراب تاريخ سداد تأكيد الحجز #")+row[0]+" — "+row[2],
-      "الحجز #"+row[0]+" للعميل "+row[2]+" في "+hn+" — تاريخ السداد المطلوب: "+Utilities.formatDate(optDate,tz,"dd/MM/yyyy")+(isOverdue?" (متأخر)":"")+".",
+      "الحجز #"+row[0]+" للعميل "+row[2]+" في "+hn+" — تاريخ السداد المطلوب: "+_fmtDate_(optDate,tz,"dd/MM/yyyy")+(isOverdue?" (متأخر)":"")+".",
       "النظام");
     count++;
   }
@@ -4070,7 +4171,7 @@ function getHijriMonthStarts(hijriYear, currentUser) {
   try {
   if (!_isAdmin_(currentUser)) throw new Error("غير مصرح.");
   hijriYear = parseInt(hijriYear, 10);
-  var tz = Session.getScriptTimeZone();
+  var tz = _tz_();
   // تقدير تقريبي لبداية نطاق البحث الميلادي المقابل لهذه السنة الهجرية (السنة الهجرية ≈ 354.37 يوماً)
   var approxGregYear = Math.round(hijriYear * 0.970229 + 621.5643);
   var cur = new Date(approxGregYear - 1, 5, 1);
@@ -4089,7 +4190,7 @@ function getHijriMonthStarts(hijriYear, currentUser) {
     if (!found[m]) continue;
     out.push({
       hijriMonth: m, monthName: HIJRI_MONTH_NAMES[m-1],
-      baseGregDate: Utilities.formatDate(found[m], tz, "dd/MM/yyyy"),
+      baseGregDate: _fmtDate_(found[m], tz, "dd/MM/yyyy"),
       correctionDays: corrections[m] || 0
     });
   }
@@ -4106,7 +4207,7 @@ function saveHijriMonthCorrections(hijriYear, correctionsObj, currentUser) {
   hijriYear = parseInt(hijriYear, 10);
   var props = PropertiesService.getScriptProperties();
   props.setProperty("HIJRI_CORRECTIONS_" + hijriYear, JSON.stringify(correctionsObj || {}));
-  __HIJRI_CORR_MEMO = {}; __HIJRI_DISPLAY_MEMO = {};
+  __HIJRI_CORR_MEMO = {}; __HIJRI_DISPLAY_MEMO = {}; __HIJRI_DAY_MEMO = {};
   logAudit("النظام","تصحيح تقويم هجري","","","","","تم تحديث تصحيحات بدايات شهور السنة الهجرية "+hijriYear,currentUser);
   return {success:true};
   } catch(e) { _logError_(_fn, e); throw e; }
@@ -4227,6 +4328,7 @@ function applyRoleToUser(targetUsername, roleName, currentUser) {
     sheet.appendRow([targetUsername, screen, !!p.canView, !!p.canAdd, !!p.canEdit, !!p.canDelete]);
   });
   _setUserRoleName_(targetUsername, roleName);
+  _invalidateAuthCache_(); // V3.55 — بعد الكتابة أيضاً (يغلق نافذة إعادة بناء اللقطة بقيم قديمة أثناء الكتابة)
   logAudit("إدارة الصلاحيات","تطبيق دور على مستخدم",targetUsername,"","",roleName,"تم تطبيق الدور '"+roleName+"' على المستخدم "+targetUsername,currentUser);
   return {success:true};
 
@@ -4279,6 +4381,7 @@ function updateRoleAndPropagate(roleName, perms, currentUser) {
       sheet.appendRow([username, screen, !!p.canView, !!p.canAdd, !!p.canEdit, !!p.canDelete]);
     });
   });
+  _invalidateAuthCache_(); // V3.55 — بعد الكتابة أيضاً (يغلق نافذة إعادة بناء اللقطة بقيم قديمة أثناء الكتابة)
   logAudit("إدارة الصلاحيات","تعديل دور ونشره",roleName,"","","","تم تعديل الدور '"+roleName+"' ونشر التغيير على "+affected.length+" مستخدم(ين)",currentUser);
   return {success:true, affectedCount: affected.length};
 
@@ -4338,7 +4441,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.54";
+var APP_VERSION = "V3.55";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -4408,7 +4511,8 @@ function _pwMigrateIfNeeded_(sheet, rowIdx, plainPassword) {
 var _AVAIL_CACHE_TTL_SEC = 900; // 15 دقيقة كحد أقصى (يُبطَل يدوياً أيضاً عند أي تعديل مؤثر)
 function _availCacheKey_(hotelName, year, month) {
   // مفتاح آمن للكاش: تجزئة اسم الفندق (Base64) لتفادي أي رموز عربية أو خاصة في المفتاح
-  return "AV_" + Utilities.base64EncodeWebSafe(Utilities.newBlob(String(hotelName||"")).getBytes()) + "_" + year + "_" + month;
+  // V3.55 — بادئة جديدة: النسخ القديمة المخزَّنة كانت مقصوصة حسب صلاحيات من فتحها أولاً فلا تصلح للنسخة الكاملة
+  return "AV2_" + Utilities.base64EncodeWebSafe(Utilities.newBlob(String(hotelName||"")).getBytes()) + "_" + year + "_" + month;
 }
 function _getAvailFromCache_(hotelName, year, month) {
   try {
@@ -4545,7 +4649,7 @@ function getGlobalAuditLogPage(filters, page, pageSize, currentUser) {
   var sheet = _getOrCreateSheet_("Global_Audit_Log");
   var data; try { data = sheet.getDataRange().getValues(); } catch(e) { return {rows:[], total:0, page:page, pageSize:pageSize, totalPages:0}; }
   if (!data || data.length <= 1) return {rows:[], total:0, page:page, pageSize:pageSize, totalPages:0};
-  var tz; try { tz = Session.getScriptTimeZone(); } catch(e) { tz = "Asia/Riyadh"; }
+  var tz; try { tz = _tz_(); } catch(e) { tz = "Asia/Riyadh"; }
   // خرائط تصفية الفنادق
   // v3.9 — الخريطة تُبنى الآن أيضاً عند تفعيل فلتر الفندق الصريح (وليس فقط لتقييد صلاحيات غير المدير)
   var fHotel = String(filters.hotel||"").trim();
@@ -4618,7 +4722,7 @@ function getGlobalAuditLogPage(filters, page, pageSize, currentUser) {
   var pageRows = matched.slice(start, start+pageSize);
   var out = pageRows.map(function(row) {
     var ts = "";
-    try { if (row[1]) ts = Utilities.formatDate(new Date(row[1]), tz, "dd/MM/yyyy HH:mm"); } catch(e){ ts=String(row[1]||""); }
+    try { if (row[1]) ts = _fmtDate_(new Date(row[1]), tz, "dd/MM/yyyy HH:mm"); } catch(e){ ts=String(row[1]||""); }
     return { logId: String(row[0]||""), timestamp: ts, screen: String(row[2]||""), actionType: String(row[3]||""),
              recordId: String(row[4]||""), fieldChanged: String(row[5]||""), oldValue: String(row[6]||""),
              newValue: String(row[7]||""), summary: String(row[8]||""), user: String(row[9]||"") };
@@ -4905,7 +5009,7 @@ function purgeHotelsCompletely(hotelNames, currentUser) {
   if (!targets.length) throw new Error("لم يتم تحديد اسم فندق صالح للحذف.");
   return _withLock_(function() {
     var ss = _getSS_();
-    var ts = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyyMMdd_HHmmss");
+    var ts = _fmtDate_(new Date(), _tz_(), "yyyyMMdd_HHmmss");
     var counts = {}, backupSheets = [];
 
     function isTargetHotel(name) { return targets.indexOf(String(name||"").trim()) !== -1; }
@@ -5397,9 +5501,9 @@ function _perfCacheGet_(key) {
 }
 
 function _perfBucketKey_(d) {
-  var tz = Session.getScriptTimeZone();
-  var ymdH = Utilities.formatDate(d, tz, "yyyyMMddHH");
-  var min = Number(Utilities.formatDate(d, tz, "mm"));
+  var tz = _tz_();
+  var ymdH = _fmtDate_(d, tz, "yyyyMMddHH");
+  var min = Number(_fmtDate_(d, tz, "mm"));
   var bucketMin = Math.floor(min/_PERF_BUCKET_MIN)*_PERF_BUCKET_MIN;
   return ymdH + (bucketMin<10?"0":"") + bucketMin;
 }
@@ -5666,7 +5770,7 @@ function _perfReadLog_(filters) {
       rows = sh.getRange(first, 1, last - first + 1, 9).getValues();
     }
   }
-  var tz = Session.getScriptTimeZone(), out = [];
+  var tz = _tz_(), out = [];
   var fKind = filters.kind ? String(filters.kind) : "", fSrc = filters.source ? String(filters.source) : "",
       fStatus = filters.status ? String(filters.status) : "", fName = filters.nameContains ? String(filters.nameContains).toLowerCase() : "";
   for (var i = rows.length - 1; i >= 0 && out.length < 5000; i--) { // الأحدث أولاً
@@ -5676,7 +5780,7 @@ function _perfReadLog_(filters) {
     if (fSrc && r[1] !== fSrc) continue;
     if (fStatus && r[5] !== fStatus) continue;
     if (fName && String(r[3]).toLowerCase().indexOf(fName) === -1) continue;
-    out.push({ time: Utilities.formatDate(ts, tz, "yyyy-MM-dd HH:mm:ss"), src: r[1], kind: r[2], name: String(r[3]), ms: Number(r[4]) || 0,
+    out.push({ time: _fmtDate_(ts, tz, "yyyy-MM-dd HH:mm:ss"), src: r[1], kind: r[2], name: String(r[3]), ms: Number(r[4]) || 0,
                status: r[5], user: String(r[6] || ""), version: String(r[7] || ""), details: String(r[8] || "") });
   }
   return { rows: out, summary: _perfLogSummary_(out), hours: hours };
@@ -5867,7 +5971,9 @@ function _perfDiag_() {
   var d = {};
   try {
     var ss = _getSS_(), sheets = ss.getSheets(), cells = 0;
-    sheets.forEach(function(s) { cells += s.getMaxRows() * s.getMaxColumns(); });
+    // V3.55 — عدد الصفوف الفعلية لكل شيت: حجم القراءات الكاملة هو المحدد الأكبر لزمن كل دالة تقرأ شيتاً
+    d.sheetRows = {};
+    sheets.forEach(function(s) { cells += s.getMaxRows() * s.getMaxColumns(); try { d.sheetRows[s.getName()] = s.getLastRow(); } catch (eR) {} });
     d.sheetCount = sheets.length; d.totalCells = cells; d.cellLimit = 10000000;
     ["Perf", "PerfSlow", "PerfLog"].forEach(function(n) {
       var s = ss.getSheetByName(n);
@@ -5916,7 +6022,7 @@ function _ensurePerfFlushTrigger_() {
  * PropertiesService لا يوجد له نقطة عبور واحدة مماثلة حالياً (استدعاءات مباشرة متفرقة
  * بكل الملف)، فلم يُضَف له عدّاد تجنّباً لتعديلات واسعة مقابل مؤشر غير حرج.
  */
-function _quotaDateKey_() { return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyyMMdd"); }
+function _quotaDateKey_() { return _fmtDate_(new Date(), _tz_(), "yyyyMMdd"); }
 
 function _incrementDailyQuota_(name, amount) {
   try {
@@ -6008,10 +6114,10 @@ function _gatherPerfDashboardData_(filters) {
     var ver2 = String(r[5]||"");
     if (onlyVersion && ver2 !== onlyVersion) continue;
     var ts = r[0] instanceof Date ? r[0] : new Date(r[0]);
-    var dayStr = Utilities.formatDate(ts, Session.getScriptTimeZone(), "yyyyMMdd");
+    var dayStr = _fmtDate_(ts, _tz_(), "yyyyMMdd");
     if (fromDay && dayStr < fromDay) continue;
     if (toDay && dayStr > toDay) continue;
-    slowCalls.push({ time: Utilities.formatDate(ts, Session.getScriptTimeZone(), "dd/MM HH:mm:ss"),
+    slowCalls.push({ time: _fmtDate_(ts, _tz_(), "dd/MM HH:mm:ss"),
                       fn: r[1], ms: r[2], user: r[3], ok: r[4], version: ver2 });
   }
   slowCalls.sort(function(a,b){ return b.ms - a.ms; });
@@ -6134,7 +6240,7 @@ function getBookingsForNusukSelector(hotelName, currentUser) {
   if (!hotelName) return [];
   var allowed=_getUserAllowedHotels_(currentUser);
   if (allowed && !allowed[hotelName]) throw new Error("ليس لديك صلاحية الوصول لهذا الفندق.");
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   var hotelMap=_buildContractHotelMap_();
   var collMap=_buildCollectionAccountMap_();
   // نبني خريطة عقد→معلوماته لحساب متوسط تسكين نسك لكل حجز حسب عقده
@@ -6163,10 +6269,10 @@ function getBookingsForNusukSelector(hotelName, currentUser) {
       bookingId:brow[0], contractId:brow[1], hotelName:hn,
       clientName:brow[2], collectionAccount:collMap[brow[3]]||brow[3], collectionAccountId:brow[3],
       status:brow[4], roomCount:bRooms,
-      checkIn:Utilities.formatDate(ci,tz,"dd/MM/yyyy"),
-      checkOut:Utilities.formatDate(co,tz,"dd/MM/yyyy"),
-      checkInIso:Utilities.formatDate(ci,tz,"yyyy-MM-dd"),
-      checkOutIso:Utilities.formatDate(co,tz,"yyyy-MM-dd"),
+      checkIn:_fmtDate_(ci,tz,"dd/MM/yyyy"),
+      checkOut:_fmtDate_(co,tz,"dd/MM/yyyy"),
+      checkInIso:_fmtDate_(ci,tz,"yyyy-MM-dd"),
+      checkOutIso:_fmtDate_(co,tz,"yyyy-MM-dd"),
       nights:brow[8],
       contractNusukAvg: Math.round(info.avg*10)/10,
       // الحد الأقصى النظري للحجز = عدد غرف الحجز × متوسط تسكين نسك للعقد (مقرَّب لأقرب رقم صحيح كتلميح)
@@ -6186,7 +6292,7 @@ function getNusukAgreementsForBooking(bookingId, currentUser) {
   try {
   _requirePermission_(currentUser,"nusuk","canView");
   var data=_getSheetValues_("Nusuk_Agreements");
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   var out=[], totalPersons=0;
   for (var i=1; i<data.length; i++) {
     var row=data[i];
@@ -6199,8 +6305,8 @@ function getNusukAgreementsForBooking(bookingId, currentUser) {
     out.push({
       agreementId:row[0], hotelName:row[1], bookingId:row[2],
       agreementNumber:String(row[3]||""), personsCount:pc,
-      checkIn:Utilities.formatDate(ci,tz,"dd/MM/yyyy"),
-      checkOut:Utilities.formatDate(co,tz,"dd/MM/yyyy"),
+      checkIn:_fmtDate_(ci,tz,"dd/MM/yyyy"),
+      checkOut:_fmtDate_(co,tz,"dd/MM/yyyy"),
       nights:row[7]||0
     });
   }
@@ -6256,7 +6362,7 @@ function saveNusukAgreement(a, currentUser) {
   if (bookingRowNum<0) throw new Error("رقم الحجز غير موجود أو محذوف.");
 
   var sheet=_getOrCreateSheet_("Nusuk_Agreements");
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   var now=new Date();
 
   if (a.editId) {
@@ -6269,8 +6375,8 @@ function saveNusukAgreement(a, currentUser) {
         {label:"رقم الحجز",     old:oldRow[2],                                                              new:bookingId},
         {label:"رقم الاتفاقية", old:String(oldRow[3]||""),                                                  new:agreementNumber},
         {label:"عدد الأفراد",   old:parseFloat(oldRow[4])||0,                                                new:personsCount},
-        {label:"تاريخ الدخول",  old:Utilities.formatDate(new Date(oldRow[5]),tz,"dd/MM/yyyy"),              new:Utilities.formatDate(checkIn,tz,"dd/MM/yyyy")},
-        {label:"تاريخ الخروج",  old:Utilities.formatDate(new Date(oldRow[6]),tz,"dd/MM/yyyy"),              new:Utilities.formatDate(checkOut,tz,"dd/MM/yyyy")}
+        {label:"تاريخ الدخول",  old:_fmtDate_(new Date(oldRow[5]),tz,"dd/MM/yyyy"),              new:_fmtDate_(checkIn,tz,"dd/MM/yyyy")},
+        {label:"تاريخ الخروج",  old:_fmtDate_(new Date(oldRow[6]),tz,"dd/MM/yyyy"),              new:_fmtDate_(checkOut,tz,"dd/MM/yyyy")}
       ];
       var changedParts=[];
       comparisons.forEach(function(cmp){
@@ -6280,7 +6386,7 @@ function saveNusukAgreement(a, currentUser) {
         }
       });
       var editSummary=changedParts.length
-        ?(changedParts.join(" | ")+" — "+Utilities.formatDate(now,tz,"dd/MM/yyyy HH:mm")+" — "+currentUser)
+        ?(changedParts.join(" | ")+" — "+_fmtDate_(now,tz,"dd/MM/yyyy HH:mm")+" — "+currentUser)
         :oldRow[11];
       sheet.getRange(rowNum,2,1,7).setValues([[hotelName,bookingId,agreementNumber,personsCount,checkIn,checkOut,nights]]);
       sheet.getRange(rowNum,12).setValue(editSummary);
@@ -6300,7 +6406,7 @@ function saveNusukAgreement(a, currentUser) {
     logAudit("نسك","إنشاء اتفاقية",agreementId,"","","", summaryText, currentUser);
     // سجل موازٍ في سجل الحجز نفسه ليظهر في سجل تعديلات الحجز مباشرة
     logAudit("الحجوزات","تسجيل اتفاقية نسك",bookingId,"اتفاقية نسك","","+ "+agreementNumber,
-      "تسجيل اتفاقية نسك رقم "+agreementNumber+" — "+personsCount+" فرد — من "+Utilities.formatDate(checkIn,tz,"dd/MM/yyyy")+" إلى "+Utilities.formatDate(checkOut,tz,"dd/MM/yyyy"), currentUser);
+      "تسجيل اتفاقية نسك رقم "+agreementNumber+" — "+personsCount+" فرد — من "+_fmtDate_(checkIn,tz,"dd/MM/yyyy")+" إلى "+_fmtDate_(checkOut,tz,"dd/MM/yyyy"), currentUser);
 
     // تحديث حالة الحجز الأصلي لـ"مؤكد نسك" مباشرة إن لم تكن كذلك (السلوك المُقر مع المستخدم)
     var statusChanged=false;
@@ -6345,7 +6451,7 @@ function getNusukAgreementDetails(agreementId, currentUser) {
   try {
   _requirePermission_(currentUser,"nusuk","canView");
   var data=_getSheetValues_("Nusuk_Agreements");
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   var found=null;
   for (var i=1; i<data.length; i++) {
     if (String(data[i][0])===String(agreementId) && data[i][12]!==true) {
@@ -6356,12 +6462,12 @@ function getNusukAgreementDetails(agreementId, currentUser) {
       found = {
         agreementId:row[0], hotelName:row[1], bookingId:row[2],
         agreementNumber:String(row[3]||""), personsCount:parseFloat(row[4])||0,
-        checkIn:Utilities.formatDate(ci,tz,"dd/MM/yyyy"),
-        checkOut:Utilities.formatDate(co,tz,"dd/MM/yyyy"),
-        checkInIso:Utilities.formatDate(ci,tz,"yyyy-MM-dd"),
-        checkOutIso:Utilities.formatDate(co,tz,"yyyy-MM-dd"),
+        checkIn:_fmtDate_(ci,tz,"dd/MM/yyyy"),
+        checkOut:_fmtDate_(co,tz,"dd/MM/yyyy"),
+        checkInIso:_fmtDate_(ci,tz,"yyyy-MM-dd"),
+        checkOutIso:_fmtDate_(co,tz,"yyyy-MM-dd"),
         nights:row[7]||0,
-        createdBy:row[9], createdAt:Utilities.formatDate(ca,tz,"dd/MM/yyyy HH:mm"),
+        createdBy:row[9], createdAt:_fmtDate_(ca,tz,"dd/MM/yyyy HH:mm"),
         lastEditSummary:row[11]||""
       };
       break;
@@ -6384,8 +6490,8 @@ function getNusukAgreementDetails(agreementId, currentUser) {
       hotelName:hotelMap[brow[1]]||"",
       clientName:brow[2], collectionAccount:collMap[brow[3]]||brow[3],
       status:brow[4], roomCount:brow[5],
-      checkIn:Utilities.formatDate(bci,tz,"dd/MM/yyyy"),
-      checkOut:Utilities.formatDate(bco,tz,"dd/MM/yyyy"),
+      checkIn:_fmtDate_(bci,tz,"dd/MM/yyyy"),
+      checkOut:_fmtDate_(bco,tz,"dd/MM/yyyy"),
       nights:brow[8]
     };
     break;
@@ -6405,7 +6511,7 @@ function getNusukGridData(hotelName, startDateIso, endDateIso, filters, currentU
   var allowed=_getUserAllowedHotels_(currentUser);
   if (allowed && !allowed[hotelName]) throw new Error("ليس لديك صلاحية الوصول لهذا الفندق.");
 
-  var tz=Session.getScriptTimeZone();
+  var tz=_tz_();
   // 1) بناء السعة اليومية بالأفراد (لكل عقد سارٍ في اليوم: غرف العقد × متوسط تسكين نسك)
   // نجمع العقود أولاً لأننا نحتاج نطاق تواريخها لحساب الفترة الافتراضية عند ترك أحد التاريخين فارغاً
   var contractsData=_getSheetValues_("Contracts_Master");
@@ -6520,14 +6626,14 @@ function getNusukGridData(hotelName, startDateIso, endDateIso, filters, currentU
       collectionAccount:book.collectionAccount,
       bookingStatus:book.status,
       bookingRoomCount:book.roomCount,
-      bookingCheckIn:Utilities.formatDate(book.checkIn,tz,"dd/MM/yyyy"),
-      bookingCheckOut:Utilities.formatDate(book.checkOut,tz,"dd/MM/yyyy"),
+      bookingCheckIn:_fmtDate_(book.checkIn,tz,"dd/MM/yyyy"),
+      bookingCheckOut:_fmtDate_(book.checkOut,tz,"dd/MM/yyyy"),
       personsCount:pc,
-      checkIn:Utilities.formatDate(aci,tz,"dd/MM/yyyy"),
-      checkOut:Utilities.formatDate(aco,tz,"dd/MM/yyyy"),
+      checkIn:_fmtDate_(aci,tz,"dd/MM/yyyy"),
+      checkOut:_fmtDate_(aco,tz,"dd/MM/yyyy"),
       // dd/mm لعرض مختصر داخل السطر عند إخفاء الصف
-      checkInShort:Utilities.formatDate(aci,tz,"dd/MM"),
-      checkOutShort:Utilities.formatDate(aco,tz,"dd/MM"),
+      checkInShort:_fmtDate_(aci,tz,"dd/MM"),
+      checkOutShort:_fmtDate_(aco,tz,"dd/MM"),
       nights:arow[7]||0,
       dayValues:dayValues
     });
@@ -6552,8 +6658,8 @@ function getNusukGridData(hotelName, startDateIso, endDateIso, filters, currentU
 
   return {
     hotelName:hotelName,
-    startDate:Utilities.formatDate(startDate,tz,"dd/MM/yyyy"),
-    endDate:Utilities.formatDate(endDate,tz,"dd/MM/yyyy"),
+    startDate:_fmtDate_(startDate,tz,"dd/MM/yyyy"),
+    endDate:_fmtDate_(endDate,tz,"dd/MM/yyyy"),
     totalDays:totalDays,
     dayHeaders:dayHeaders,
     dailyCapacity:dailyCapacity,
@@ -6754,7 +6860,7 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
   if (!partyKey) throw new Error("لم يُحدَّد الطرف المطلوب كشف حسابه.");
   var fromDate = _parseStatementDateBound_(fromIso, false);
   var toDate = _parseStatementDateBound_(toIso, true);
-  var tz = Session.getScriptTimeZone();
+  var tz = _tz_();
 
   if (partyType === "hotel") {
     _requirePermission_(currentUser, "accounts", "canView");
@@ -6779,9 +6885,9 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
       rowsH.push({
         kind: "contract", refId: crow[0], contractId: crow[0],
         sortKey: isNaN(sd.getTime()) ? 0 : sd.getTime(),
-        date: isNaN(sd.getTime()) ? "" : Utilities.formatDate(sd, tz, "dd/MM/yyyy"),
+        date: isNaN(sd.getTime()) ? "" : _fmtDate_(sd, tz, "dd/MM/yyyy"),
         description: "تعاقد #" + crow[0] + " — " + (crow[6]||0) + " غرفة × " + (crow[7]||0) + " ر.س/ليلة"
-          + " (" + (isNaN(sd.getTime())?"":Utilities.formatDate(sd,tz,"dd/MM/yyyy")) + " ← " + (isNaN(ed.getTime())?"":Utilities.formatDate(ed,tz,"dd/MM/yyyy")) + ")",
+          + " (" + (isNaN(sd.getTime())?"":_fmtDate_(sd,tz,"dd/MM/yyyy")) + " ← " + (isNaN(ed.getTime())?"":_fmtDate_(ed,tz,"dd/MM/yyyy")) + ")",
         debit: Math.round(val*100)/100, credit: 0
       });
     }
@@ -6799,8 +6905,8 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
       rowsH.push({
         kind: "receipt", refId: rrow[0], contractId: rrow[2],
         sortKey: isNaN(pd.getTime()) ? 0 : pd.getTime(),
-        date: isNaN(pd.getTime()) ? "" : Utilities.formatDate(pd, tz, "dd/MM/yyyy"),
-        payDateIso: isNaN(pd.getTime()) ? "" : Utilities.formatDate(pd, tz, "yyyy-MM-dd"),
+        date: isNaN(pd.getTime()) ? "" : _fmtDate_(pd, tz, "dd/MM/yyyy"),
+        payDateIso: isNaN(pd.getTime()) ? "" : _fmtDate_(pd, tz, "yyyy-MM-dd"),
         description: (linkedAp ? "🔗 دفعة مزدوجة" : "سداد") + " — تعاقد #" + rrow[2] + (rrow[5] ? " — " + rrow[5] : "") + (rrow[6] ? " — " + rrow[6] : ""),
         statement: rrow[5]||"", notes: rrow[6]||"", createdBy: rrow[7]||"",
         linkedAccountPaymentId: linkedAp,
@@ -6819,7 +6925,7 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
       totalDue: Math.round(totalDueH*100)/100,
       totalPaid: Math.round(totalPaidH*100)/100,
       balance: Math.round((totalDueH-totalPaidH)*100)/100,
-      generatedAt: Utilities.formatDate(new Date(), tz, "dd/MM/yyyy HH:mm")
+      generatedAt: _fmtDate_(new Date(), tz, "dd/MM/yyyy HH:mm")
     };
   }
 
@@ -6856,11 +6962,11 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
       kind: "booking",
       refId: b[0],
       sortKey: isNaN(ci2.getTime()) ? 0 : ci2.getTime(),
-      date: isNaN(ci2.getTime()) ? "" : Utilities.formatDate(ci2, tz, "dd/MM/yyyy"),
+      date: isNaN(ci2.getTime()) ? "" : _fmtDate_(ci2, tz, "dd/MM/yyyy"),
       description: "حجز " + b[0] + " — " + (hn||"")
         + (partyType==="collection" ? " — العميل: " + (b[2]||"") : " — جهة التحصيل: " + (collMap[b[3]]||b[3]||""))
         + " — " + (b[5]||0) + " غرفة × " + (b[8]||0) + " ليلة"
-        + " (" + (isNaN(ci2.getTime())?"":Utilities.formatDate(ci2,tz,"dd/MM/yyyy")) + " ← " + (isNaN(co.getTime())?"":Utilities.formatDate(co,tz,"dd/MM/yyyy")) + ")"
+        + " (" + (isNaN(ci2.getTime())?"":_fmtDate_(ci2,tz,"dd/MM/yyyy")) + " ← " + (isNaN(co.getTime())?"":_fmtDate_(co,tz,"dd/MM/yyyy")) + ")"
         + " — الحالة: " + (b[4]||""),
       debit: Math.round(val*100)/100,
       credit: 0
@@ -6886,11 +6992,11 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
       kind: "payment",
       refId: p[0],
       sortKey: isNaN(pd2.getTime()) ? 0 : pd2.getTime(),
-      date: isNaN(pd2.getTime()) ? "" : Utilities.formatDate(pd2, tz, "dd/MM/yyyy"),
+      date: isNaN(pd2.getTime()) ? "" : _fmtDate_(pd2, tz, "dd/MM/yyyy"),
       description: (linkedReceiptId ? "🔗 دفعة مزدوجة" : "دفعة مسدَّدة") + (payHotel ? " — " + payHotel : " — عامة") + (p[6] ? " — " + p[6] : "") + (p[7] ? " — " + p[7] : ""),
       method: p[6]||"", notes: p[7]||"", createdBy: p[8]||"", hotelName: payHotel,
       amount: Math.round(amt*100)/100,
-      paymentDateIso: isNaN(pd2.getTime()) ? "" : Utilities.formatDate(pd2, tz, "yyyy-MM-dd"),
+      paymentDateIso: isNaN(pd2.getTime()) ? "" : _fmtDate_(pd2, tz, "yyyy-MM-dd"),
       linkedHotelReceiptId: linkedReceiptId,
       debit: 0,
       credit: Math.round(amt*100)/100
@@ -6908,7 +7014,7 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
     totalDue: Math.round(totalDue*100)/100,
     totalPaid: Math.round(totalPaid*100)/100,
     balance: Math.round((totalDue-totalPaid)*100)/100,
-    generatedAt: Utilities.formatDate(new Date(), tz, "dd/MM/yyyy HH:mm")
+    generatedAt: _fmtDate_(new Date(), tz, "dd/MM/yyyy HH:mm")
   };
   } catch(e) { _logError_(_fn, e); throw e; }
 }
@@ -6936,7 +7042,7 @@ function saveAccountPayment(p, currentUser) {
     if (_allowedPay && !_allowedPay[hotelName]) throw new Error("ليس لديك صلاحية الوصول لهذا الفندق.");
   }
   var sheet = _getOrCreateSheet_("Account_Payments");
-  var tz = Session.getScriptTimeZone();
+  var tz = _tz_();
   if (p.editId) {
     var data = sheet.getDataRange().getValues();
     for (var i=1; i<data.length; i++) {
@@ -6945,7 +7051,7 @@ function saveAccountPayment(p, currentUser) {
         sheet.getRange(i+1, 5, 1, 4).setValues([[amount, payDate, method, notes]]);
         sheet.getRange(i+1, 12).setValue(hotelName);
         logAudit("الحسابات", "تعديل دفعة", String(p.editId), "المبلغ", String(oldAmt), String(amount),
-          "تعديل دفعة لـ " + partyName + " — المبلغ: " + amount.toLocaleString('en-US') + " ر.س بتاريخ " + Utilities.formatDate(payDate, tz, "dd/MM/yyyy") + (hotelName?" — الفندق: "+hotelName:""), currentUser);
+          "تعديل دفعة لـ " + partyName + " — المبلغ: " + amount.toLocaleString('en-US') + " ر.س بتاريخ " + _fmtDate_(payDate, tz, "dd/MM/yyyy") + (hotelName?" — الفندق: "+hotelName:""), currentUser);
         return { success: true };
       }
     }
@@ -6954,7 +7060,7 @@ function saveAccountPayment(p, currentUser) {
     var paymentId = _getNextSequentialId_("APY-", 4);
     sheet.appendRow([paymentId, partyType, partyKey, partyName, amount, payDate, method, notes, currentUser, new Date(), false, hotelName]);
     logAudit("الحسابات", "إضافة دفعة", paymentId, "", "", "",
-      "تسجيل دفعة مسدَّدة من " + partyName + " (" + (partyType==="collection"?"جهة تحصيل":"عميل") + ") بقيمة " + amount.toLocaleString('en-US') + " ر.س بتاريخ " + Utilities.formatDate(payDate, tz, "dd/MM/yyyy") + (hotelName?" — الفندق: "+hotelName:""), currentUser);
+      "تسجيل دفعة مسدَّدة من " + partyName + " (" + (partyType==="collection"?"جهة تحصيل":"عميل") + ") بقيمة " + amount.toLocaleString('en-US') + " ر.س بتاريخ " + _fmtDate_(payDate, tz, "dd/MM/yyyy") + (hotelName?" — الفندق: "+hotelName:""), currentUser);
     return { success: true, paymentId: paymentId };
   }
   });

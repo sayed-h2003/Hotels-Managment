@@ -5823,19 +5823,18 @@ function _avLoadRangeData(hotel, fromIso, toIso) {
   if (months.length >= AVAIL_RANGE_MAX_MONTHS) showToast('الفترة المطلوبة طويلة جداً — تم الاكتفاء بأول '+AVAIL_RANGE_MAX_MONTHS+' شهراً.', 'warning');
 
   document.getElementById('availGridContainer').innerHTML='<div class="placeholder-box">جاري التحميل...</div>';
-  var results = new Array(months.length), remaining = months.length, failed = false;
-  months.forEach(function(mm, idx) {
-    google.script.run.withSuccessHandler(function(data){
-      if (failed) return;
-      _avAttachGregorianToHeaders(data, mm.year, mm.month);
-      results[idx] = data;
-      remaining--;
-      if (remaining === 0) _avMergeAndRender(results);
-    }).withFailureHandler(function(e){
-      if (failed) return; failed = true;
-      document.getElementById('availGridContainer').innerHTML='<div class="placeholder-box" style="color:var(--clr-danger);">'+(e.message||e)+'</div>';
-    }).getAvailabilityData(hotel, mm.year, mm.month, sessionUser.username);
-  });
+  // V3.55 — نداء واحد لكل الأشهر (كان نداءً متوازياً لكل شهر، حتى 14، يقرأ كل منها شيتي التعاقدات والحجوزات كاملين)
+  google.script.run.withSuccessHandler(function(results){
+    results = results || [];
+    if (results.length !== months.length) {
+      document.getElementById('availGridContainer').innerHTML='<div class="placeholder-box" style="color:var(--clr-danger);">تعذّر تحميل بيانات الفترة.</div>';
+      return;
+    }
+    results.forEach(function(data, idx) { _avAttachGregorianToHeaders(data, months[idx].year, months[idx].month); });
+    _avMergeAndRender(results);
+  }).withFailureHandler(function(e){
+    document.getElementById('availGridContainer').innerHTML='<div class="placeholder-box" style="color:var(--clr-danger);">'+(e.message||e)+'</div>';
+  }).getAvailabilityDataMulti(hotel, months, sessionUser.username);
 }
 
 // v3.10 — يدمج نتائج أشهر متعددة (كل منها بنفس بنية getAvailabilityData) في كائن _availData واحد متصل
@@ -10140,7 +10139,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.54';
+var CLIENT_APP_VERSION = 'V3.55';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {
