@@ -340,7 +340,8 @@ body.sb-collapsed #top-header { margin-right:0; }
      كانت مخفية تماماً على الشاشات الصغيرة بلا بديل. */
   .th-connected { display:flex; padding:5px 8px; gap:4px; font-size:12px; font-weight:800; min-height:34px; flex-shrink:0; }
   .th-connected .th-connected-word { display:none; }
-  .th-connected .connected-dropdown { position:fixed; top:58px; left:10px; right:10px; width:auto; max-width:none; max-height:60vh; overflow-y:auto; z-index:1200; }
+  /* V3.71 — قائمة مضغوطة بعرض محتواها تحت الأيقونة (كانت بعرض الشاشة كلها) */
+  .th-connected .connected-dropdown { position:fixed; top:56px; left:10px; right:auto; width:max-content; min-width:170px; max-width:78vw; max-height:60vh; overflow-y:auto; z-index:1200; }
   .th-connected .connected-dropdown .item { font-size:14px !important; padding:10px 14px !important; }
   .th-datetime { display:none; }
   .th-title { font-size:10pt; }
@@ -5602,7 +5603,8 @@ function _renderOverCapacityBanner(list) {
     if (!box) return;
     if (!list||!list.length) { box.style.display='none'; box.innerHTML=''; return; }
     // V3.59 — قابل للطي (مطوي افتراضياً على الموبايل كي لا يملأ الشاشة قبل الجدول)؛ يبقى على حالته التي اختارها المستخدم
-    var _ocOpen = (window._ocBannerOpen != null) ? window._ocBannerOpen : ((window.innerWidth || 1200) > 600);
+    // V3.71 — مطوي افتراضياً على كل الأجهزة (بطلب المستخدم)؛ يُفتح بالضغط ويبقى على اختيار المستخدم طوال الجلسة
+    var _ocOpen = (window._ocBannerOpen != null) ? window._ocBannerOpen : false;
     var html='<details class="overcap-banner"'+(_ocOpen?' open':'')+' ontoggle="window._ocBannerOpen=this.open"><summary>⚠️ حجوزات "أوفر" أصبحت الآن ضمن الإمكانية المتاحة ('+list.length+')</summary>';
     list.forEach(function(o){
       html+='<div class="oc-item"><span>#'+o.bookingId+' — '+escapeHtml(o.clientName)+' — '+escapeHtml(o.hotelName)+' — '+o.checkIn+' إلى '+o.checkOut+' — '+o.roomCount+' غرفة <b>('+escapeHtml(o.overCapacityType)+')</b></span>'
@@ -11154,7 +11156,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.70';
+var CLIENT_APP_VERSION = 'V3.71';
 var _BUILD_VERSION = CLIENT_APP_VERSION; // نسخة الكود المحمَّل في هذا التبويب (لا تتغير بعد التحميل)
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
