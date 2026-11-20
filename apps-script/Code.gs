@@ -268,12 +268,12 @@ function _doGetCore_(e) {
   if (page === 'guide') {
     return HtmlService.createHtmlOutputFromFile('Setup_Guide')
       .setTitle('دليل الإعداد والتشغيل — HotelApp')
-      .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=5, minimum-scale=1, user-scalable=yes')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
   return HtmlService.createHtmlOutputFromFile('Index')
     .setTitle('ادارة الفنادق')
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=5, minimum-scale=1, user-scalable=yes')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
@@ -315,7 +315,9 @@ function initializeSystem() {
 }
 
 // ===================== 4. تسجيل الدخول والجلسات =====================
-function loginUser(username, password) {
+// V3.59 — opts.boot: حزمة الإقلاع وبيانات الشاشة الرئيسية تعود مع رد الدخول نفسه (كانت 3 رحلات متتالية:
+// دخول ← إقلاع ← بيانات الشاشة ≈ 10 ث حتى ظهور شارت التوافر). فشل أي إضافة لا يُفشل الدخول (الواجهة تطلبها منفصلة).
+function loginUser(username, password, opts) {
   var _fn="[loginUser]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", password:[hidden]");
   try {
   var ss = _getSS_();
@@ -335,8 +337,13 @@ function loginUser(username, password) {
     _getOrCreateSheet_("Active_Sessions").appendRow([fullName, new Date(), storedUsername]);
     logAudit("شاشة الدخول", "تسجيل دخول", "N/A", "", "", "", "تسجيل دخول ناجح", fullName);
     var permissions = getUserPermissions(storedUsername, role);
-    return { success: true, username: storedUsername, fullName: fullName, role: role,
+    var out = { success: true, username: storedUsername, fullName: fullName, role: role,
              permissions: permissions, screens: ALL_SCREENS, systemVersion: APP_VERSION };
+    if (opts && opts.boot) {
+      try { out.boot = getAppBootstrap(storedUsername, fullName, { brandingVer: opts.brandingVer, lite: true }); } catch (eB) { _logError_(_fn, eB); }
+      if (out.boot) { try { out.home = _loginHomeData_(storedUsername, role, permissions, out.boot, opts); } catch (eH) { _logError_(_fn, eH); } }
+    }
+    return out;
   }
   return { success: false, message: "اسم المستخدم أو كلمة المرور غير صحيحة!" };
   } catch(e) { _logError_(_fn, e); throw e; }
@@ -1818,6 +1825,7 @@ function _bookingObj_(row, ctx) {
     paymentDate: pd ? _fmtDateMemo_(pd,tz,"dd/MM/yyyy") : "", paymentDateIso: pd ? _fmtDateMemo_(pd,tz,"yyyy-MM-dd") : "",
     nights:row[8],
     createdBy:row[11], createdAt:_fmtDateMemo_(ca,tz,"dd/MM/yyyy HH:mm"),
+    createdTs:(isNaN(ca.getTime()) ? 0 : ca.getTime()), // V3.59 — مفتاح ترتيب "الأحدث تسجيلاً أولاً" (بلا نداء تنسيق)
     lastEditSummary:row[13]||"",
     notes:row[15]||"", overCapacity:!!(row[16]===true||row[16]==="TRUE"||row[16]==="true"||row[16]===1), overCapacityType:row[17]||""
   };
@@ -1845,13 +1853,47 @@ function getPrefetchBundle(currentUser, req) {
   if (req.contracts) part("contracts", function() { return getContracts(currentUser); });
   if (req.waitlist) part("waitlist", function() { return getWaitlist(currentUser); });
   if (req.accounts) part("accounts", function() { var a = req.accounts; return getAccountsSummary(a.partyType, currentUser, a.hotel || "", a.fromIso || "", a.toIso || ""); });
-  if (req.availability && req.availability.length) {
+  if (Array.isArray(req.availability) && req.availability.length) {
     out.availability = [];
     req.availability.slice(0, 12).forEach(function(r) {
       try { out.availability.push({ hotel: r.hotel, year: r.year, month: r.month, data: getAvailabilityData(r.hotel, r.year, r.month, currentUser) }); } catch (e) {}
     });
   }
+  if (req.users) part("users", function() { return getUsersScreenData(currentUser); });
+  // V3.59 — "إعادة تشغيل" نداءات شاشات فتحها المستخدم سابقاً بنفس وسائطها (سجل التعديلات/شبكة نسك/ملخص الحسابات)
+  // فيكون فتحها فورياً. قائمة بيضاء صريحة، واسم المستخدم داخل الوسائط يُفرض = صاحب الطلب (لا قراءة باسم غيره).
+  if (Array.isArray(req.replay) && req.replay.length) {
+    var table = _prefetchReplayTable_();
+    out.replay = [];
+    req.replay.slice(0, 10).forEach(function(r) {
+      var slot = { fn: r && r.fn };
+      try {
+        var def = r && table[r.fn], args = (r && Array.isArray(r.args)) ? r.args.slice(0, def ? def.n : 0) : null;
+        if (!def || !args) throw new Error("غير مسموح");
+        args[def.user] = currentUser;
+        slot.args = args; slot.data = def.f.apply(null, args);
+      } catch (e) { slot.error = String(e && e.message || e).slice(0, 200); }
+      out.replay.push(slot);
+    });
+  }
   return out;
+}
+// اسم الدالة → { الدالة، موضع وسيط اسم المستخدم، عدد الوسائط }
+function _prefetchReplayTable_() {
+  return {
+    // ⚠️ لا تُضَف هنا دالة تسجّل "قراءة" بسجل التعديلات (_logRead_: التقرير المالي، كشف الحساب، البيان اليومي…):
+    // جلبها مسبقاً بالخلفية يكتب بالسجل أن المستخدم اطّلع على بيانات لم يفتحها فعلاً.
+    getGlobalAuditLogPage: { f: getGlobalAuditLogPage, user: 3, n: 4 },
+    getNusukGridData: { f: getNusukGridData, user: 4, n: 5 },
+    getAccountsSummary: { f: getAccountsSummary, user: 1, n: 5 }
+  };
+}
+// V3.59 — شاشة الصلاحيات في نداء واحد (كانت 3 نداءات متتالية ≈ 8 ث: قائمة الشاشات ← المستخدمون ← أسماء الأدوار)
+function getUsersScreenData(currentUser) {
+  var _fn="[getUsersScreenData]";
+  try {
+  return { users: getAllUsersWithPermissions(currentUser), roleNames: _getUserRoleNamesMap_() };
+  } catch(e) { _logError_(_fn, e); throw e; }
 }
 
 // V3.58 — الصف المحفوظ بنفس شكل قائمة الحجوزات (يُحدِّث المتصفح قائمته فوراً بلا إعادة تحميل)؛ فشله لا يُفشل الحفظ
@@ -4528,7 +4570,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.58";
+var APP_VERSION = "V3.59";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -4707,6 +4749,7 @@ function getBookingsPage(filters, page, pageSize, currentUser) {
     if (sortBy === "checkInDesc") return (bIso||"").localeCompare(aIso||"");
     if (sortBy === "bookingIdDesc") return String(b.bookingId).localeCompare(String(a.bookingId), undefined, {numeric:true});
     if (sortBy === "bookingIdAsc")  return String(a.bookingId).localeCompare(String(b.bookingId), undefined, {numeric:true});
+    if (sortBy === "createdDesc") return ((Number(b.createdTs)||0) - (Number(a.createdTs)||0)) || String(b.bookingId).localeCompare(String(a.bookingId), undefined, {numeric:true});
     // checkInAsc (الافتراضي) — الأقدم أولاً كي يبدأ المستخدم بالحجوزات المستحقة قريباً
     return (aIso||"").localeCompare(bIso||"");
   });
@@ -4910,6 +4953,35 @@ function exportReportToDriveExcel(headers, rows, fileName, currentUser) {
 // v3.53 — opts (اختياري): {brandingVer} — إن طابق نسخة الهوية المحفوظة في المتصفح لا يُعاد إرسال الشعار (أغلب حجم الحزمة).
 // وتشمل الحزمة الآن ما كانت الشاشات تطلبه منفصلاً عند الإقلاع (التفضيلات، أسماء الفنادق، جهات التحصيل،
 // نطاقات التعاقد) + أرقام نسخ الإشعارات/التوافر حتى لا يعيد أول نداء دوري تحميل قائمة الإشعارات كاملة.
+// V3.59 — بيانات الشاشة الرئيسية للمستخدم (نفس اختيار الواجهة: المحفوظة إن كانت مسموحة، وإلا أول مسموحة بالترتيب
+// الافتراضي) تُرفق برد الدخول: التوافر (أول فندق، الشهر الحالي إن كان ضمن التعاقد وإلا أول شهر) أو الحجوزات أو اللوحة.
+function _loginHomeData_(username, role, permissions, boot, opts) {
+  var admin = String(role || "").toLowerCase() === "admin";
+  var can = function(id) { return admin || !!(permissions && permissions[id] && permissions[id].canView); };
+  var permOf = { Dashboard_Screen: "dashboard", Bookings_Screen: "bookings", Availability_Screen: "availability", Contracts_Screen: "contracts",
+    FinancialReport_Screen: "financial_report", AuditLog_Screen: "audit_log", Waitlist_Screen: "waitlist", Nusuk_Screen: "nusuk", Accounts_Screen: "accounts" };
+  var order = ["Dashboard_Screen", "Bookings_Screen", "Availability_Screen", "Contracts_Screen", "FinancialReport_Screen", "AuditLog_Screen"];
+  var saved = String((boot.prefs && boot.prefs.default_home_screen) || "");
+  var home = "";
+  if (saved === "Permissions_Screen" || saved === "Settings_Screen") { if (admin) home = saved; }
+  else if (saved && permOf[saved] && can(permOf[saved])) home = saved;
+  if (!home) for (var i = 0; i < order.length; i++) { if (can(permOf[order[i]])) { home = order[i]; break; } }
+  var out = { screen: home };
+  if (home === "Availability_Screen") {
+    var names = boot.hotelNames || [];
+    if (names.length) {
+      var hotel = names[0], r = boot.contractRanges && boot.contractRanges[hotel];
+      var now = new Date(), y = parseInt(opts.nowYear, 10) || now.getFullYear(), m = parseInt(opts.nowMonth, 10) || (now.getMonth() + 1);
+      if (m < 1 || m > 12) { y = now.getFullYear(); m = now.getMonth() + 1; }
+      if (r && !((y > r.minYear || (y === r.minYear && m >= r.minMonth)) && (y < r.maxYear || (y === r.maxYear && m <= r.maxMonth)))) { y = r.minYear; m = r.minMonth; }
+      out.availability = [{ hotel: hotel, year: y, month: m, data: getAvailabilityData(hotel, y, m, username) }];
+    }
+  } else if (home === "Bookings_Screen") out.bookingsAll = getBookingsAll(username);
+  else if (home === "Dashboard_Screen") out.dashboard = getDashboardData(username);
+  else if (home === "Contracts_Screen") out.contracts = getContracts(username);
+  return out;
+}
+
 function getAppBootstrap(username, fullName, opts) {
   var _fn="[getAppBootstrap]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"fullName:"+String(JSON.stringify(fullName)||"").slice(0, 80));
   try {
