@@ -402,6 +402,8 @@ function _loginFails_(username) { try { return parseInt(CacheService.getScriptCa
 function _loginFailNote_(username) { try { CacheService.getScriptCache().put(_loginFailKey_(username), String(_loginFails_(username) + 1), _LOGIN_LOCK_SEC); } catch (e) {} }
 function _loginFailClear_(username) { try { CacheService.getScriptCache().remove(_loginFailKey_(username)); } catch (e) {} }
 
+// نداءات لا تحتاج القفل: قراءات، والفحوصات الدورية والتصدير/الإرسال (طويلة وتقفل داخلياً ما يلزم)
+var _API_NOLOCK_RE = /^(get|poll|ping|flush|search|list|check|load|is|has|export|count|preview|validate|logout|mark|send|generate|test|globalSearch)/;
 // البوابة الوحيدة لنداءات المتصفح بعد الدخول
 function api(token, fnName) {
   var args = Array.prototype.slice.call(arguments, 2);
@@ -416,7 +418,11 @@ function api(token, fnName) {
   if (def.u >= 0) { while (args.length <= def.u) args.push(undefined); args[def.u] = ses.u; }
   if (def.n != null) { while (args.length <= def.n) args.push(undefined); args[def.n] = ses.f; }
   var prev = __API_CTX; __API_CTX = ses; __TRUSTED_DEPTH++;
-  try { return def.f.apply(null, args); }
+  // V3.65 — كل عملية كتابة تمرّ من هنا داخل قفل السكربت (القفل يُعاد دخوله، فالدوال التي تقفل بنفسها لا تتأثر).
+  // كانت ~20 دالة كتابة (حذف دفعات/إيصالات، قائمة الانتظار، إدارة المستخدمين، الأدوار…) تقرأ رقم الصف ثم تكتب
+  // بلا قفل، فعمليتان متزامنتان قد تكتبان على الصف الخطأ.
+  var run = function() { return def.f.apply(null, args); };
+  try { return _API_NOLOCK_RE.test(String(fnName)) ? run() : _withLock_(run, 30000); }
   finally { __TRUSTED_DEPTH--; __API_CTX = prev; if (String(fnName) === "logoutUser") _sessionKill_(ses.token); }
 }
 // V3.63 — القائمة البيضاء لبوابة api (مولَّدة من تواقيع الدوال؛ اختبار v363 يطابقها مع الكود والواجهة عند كل تغيير).
@@ -2090,7 +2096,7 @@ function _bookingObj_(row, ctx) {
     createdBy:row[11], createdAt:_fmtDateMemo_(ca,tz,"dd/MM/yyyy HH:mm"),
     createdTs:(isNaN(ca.getTime()) ? 0 : ca.getTime()), // V3.59 — مفتاح ترتيب "الأحدث تسجيلاً أولاً" (بلا نداء تنسيق)
     lastEditSummary:row[13]||"",
-    notes:row[15]||"", overCapacity:!!(row[16]===true||row[16]==="TRUE"||row[16]==="true"||row[16]===1), overCapacityType:row[17]||""
+    notes:row[15]||"", overCapacity:_isOverCap_(row[16]), overCapacityType:row[17]||""
   };
   if (ctx.canViewFinance) { obj.salePrice=row[9]; obj.bookingValue=row[10]; }
   return obj;
@@ -2239,7 +2245,7 @@ function getBookingFullDetails(bookingId, currentUser) { _apiGuard_();
         nights:row[8],
         createdBy:row[11],createdAt:_fmtDate_(ca,tz,"dd/MM/yyyy HH:mm"),
         lastEditSummary:row[13]||"",
-        notes:row[15]||"", overCapacity:!!(row[16]===true||row[16]==="TRUE"||row[16]==="true"||row[16]===1), overCapacityType:row[17]||""
+        notes:row[15]||"", overCapacity:_isOverCap_(row[16]), overCapacityType:row[17]||""
       };
       if (canViewFinance) { obj.salePrice=row[9]; obj.bookingValue=row[10]; }
       return obj;
@@ -2277,6 +2283,12 @@ function saveBooking(b, currentUser) { _apiGuard_();
   if (checkOut<=checkIn) throw new Error("تاريخ الخروج يجب أن يكون بعد تاريخ الدخول.");
   // يسمح بعدد غرف سالب لتسجيل عملية شراء غرف من مورد/عميل لاستكمال فترة معينة (لا يجوز أن يكون صفراً)
   if (roomCount===0) throw new Error("عدد الغرف يجب ألا يكون صفراً (استخدم رقماً سالباً لتسجيل شراء غرف).");
+  // V3.65 — تحقق الخادم من المدخلات (كانت الواجهة وحدها تتحقق)
+  if (!isFinite(roomCount) || Math.floor(roomCount)!==roomCount || Math.abs(roomCount)>5000) throw new Error("عدد الغرف يجب أن يكون رقماً صحيحاً معقولاً.");
+  if (!isFinite(salePrice) || salePrice<0 || salePrice>10000000) throw new Error("سعر البيع غير صحيح (لا يُقبل السالب).");
+  if (clientName.length>200) throw new Error("اسم العميل طويل جداً (الحد 200 حرف).");
+  if (notes.length>2000) throw new Error("الملاحظات طويلة جداً (الحد 2000 حرف).");
+  if (paymentDate && isNaN(paymentDate.getTime())) throw new Error("تاريخ السداد غير صحيح.");
   var nights=Math.round((checkOut-checkIn)/86400000);
   var bookingValue=Math.round(roomCount*nights*salePrice*100)/100;
   var now=new Date(), hotelMap=_buildContractHotelMap_(), collMap=_buildCollectionAccountMap_();
@@ -2496,6 +2508,8 @@ function deleteBooking(bookingId, currentUser) { _apiGuard_();
 // • كل ليلة تُنسب لتاريخها هي (اليوم والشهر) في كل التقارير.
 // كانت الدوال تختلف: فحص التوافر والشارت والبيان اليومي ونسك تحسب يوم نهاية التعاقد ليلة متاحة ومكلِّفة،
 // والتقرير المالي وقيمة العقد لا تحسبانه؛ والتقرير المالي الشهري كان ينسب الليلة لشهر اليوم التالي لها.
+// V3.65 — قراءة واحدة لعلامة "أوفر" (كانت تُقرأ بثلاث صيغ؛ إحداها تعدّ النص "FALSE" أوفر، وأخرى تُسقط القيمة 1)
+function _isOverCap_(v) { return v === true || v === 1 || v === "TRUE" || v === "true"; }
 function _contractCoversNight_(c, day) { return day >= c.startDate && day < c.endDate; }
 // أرقام الحجوزات (غير الملغاة/المحذوفة، بغرف موجبة) التي تشغل ليلة هي تاريخ نهاية تعاقد لفندقها ولا يغطيها أي تعاقد آخر
 function _bookingsOnHandoverNight_() {
@@ -2549,7 +2563,7 @@ function _checkBookingAvailability_(contractId, checkInDate, checkOutDate, roomC
     if (excludeBookingId && String(brow[0])===String(excludeBookingId)) continue;
     if (!hotelContractIds[brow[1]]) continue;
     if (brow[4]==="ملغي") continue;
-    if (excludeOtherOverBookings && (brow[16]===true||brow[16]==="TRUE"||brow[16]==="true")) continue;
+    if (excludeOtherOverBookings && _isOverCap_(brow[16])) continue;
     otherBookings.push({
       checkIn:_dateOnly_(brow[6] instanceof Date?brow[6]:new Date(brow[6])),
       checkOut:_dateOnly_(brow[7] instanceof Date?brow[7]:new Date(brow[7])),
@@ -2595,7 +2609,7 @@ function getOverCapacityNotifications(currentUser) { _apiGuard_();
   for (var i=1; i<data.length; i++) {
     var row=data[i];
     if (!row[0]||row[14]===true) continue;
-    if (!row[16] && row[16]!=="TRUE" && row[16]!=="true") continue;
+    if (!_isOverCap_(row[16])) continue; // V3.65 — كانت القيمة النصية "FALSE" تُعدّ أوفر
     if (row[4]==="ملغي") continue;
     var hn=hotelMap[row[1]]||"";
     if (allowed && !allowed[hn]) continue;
@@ -2935,7 +2949,7 @@ function manuallyClearOverCapacityFlag(bookingId, currentUser) { _apiGuard_();
   var data=sheet.getDataRange().getValues();
   for (var i=1; i<data.length; i++) {
     if (String(data[i][0])===String(bookingId)) {
-      if (!(data[i][16]===true||data[i][16]==="TRUE"||data[i][16]==="true")) throw new Error("هذا الحجز غير مسجَّل كـ(أوفر) أصلاً.");
+      if (!_isOverCap_(data[i][16])) throw new Error("هذا الحجز غير مسجَّل كـ(أوفر) أصلاً.");
       var _contractId=data[i][1];
       var _ci = data[i][6] instanceof Date ? data[i][6] : new Date(data[i][6]);
       var _co = data[i][7] instanceof Date ? data[i][7] : new Date(data[i][7]);
@@ -3076,7 +3090,7 @@ function _buildAvailabilityFull_(hotelName, year, month) {
         createdAt:_fmtDate_(bCreatedAt,tz,"dd/MM/yyyy HH:mm"), createdAtSort:bCreatedAt.getTime(),
         notes:brow[15]||"",
         paymentDate:brow[21]&&brow[21]!==""?_fmtDate_(brow[21] instanceof Date?brow[21]:new Date(brow[21]),tz,"dd/MM/yyyy"):"",
-        paymentDateIso:brow[21]&&brow[21]!==""?_fmtDate_(brow[21] instanceof Date?brow[21]:new Date(brow[21]),tz,"yyyy-MM-dd"):"", overCapacity:!!(brow[16]===true||brow[16]==="TRUE"||brow[16]==="true"||brow[16]===1)};
+        paymentDateIso:brow[21]&&brow[21]!==""?_fmtDate_(brow[21] instanceof Date?brow[21]:new Date(brow[21]),tz,"yyyy-MM-dd"):"", overCapacity:_isOverCap_(brow[16])};
       if (canViewFinance) { bObj.salePrice=brow[9]; bObj.bookingValue=brow[10]; }
       bookingRows.push(bObj);
     }
@@ -3790,7 +3804,7 @@ function getDashboardData(currentUser) { _apiGuard_();
     var khn=hotelMap[krow[1]];
     if (!khn || (allowed && !allowed[khn])) continue;
     var kIsCancelled = krow[4]==="ملغي";
-    var kIsOverCap = !!(krow[16]===true||krow[16]==="TRUE"||krow[16]==="true"||krow[16]===1);
+    var kIsOverCap = _isOverCap_(krow[16]);
     _kpiBump(byUser, krow[11], kIsCancelled, kIsOverCap);
     _kpiBump(byColl, collMap[krow[3]]||krow[3], kIsCancelled, kIsOverCap);
     _kpiBump(byHotel, khn, kIsCancelled, kIsOverCap);
@@ -3820,7 +3834,7 @@ function getDashboardData(currentUser) { _apiGuard_();
 function _bkDisplayStatusForRow_(brow) {
   var roomCount = parseFloat(brow[5])||0;
   if (roomCount < 0) return "شراء";
-  var overCapacity = !!(brow[16]===true||brow[16]==="TRUE"||brow[16]==="true"||brow[16]===1);
+  var overCapacity = _isOverCap_(brow[16]);
   if (overCapacity) return brow[17] || "مسجل اوفر";
   return brow[4];
 }
@@ -3842,6 +3856,8 @@ function addToWaitlist(w, currentUser) { _apiGuard_();
   if (!contractId) throw new Error("يرجى اختيار الفندق.");
   if (!clientName) throw new Error("اسم العميل مطلوب.");
   if (isNaN(checkIn.getTime())||isNaN(checkOut.getTime())||checkOut<=checkIn) throw new Error("تواريخ غير صحيحة.");
+  if (!(roomCount>0) || Math.floor(roomCount)!==roomCount || roomCount>5000) throw new Error("عدد الغرف يجب أن يكون رقماً صحيحاً أكبر من صفر."); // V3.65
+  if (salePrice<0) throw new Error("سعر البيع لا يُقبل سالباً.");
   var sheet=_getOrCreateSheet_("Waitlist_Master");
   var waitlistId=_getNextSequentialId_("W",4);
   sheet.appendRow([waitlistId, contractId, clientName, String(w.collectionAccountId||""), checkIn, checkOut,
@@ -4095,6 +4111,11 @@ function editWaitlistEntry(obj, currentUser) { _apiGuard_();
     var newCheckIn = new Date(obj.checkIn), newCheckOut = new Date(obj.checkOut);
     var newRoomCount = parseFloat(obj.roomCount)||0, newSalePrice = parseFloat(obj.salePrice)||0;
     var newNotes = String(obj.notes||"").trim();
+    // V3.65 — كان التعديل يكتب تواريخ غير صالحة/معكوسة وأعداداً صفرية بلا أي فحص
+    if (isNaN(newCheckIn.getTime())||isNaN(newCheckOut.getTime())||newCheckOut<=newCheckIn) throw new Error("تواريخ غير صحيحة: الخروج يجب أن يكون بعد الدخول.");
+    if (!(newRoomCount>0) || Math.floor(newRoomCount)!==newRoomCount) throw new Error("عدد الغرف يجب أن يكون رقماً صحيحاً أكبر من صفر.");
+    if (newSalePrice<0) throw new Error("سعر البيع لا يُقبل سالباً.");
+    if (!newClient) throw new Error("اسم العميل مطلوب.");
     if (newClient !== String(data[i][2]||"")) changes.push("العميل: "+data[i][2]+" ← "+newClient);
     if (newRoomCount !== (parseFloat(data[i][6])||0)) changes.push("الغرف: "+data[i][6]+" ← "+newRoomCount);
     if (newSalePrice !== (parseFloat(data[i][7])||0)) changes.push("السعر: "+data[i][7]+" ← "+newSalePrice);
@@ -4905,7 +4926,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.64";
+var APP_VERSION = "V3.65";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
