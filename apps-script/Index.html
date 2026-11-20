@@ -499,11 +499,18 @@ body.m-view.m-av-days .avail-zoom, body.m-view.m-av-days #avail_panel_toggle, bo
 :root[data-theme="dark"] .mav-sum div { background:var(--clr-card); }
 .mav-sum b { display:block; font-size:17px; font-weight:900; color:var(--clr-primary-dark); font-variant-numeric:tabular-nums; }
 .mav-sum span { font-size:11px; font-weight:700; color:var(--clr-muted); }
-/* ── النوافذ: نماذج وجداول بملء الشاشة، والتأكيدات الصغيرة تبقى حواراً ── */
-body.m-view .modal-overlay:has(.modal-box .form-group), body.m-view .modal-overlay:has(.modal-box table) { padding:0 !important; align-items:stretch !important; justify-content:stretch !important; }
-body.m-view .modal-box:has(.form-group), body.m-view .modal-box:has(table) { width:100vw !important; max-width:100vw !important; height:100vh; height:100dvh; max-height:100dvh !important; border-radius:0 !important; margin:0 !important; left:0 !important; top:0 !important; transform:none !important; display:flex; flex-direction:column; }
-body.m-view .modal-box:has(.form-group) .modal-body, body.m-view .modal-box:has(table) .modal-body { flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch; max-height:none !important; }
-body.m-view .modal-header { min-height:52px; font-size:15px; }
+/* ── النوافذ (V3.69): حوار بحجم محتواه لا بملء الشاشة — بعرض الشاشة ناقص هامش، وارتفاع حسب المحتوى حتى 90% منها.
+   النموذج مضغوط: الحقول القصيرة متجاورة في عمودين (دخول/خروج، غرف/سعر، عميل/حالة) بدل حقل لكل سطر. ── */
+body.m-view .modal-overlay { padding:10px !important; align-items:center !important; }
+body.m-view .modal-box { width:calc(100vw - 20px) !important; max-width:calc(100vw - 20px) !important; height:auto !important; max-height:90vh !important; max-height:90dvh !important; border-radius:16px !important; display:flex; flex-direction:column; }
+body.m-view .modal-body { flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:12px 14px !important; }
+body.m-view .modal-body .form-row { flex-direction:row !important; flex-wrap:nowrap; gap:8px !important; }
+body.m-view .modal-body .form-row > .form-group { flex:1 1 0; min-width:0; }
+body.m-view .modal-body .form-group { margin-bottom:9px; }
+body.m-view .modal-body input:not([type=checkbox]):not([type=radio]):not([type=hidden]), body.m-view .modal-body select { min-height:40px; }
+body.m-view .modal-body textarea { min-height:54px; }
+body.m-view .modal-body .hijri-hint { margin-top:2px; font-size:11px; }
+body.m-view .modal-header { min-height:46px; font-size:15px; }
 body.m-view .modal-footer { padding-bottom:calc(10px + env(safe-area-inset-bottom, 0px)); gap:8px; }
 body.m-view .modal-footer button { flex:1 1 0; min-height:46px; }
 body.m-view .modal-close-btn { min-width:44px; min-height:44px; font-size:22px; }
@@ -11121,7 +11128,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.68';
+var CLIENT_APP_VERSION = 'V3.69';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {
