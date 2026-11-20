@@ -2242,6 +2242,29 @@ function _ccBeforeCall_(fn, args) {
   if (!_CC_NONWRITE_RE.test(fn)) _ccInvalidateWrite_(fn);
 }
 var _inflightWrites = {};
+var _nqTimer = null;
+function _nqFlushSoon_() {
+  if (_nqTimer) clearTimeout(_nqTimer);
+  _nqTimer = setTimeout(function() {
+    _nqTimer = null;
+    try { if (sessionUser) google.script.run.withSuccessHandler(function() {}).withFailureHandler(function() {}).flushDeferredNotifications(sessionUser.username); } catch (e) {}
+  }, 250);
+}
+// V3.70 — تنبيه واحد غير حاجب عند صدور نسخة أحدث من المحمّلة في هذا التبويب (النشر صار متكرراً؛ التبويب القديم يبقى يعمل بكود قديم)
+var _updateBannerShown = false;
+function _checkServerVersion_(v) {
+  try {
+    if (!v || _updateBannerShown || typeof _BUILD_VERSION === 'undefined' || v === _BUILD_VERSION) return;
+    _updateBannerShown = true;
+    var d = document.createElement('div'); d.id = 'update_banner';
+    d.style.cssText = 'position:fixed;left:10px;right:10px;bottom:calc(72px + env(safe-area-inset-bottom,0px));z-index:1400;background:#0f2419;color:#f1ead2;border:1.5px solid #c9a84c;border-radius:12px;padding:10px 14px;font-size:13px;font-weight:700;display:flex;align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,.3);max-width:520px;margin:0 auto;';
+    var t = document.createElement('span'); t.style.flex = '1'; t.innerText = '🔄 صدرت نسخة جديدة من البرنامج (' + v + '). حدّث الصفحة ثم سجّل الدخول للحصول عليها.';
+    var x = document.createElement('button'); x.type = 'button'; x.innerText = '✕'; x.setAttribute('aria-label', 'إخفاء');
+    x.style.cssText = 'background:none;border:none;color:#c9a84c;font-size:18px;min-width:36px;min-height:36px;cursor:pointer;';
+    x.onclick = function() { d.remove(); };
+    d.appendChild(t); d.appendChild(x); document.body.appendChild(d);
+  } catch (e) {}
+}
 // V3.63 — الخادم يرفض النداء إن انتهت الجلسة (أو عُطِّل المستخدم أو تغيّرت كلمة مروره): عودة واحدة لشاشة الدخول برسالة واضحة
 var _authKicked = false;
 function _authFailCheck_(err) {
@@ -2280,6 +2303,8 @@ function _ccRecordHit_(fn) {
               ctx.userOk = fn;
               var next = Reflect.apply(val, obj, [function(result) {
                 if (ctx.writeKey) delete _inflightWrites[ctx.writeKey];
+                // V3.70 — الخادم أجّل إشعارات هذه الكتابة لما بعد الرد: نطلب إنشاءها بنداء خلفي لا ينتظره المستخدم
+                try { if (result && typeof result === 'object' && result._nq) { delete result._nq; _nqFlushSoon_(); } } catch(e) {}
                 try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, true, { reqBytes: ctx.reqBytes, result: result, bg: ctx.bg0 || document.hidden || ctx.epoch0 !== _perfHiddenEpoch }); } catch(e) {}
                 if (ctx.ccArgs) { try { if (ctx.ccGen === _cc.gen) _ccStore_(ctx.fnName, ctx.ccArgs, result); } catch(e) {} } // لا يُخزَّن رد قراءة سبقتها كتابة أثناء طيرانها
                 else if (ctx.fnName && ctx.fnName !== 'saveUserPreference' && !_CC_NONWRITE_RE.test(ctx.fnName)) { _ccInvalidateWrite_(ctx.fnName); _pfSchedule_(2500); } // قراءة جرت أثناء الكتابة قد تحمل بيانات قديمة؛ ثم تُجدَّد الشاشات بالخلفية
@@ -3646,6 +3671,7 @@ function _pollAppState(force) {
   google.script.run.withSuccessHandler(function(r) {
     _appPollInFlight = false;
     if (!r) return;
+    _checkServerVersion_(r.systemVersion); // V3.70
     if (wantHb) { _lastHeartbeatAt = now; if (r.activeUsers) _renderConnectedUsers(r.activeUsers); }
     if (r.notifications) {
       _lastNotifFullAt = now;
@@ -11128,7 +11154,8 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.69';
+var CLIENT_APP_VERSION = 'V3.70';
+var _BUILD_VERSION = CLIENT_APP_VERSION; // نسخة الكود المحمَّل في هذا التبويب (لا تتغير بعد التحميل)
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {

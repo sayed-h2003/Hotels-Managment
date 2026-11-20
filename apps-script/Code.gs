@@ -402,6 +402,37 @@ function _loginFails_(username) { try { return parseInt(CacheService.getScriptCa
 function _loginFailNote_(username) { try { CacheService.getScriptCache().put(_loginFailKey_(username), String(_loginFails_(username) + 1), _LOGIN_LOCK_SEC); } catch (e) {} }
 function _loginFailClear_(username) { try { CacheService.getScriptCache().remove(_loginFailKey_(username)); } catch (e) {} }
 
+// V3.70 — طابور الإشعارات المؤجَّلة: خاصية واحدة (مصفوفة JSON) تُقرأ وتُكتب داخل قفل الكتابة
+var __DEFER_NOTIFS = false, __DEFERRED_NOTIFS = [];
+var _NOTIF_QUEUE_PROP = "NOTIF_QUEUE_V1";
+function _notifQueuePush_(items) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var cur = []; try { cur = JSON.parse(props.getProperty(_NOTIF_QUEUE_PROP) || "[]") || []; } catch (e) { cur = []; }
+    var s = JSON.stringify(cur.concat(items));
+    if (s.length > 8000) return false; // قريب من حد الخاصية: تُنشأ فوراً بدل المخاطرة بضياعها
+    props.setProperty(_NOTIF_QUEUE_PROP, s);
+    return true;
+  } catch (e2) { return false; }
+}
+// يفرّغ الطابور: يسحبه داخل القفل (فلا يُنشأ إشعار مرتين من مفرّغين متزامنين) ثم ينشئ الإشعارات خارجه
+function _notifQueueDrain_() {
+  var items = [];
+  try {
+    var props = PropertiesService.getScriptProperties();
+    if (!props.getProperty(_NOTIF_QUEUE_PROP)) return 0;
+    _withLock_(function() {
+      try { items = JSON.parse(props.getProperty(_NOTIF_QUEUE_PROP) || "[]") || []; } catch (e) { items = []; }
+      props.deleteProperty(_NOTIF_QUEUE_PROP);
+    }, 15000);
+  } catch (e2) { return 0; }
+  items.forEach(function(a) { try { _createNotification_.apply(null, a); } catch (eN) { _logError_("[_notifQueueDrain_]", eN); } });
+  return items.length;
+}
+// تناديها الواجهة بالخلفية بعد كتابة أعادت العلامة _nq
+function flushDeferredNotifications(currentUser) { _apiGuard_();
+  return { created: _notifQueueDrain_() };
+}
 // نداءات لا تحتاج القفل: قراءات، والفحوصات الدورية والتصدير/الإرسال (طويلة وتقفل داخلياً ما يلزم)
 var _API_NOLOCK_RE = /^(get|poll|ping|flush|search|list|check|load|is|has|export|count|preview|validate|logout|mark|send|generate|test|globalSearch)/;
 // البوابة الوحيدة لنداءات المتصفح بعد الدخول
@@ -422,7 +453,24 @@ function api(token, fnName) {
   // كانت ~20 دالة كتابة (حذف دفعات/إيصالات، قائمة الانتظار، إدارة المستخدمين، الأدوار…) تقرأ رقم الصف ثم تكتب
   // بلا قفل، فعمليتان متزامنتان قد تكتبان على الصف الخطأ.
   var run = function() { return def.f.apply(null, args); };
-  try { return _API_NOLOCK_RE.test(String(fnName)) ? run() : _withLock_(run, 30000); }
+  // V3.70 — الإشعارات المتولّدة عن عملية الكتابة تُؤجَّل لما بعد الرد (كانت ~1.5 ث من زمن حفظ الحجز: فهرس التكرار + إضافة
+  // الصف + جدولة مشغّل تليجرام). تُحفظ في طابور، والواجهة تطلب تفريغه بنداء خلفي لا ينتظره المستخدم؛ ومشغّل الـ10 دقائق شبكة أمان.
+  var runDeferred = function() {
+    __DEFER_NOTIFS = true; __DEFERRED_NOTIFS = [];
+    var res;
+    try { res = run(); }
+    finally {
+      __DEFER_NOTIFS = false;
+      var q = __DEFERRED_NOTIFS; __DEFERRED_NOTIFS = [];
+      if (q.length) {
+        var plain = res && typeof res === "object" && !Array.isArray(res);
+        if (plain && _notifQueuePush_(q)) res._nq = 1;       // الواجهة تطلب التفريغ
+        else q.forEach(function(a) { try { _createNotification_.apply(null, a); } catch (eN) { _logError_("[api→notif]", eN); } }); // لا مكان للعلامة أو تعذّر الحفظ: فوراً كما كان
+      }
+    }
+    return res;
+  };
+  try { return _API_NOLOCK_RE.test(String(fnName)) ? run() : _withLock_(runDeferred, 30000); }
   finally { __TRUSTED_DEPTH--; __API_CTX = prev; if (String(fnName) === "logoutUser") _sessionKill_(ses.token); }
 }
 // V3.63 — القائمة البيضاء لبوابة api (مولَّدة من تواقيع الدوال؛ اختبار v363 يطابقها مع الكود والواجهة عند كل تغيير).
@@ -432,6 +480,7 @@ function _apiTable_() {
     getAllScreensList: { f: getAllScreensList, u: -1 },
     getUsernameFullNameMap: { f: getUsernameFullNameMap, u: -1 },
     getSetupGuideUrl: { f: getSetupGuideUrl, u: -1, a: 1 },
+    flushDeferredNotifications: { f: flushDeferredNotifications, u: 0 },
     logoutUser: { f: logoutUser, u: 0, n: 1 },
     pingHeartbeatAndGetActiveUsers: { f: pingHeartbeatAndGetActiveUsers, u: 0, n: 1 },
     saveUserPermissions: { f: saveUserPermissions, u: 2 },
@@ -2778,6 +2827,7 @@ function _bookingNotifDetails_(p) {
 }
 
 function _createNotification_(type, bookingId, hotelName, message, details, createdBy) {
+  if (__DEFER_NOTIFS) { __DEFERRED_NOTIFS.push([type, bookingId, hotelName, message, details, createdBy]); return; } // V3.70
   try {
   var generalEnabled = !_isNotifTypeDisabled_(type);
   var telegramEnabled = _isNotifTypeTelegramEnabled_(type);
@@ -4932,7 +4982,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.69";
+var APP_VERSION = "V3.70";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -5365,11 +5415,15 @@ function getAppBootstrap(username, fullName, opts) { _apiGuard_();
   // V3.58 — opts.lite: الإشعارات والمتصلون يأتون من نداء دوري متوازٍ (pollAppState) فلا تنتظرهما الشاشة الرئيسية
   if (!opts.lite) { out.notifications = getMyNotifications(username); out.activeUsers = pingHeartbeatAndGetActiveUsers(username, fullName); }
   // الإضافات اختيارية: فشل أي منها لا يُفشل الإقلاع (المتصفح يطلبها منفصلة عند غيابها)
+  _lap_("boot:usersBrandingProps");
   try { out.prefs = _getUserPrefsMap_(username); } catch(e1) {}
+  _lap_("boot:prefs");
   try { out.hotelNames = getDistinctHotelNames(username); } catch(e2) {}
   try { out.contractRanges = _getContractDateRangesMap_(username); } catch(e3) {}
+  _lap_("boot:hotelsRanges");
   try { out.collectionAccounts = _getCollectionAccountsCached_(); } catch(e4) {}
   try { out.contractMonths = getContractMonthsByHotel(username); } catch(e5) {}
+  _lap_("boot:collMonths");
   return out;
   } catch(e) { _logError_(_fn, e); throw e; }
 }
@@ -5378,7 +5432,10 @@ function _getBrandingVersion_() {
   var props = PropertiesService.getScriptProperties();
   var v = props.getProperty("COMPANY_BRANDING_VER");
   if (v) return v;
-  return "L" + (props.getProperty("COMPANY_LOGO_URI") || "").length + "-" + (props.getProperty("COMPANY_NAME_AR") || "").length + "-" + (props.getProperty("COMPANY_NAME_EN") || "").length;
+  // V3.70 — تُحسب مرة واحدة ثم تُحفظ: كانت كل إقلاع تقرأ خاصية الشعار كاملة (~100KB) لمجرد حساب طولها
+  v = "L" + (props.getProperty("COMPANY_LOGO_URI") || "").length + "-" + (props.getProperty("COMPANY_NAME_AR") || "").length + "-" + (props.getProperty("COMPANY_NAME_EN") || "").length;
+  try { props.setProperty("COMPANY_BRANDING_VER", v); } catch (e) {}
+  return v;
 }
 
 // تُجمّع بيانات فتح نموذج الحجز (تعاقدات نشطة + جهات تحصيل + أسماء عملاء + بيانات الحجز عند التعديل) — كانت 3-4 نداءات
@@ -6013,7 +6070,7 @@ function pollAppState(username, fullName, knownNotifVersion, wantHeartbeat, want
     var props = PropertiesService.getScriptProperties();
     // رقم النسخة يُقرأ قبل جلب القائمة: إشعار يُنشأ بينهما يغيّر الرقم فيُجلب في النداء التالي ولا يضيع
     var nv = props.getProperty(_NOTIF_VERSION_PROP) || "0";
-    var out = { availVersion: props.getProperty(_AVAIL_VERSION_PROP) || "0", notifVersion: nv };
+    var out = { availVersion: props.getProperty(_AVAIL_VERSION_PROP) || "0", notifVersion: nv, systemVersion: APP_VERSION }; // V3.70 — لتنبيه التبويبات المفتوحة بنسخة أقدم
     if (wantHeartbeat) out.activeUsers = pingHeartbeatAndGetActiveUsers(username, fullName);
     if (wantNotifs === true || (wantNotifs !== false && String(knownNotifVersion || "") !== nv)) out.notifications = getMyNotifications(username);
     return out;
@@ -6460,6 +6517,7 @@ function _flushPerfBuckets_() {
 }
 function _flushPerfBucketsWork_() {
   try { _sessionsPrune_(); } catch(e0) {}
+  try { _notifQueueDrain_(); } catch(eQ) { _logError_("[_flushPerfBuckets_→notifQueue]", eQ); } // V3.70 — شبكة أمان لإشعارات لم تطلب الواجهة تفريغها
   try { _flushPerfBucketsCore_(); } catch(e) { _logError_("[_flushPerfBuckets_]", e); }
   try { if (_tgQueuePending_()) _flushTelegramQueue_(); } catch(e2) { _logError_("[_flushPerfBuckets_→Telegram]", e2); } // V3.55 — شبكة أمان للرسائل العالقة
 }
