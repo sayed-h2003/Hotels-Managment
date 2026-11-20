@@ -320,6 +320,14 @@ body.sb-collapsed #top-header { margin-right:0; }
 
 /* ══ Mobile ══ */
 @media (max-width:860px) {
+  /* V3.61 — بانر تفعيل الإشعارات ضمن انسياب الصفحة على الموبايل (كان ثابتاً فوق الشريط العلوي فيحجب زر القائمة) */
+  #notif_permission_banner { position:static !important; }
+  /* V3.61 — الشريط العلوي على الموبايل: مربع البحث ينكمش بدل أن يغطي زر القائمة (كان بعرض ثابت 230px ولا ينكمش) */
+  #top-header { padding:0 8px; gap:6px; }
+  .th-start { flex-shrink:0; max-width:42%; }
+  .th-right { flex:1 1 auto; min-width:0; gap:6px; justify-content:flex-end; }
+  .gs-wrap { flex:1 1 auto; min-width:0; margin-inline:2px; }
+  .gs-input { width:100%; min-width:0; }
   #app-sidebar { transform:translateX(100%); width:var(--sb-w) !important; }
   #app-sidebar.sb-open { transform:translateX(0); }
   #Main_Application, #top-header { margin-right:0 !important; }
@@ -332,6 +340,8 @@ body.sb-collapsed #top-header { margin-right:0; }
 @media (max-width:600px) {
   .page-content { padding:10px; }
   .form-row { flex-direction:column; gap:0; }
+  /* V3.61 — زر إغلاق النوافذ بحجم لمس مناسب (كان 22×21 بكسل) */
+  .modal-close-btn { min-width:40px; min-height:40px; }
   /* V3.59 — شاشة الحجوزات على الموبايل: زر التسجيل بعرض كامل والكروت شبكة 2×2 (كانت عموداً طويلاً بجانب زر بارتفاعها) */
   #btn_add_booking { flex:1 1 100%; min-height:40px; }
   #bkStatCards { flex:1 1 100% !important; display:grid !important; grid-template-columns:repeat(2, 1fr); }
@@ -2072,6 +2082,7 @@ function _ccBeforeCall_(fn, args) {
   if (fn === 'saveUserPreference') { if (_ccIsMine_(args[0])) _ccSetPref_(args[1], args[2]); return; }
   if (!_CC_NONWRITE_RE.test(fn)) _ccInvalidateWrite_(fn);
 }
+var _inflightWrites = {};
 function _ccRecordHit_(fn) {
   try { _perfBuffer.push({ fn: 'cache:' + fn, ms: 0, ok: true, v: CLIENT_APP_VERSION }); } catch(e) {}
 }
@@ -2095,6 +2106,7 @@ function _ccRecordHit_(fn) {
             return function(fn) {
               ctx.userOk = fn;
               var next = Reflect.apply(val, obj, [function(result) {
+                if (ctx.writeKey) delete _inflightWrites[ctx.writeKey];
                 try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, true, { reqBytes: ctx.reqBytes, result: result, bg: ctx.bg0 || document.hidden || ctx.epoch0 !== _perfHiddenEpoch }); } catch(e) {}
                 if (ctx.ccArgs) { try { if (ctx.ccGen === _cc.gen) _ccStore_(ctx.fnName, ctx.ccArgs, result); } catch(e) {} } // لا يُخزَّن رد قراءة سبقتها كتابة أثناء طيرانها
                 else if (ctx.fnName && ctx.fnName !== 'saveUserPreference' && !_CC_NONWRITE_RE.test(ctx.fnName)) { _ccInvalidateWrite_(ctx.fnName); _pfSchedule_(2500); } // قراءة جرت أثناء الكتابة قد تحمل بيانات قديمة؛ ثم تُجدَّد الشاشات بالخلفية
@@ -2106,7 +2118,9 @@ function _ccRecordHit_(fn) {
           }
           if (prop === 'withFailureHandler') {
             return function(fn) {
+              ctx.hasFail = true;
               var next = Reflect.apply(val, obj, [function(err) {
+                if (ctx.writeKey) delete _inflightWrites[ctx.writeKey];
                 try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, false, { reqBytes: ctx.reqBytes, err: (err && err.message) || String(err), bg: ctx.bg0 || document.hidden || ctx.epoch0 !== _perfHiddenEpoch }); } catch(e) {}
                 if (ctx.swrJson != null) { _swrBusy_(-1); try { showToast('تعذّر تحديث البيانات — المعروض آخر نسخة محمّلة.', 'warning'); } catch(e) {} return; } // V3.57 — تبقى البيانات المعروضة بدل رسالة خطأ
                 if (typeof fn === 'function') fn(err);
@@ -2130,6 +2144,16 @@ function _ccRecordHit_(fn) {
               try { ctx.reqBytes = _PERF_EXCLUDE_FNS[ctx.fnName] ? 0 : _perfJsonLen_(args); } catch(e) { ctx.reqBytes = 0; }
               return Reflect.apply(val, obj, args);
             };
+            // V3.61 — حارس الإرسال المزدوج: نفس نداء الكتابة بنفس الوسائط وهو ما زال في الطريق يُتجاهل (ضغطتان على "حفظ"
+            // كانتا تسجّلان تعاقدين/دفعتين). يُرفع الحارس عند وصول الرد؛ وبلا معالج فشل يُرفع بعد 8 ث كحد أقصى.
+            if (typeof ctx.userOk === 'function' && ctx.fnName !== 'saveUserPreference' && !_CC_NONWRITE_RE.test(ctx.fnName)) {
+              var _wk = null; try { _wk = ctx.fnName + ':' + JSON.stringify(args); } catch(e) { _wk = null; }
+              if (_wk) {
+                var _fl = _inflightWrites[_wk];
+                if (_fl && Date.now() - _fl.at < _fl.ttl) { try { showToast('الطلب السابق ما زال قيد التنفيذ…', 'warning'); } catch(e) {} return; }
+                _inflightWrites[_wk] = { at: Date.now(), ttl: ctx.hasFail ? 30000 : 8000 }; ctx.writeKey = _wk;
+              }
+            }
             try { _ccBeforeCall_(ctx.fnName, args); } catch(e) {}
             // v3.53 — قراءة قابلة للتخزين: تُجاب محلياً إن وُجدت، أو تنتظر حزمة الإقلاع الجارية بدل نداء مكرر
             if (_ccCacheable_(ctx.fnName, args) && typeof ctx.userOk === 'function') {
@@ -4734,7 +4758,12 @@ function openAuditHistoryModal(recordId, recordType) {
 // يُغلق نافذة عرض سجل تعديلات سجل معيّن
 function closeAuditHistoryModal() { document.getElementById('AuditHistory_Modal').classList.remove('open'); }
 // دالة توافق قديمة: تُحوّل أي تنبيه قديم الطراز إلى Toast أنيق
-function showAppAlert(msg) { showToast(msg, msg.includes('تم')||msg.includes('نجاح')?'success':'error'); }
+// V3.61 — رسائل الخطأ التي تحوي "تم" ضمن "لم يتم…" كانت تظهر خضراء كنجاح؛ النفي/الخطأ يُفحص أولاً
+function showAppAlert(msg) {
+  msg = String(msg == null ? '' : msg);
+  var bad = /لم يتم|لم تتم|لا يمكن|تعذّر|تعذر|فشل|خطأ|غير مصرح|غير صحيح|غير موجود|مرفوض|يجب|يرجى/.test(msg);
+  showToast(msg, (!bad && (msg.indexOf('تم') > -1 || msg.indexOf('نجاح') > -1)) ? 'success' : 'error');
+}
 
 // ══════════════════════════════════════════════════════
 // نظام Toast للإشعارات (بديل alert/confirm/prompt)
@@ -5441,7 +5470,31 @@ function manualClearOverCapacityClick(bookingId) {
     '✅ تأكيد الحجز (فحص عادل)'
   );
 }
+// V3.61 — على الموبايل: لمس صف الحجز يفتح نافذة عرضه (عمود الإجراءات يبعد ~840 بكسل تمريراً أفقياً)
+var _bkPageRows = [];
+(function() {
+  var bind = function() {
+    var tb = document.getElementById('bookingsTableBody'); if (!tb || tb._rowTapBound) return;
+    tb._rowTapBound = true;
+    tb.addEventListener('click', function(e) {
+      if ((window.innerWidth || 1200) > 860) return;
+      if (e.target.closest('button, a, input, select, label')) return;
+      var tr = e.target.closest('tr'); if (!tr) return;
+      var b = _bkPageRows[tr.sectionRowIndex];
+      if (b && b.bookingId && typeof openBookingViewModal === 'function') openBookingViewModal(b.bookingId);
+    });
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind); else bind();
+})();
+// V3.61 — مفتاح Escape يغلق النافذة المنبثقة العليا (عبر زر إغلاقها نفسه، فيُنفَّذ منطق الإغلاق الخاص بكل نافذة)
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Escape') return;
+  var open = document.querySelectorAll('.modal-overlay.open'); if (!open.length) return;
+  var btn = open[open.length - 1].querySelector('.modal-close-btn');
+  if (btn) { e.preventDefault(); btn.click(); }
+});
 function renderBookingsTable(list) {
+  _bkPageRows = list || [];
   renderBookingsTableHead();
   var tbody = document.getElementById('bookingsTableBody');
   var canFin = _bkCanViewFinance();
@@ -5744,7 +5797,7 @@ function openBookingViewModal(bookingId) {
       +'<span class="status-badge '+statusCls+'" style="margin-top:6px;">'+escapeHtml(_bkStatusDisplay(b))+'</span>'+overBadge
       +'</div>'
       +'<div class="bv-section"><h4>👤 بيانات العميل والتحصيل</h4>'
-      +bvRow('اسم العميل',b.clientName)+bvRow('جهة التحصيل',b.collectionAccount)+'</div>'
+      +bvRow('اسم العميل',escapeHtml(b.clientName))+bvRow('جهة التحصيل',escapeHtml(b.collectionAccount))+'</div>' /* V3.61 — كانا يُدرجان بلا تهريب (XSS مخزَّن) */
       +'<div class="bv-section"><h4>🏨 بيانات الفندق والإقامة</h4>'
       +bvRow('الفندق',escapeHtml(b.hotelName))
       +bvRow('عدد الغرف',(b.roomCount<0?('<span style="color:#8a1f1f;font-weight:800;">'+b.roomCount+' (شراء غرف)</span>'):b.roomCount))
@@ -10696,7 +10749,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.60';
+var CLIENT_APP_VERSION = 'V3.61';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {
