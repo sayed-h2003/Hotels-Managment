@@ -1783,33 +1783,95 @@ function getBookings(currentUser) {
     canViewFinance = !!(perms.availability_finance && perms.availability_finance.canView);
   }
   var _tRows=Date.now(), _tRead=_tRows-_tStart;
+  var ctx={ hotelMap:hotelMap, collMap:collMap, labelMap:labelMap, tz:tz, canViewFinance:canViewFinance };
   var out=[];
   for (var i=1; i<data.length; i++) {
     var row=data[i]; if (!row[0]||row[14]===true) continue;
     var hn=hotelMap[row[1]]||"";
     if (allowed && !allowed[hn]) continue; // تصفية حسب الفنادق المسموح بها
-    var ci=row[6] instanceof Date?row[6]:new Date(row[6]);
-    var co=row[7] instanceof Date?row[7]:new Date(row[7]);
-    var ca=row[12] instanceof Date?row[12]:new Date(row[12]);
-    var obj={
-      bookingId:row[0], contractId:row[1],
-      hotelName:hotelMap[row[1]]||"(فندق محذوف)",
-      hotelContractLabel:labelMap[row[1]]||hotelMap[row[1]]||"(فندق محذوف)",
-      clientName:row[2], collectionAccount:collMap[row[3]]||row[3], collectionAccountId:row[3],
-      status:row[4], roomCount:row[5],
-      checkIn:_fmtDateMemo_(ci,tz,"dd/MM/yyyy"),  checkInHijri:formatHijriDisplay(ci),
-      checkOut:_fmtDateMemo_(co,tz,"dd/MM/yyyy"), checkOutHijri:formatHijriDisplay(co),
-      nights:row[8],
-      createdBy:row[11], createdAt:_fmtDateMemo_(ca,tz,"dd/MM/yyyy HH:mm"),
-      lastEditSummary:row[13]||"",
-      notes:row[15]||"", overCapacity:!!(row[16]===true||row[16]==="TRUE"||row[16]==="true"||row[16]===1), overCapacityType:row[17]||""
-    };
-    if (canViewFinance) { obj.salePrice=row[9]; obj.bookingValue=row[10]; }
-    out.push(obj);
+    out.push(_bookingObj_(row, ctx));
   }
   // v3.53 — تفصيل زمني يظهر بلوحة الأداء: قراءة الشيت/الخرائط مقابل بناء الصفوف
   try { _recordPerfSample_("~getBookings:read", _tRead, true); _recordPerfSample_("~getBookings:rows", Date.now()-_tRows, true); } catch(eT) {}
   out.reverse(); return out;
+  } catch(e) { _logError_(_fn, e); throw e; }
+}
+
+// V3.58 — بناء كائن حجز واحد للعرض (مشترك بين قائمة الحجوزات ونتيجة الحفظ، فيُحدَّث صف المتصفح فوراً بنفس الشكل)
+// أُضيفت: تواريخ ISO (لفتح نموذج التعديل من بيانات المتصفح) وتاريخ السداد (كان عمود "تاريخ السداد" بالجدول فارغاً دائماً)
+function _bookingObj_(row, ctx) {
+  var tz = ctx.tz, hotelMap = ctx.hotelMap, collMap = ctx.collMap, labelMap = ctx.labelMap;
+  var ci=row[6] instanceof Date?row[6]:new Date(row[6]);
+  var co=row[7] instanceof Date?row[7]:new Date(row[7]);
+  var ca=row[12] instanceof Date?row[12]:new Date(row[12]);
+  var pd = (row[21] !== "" && row[21] != null) ? (row[21] instanceof Date ? row[21] : new Date(row[21])) : null;
+  if (pd && isNaN(pd.getTime())) pd = null;
+  var obj={
+    bookingId:row[0], contractId:row[1],
+    hotelName:hotelMap[row[1]]||"(فندق محذوف)",
+    hotelContractLabel:labelMap[row[1]]||hotelMap[row[1]]||"(فندق محذوف)",
+    clientName:row[2], collectionAccount:collMap[row[3]]||row[3], collectionAccountId:row[3],
+    status:row[4], roomCount:row[5],
+    checkIn:_fmtDateMemo_(ci,tz,"dd/MM/yyyy"),  checkInHijri:formatHijriDisplay(ci),
+    checkOut:_fmtDateMemo_(co,tz,"dd/MM/yyyy"), checkOutHijri:formatHijriDisplay(co),
+    checkInIso:_fmtDateMemo_(ci,tz,"yyyy-MM-dd"), checkOutIso:_fmtDateMemo_(co,tz,"yyyy-MM-dd"),
+    paymentDate: pd ? _fmtDateMemo_(pd,tz,"dd/MM/yyyy") : "", paymentDateIso: pd ? _fmtDateMemo_(pd,tz,"yyyy-MM-dd") : "",
+    nights:row[8],
+    createdBy:row[11], createdAt:_fmtDateMemo_(ca,tz,"dd/MM/yyyy HH:mm"),
+    lastEditSummary:row[13]||"",
+    notes:row[15]||"", overCapacity:!!(row[16]===true||row[16]==="TRUE"||row[16]==="true"||row[16]===1), overCapacityType:row[17]||""
+  };
+  if (ctx.canViewFinance) { obj.salePrice=row[9]; obj.bookingValue=row[10]; }
+  return obj;
+}
+function _canViewFinance_(currentUser) {
+  var role=_getUserRole_(currentUser);
+  if (role==="Admin") return true;
+  var perms=getUserPermissions(currentUser, role);
+  return !!(perms.availability_finance && perms.availability_finance.canView);
+}
+
+// V3.58 — حزمة تحميل مسبق: كل بيانات الشاشات التي يملك المستخدم صلاحيتها في نداء واحد (رحلة ذهاب وإياب واحدة
+// بدل نداء لكل شاشة، وكل الأجزاء تتشارك نفس قراءات الشيتات المحفوظة داخل التنفيذ). كل جزء مستقل: فشل جزء (صلاحية مثلاً)
+// لا يُفشل البقية. المتصفح يخزّن كل جزء تحت نفس مفتاح نداء الشاشة الأصلي، ففتح الشاشة يُجاب من الكاش فوراً.
+function getPrefetchBundle(currentUser, req) {
+  var _fn="[getPrefetchBundle]";
+  req = req || {};
+  var out = {};
+  var part = function(name, f) { try { out[name] = f(); } catch (e) { out[name + "_error"] = String(e && e.message || e).slice(0, 200); } };
+  if (req.bookingsAll) part("bookingsAll", function() { return getBookingsAll(currentUser); });
+  if (req.bookingModal) part("bookingModal", function() { return getBookingModalBootstrap(currentUser, null); });
+  if (req.dashboard) part("dashboard", function() { return getDashboardData(currentUser); });
+  if (req.contracts) part("contracts", function() { return getContracts(currentUser); });
+  if (req.waitlist) part("waitlist", function() { return getWaitlist(currentUser); });
+  if (req.accounts) part("accounts", function() { var a = req.accounts; return getAccountsSummary(a.partyType, currentUser, a.hotel || "", a.fromIso || "", a.toIso || ""); });
+  if (req.availability && req.availability.length) {
+    out.availability = [];
+    req.availability.slice(0, 12).forEach(function(r) {
+      try { out.availability.push({ hotel: r.hotel, year: r.year, month: r.month, data: getAvailabilityData(r.hotel, r.year, r.month, currentUser) }); } catch (e) {}
+    });
+  }
+  return out;
+}
+
+// V3.58 — الصف المحفوظ بنفس شكل قائمة الحجوزات (يُحدِّث المتصفح قائمته فوراً بلا إعادة تحميل)؛ فشله لا يُفشل الحفظ
+function _savedBookingObj_(rowArr, currentUser) {
+  try {
+    return _bookingObj_(rowArr, { hotelMap:_buildContractHotelMap_(), collMap:_buildCollectionAccountMap_(), labelMap:_buildContractLabelMap_(), tz:_tz_(), canViewFinance:_canViewFinance_(currentUser) });
+  } catch (e) { return null; }
+}
+
+// V3.58 — كل حجوزات المستخدم (مع شريط الأوفر) دفعة واحدة: الفلترة والترتيب والترقيم تتم في المتصفح فوراً بدل نداء
+// خادم (~3 ث) لكل تغيير فلتر/صفحة. فوق الحد يُرجع tooLarge فتعود الواجهة للترقيم من الخادم (getBookingsPage).
+var _BOOKINGS_LOCAL_MAX = 4000;
+function getBookingsAll(currentUser) {
+  var _fn="[getBookingsAll]";
+  try {
+  var full = getBookings(currentUser);
+  var out = { total: full.length, tooLarge: full.length > _BOOKINGS_LOCAL_MAX };
+  if (!out.tooLarge) out.rows = full;
+  try { out.overcap = getOverCapacityNotifications(currentUser); } catch(eO) {}
+  return out;
   } catch(e) { _logError_(_fn, e); throw e; }
 }
 
@@ -1827,7 +1889,9 @@ function getBookingForEdit(bookingId) {
       return { bookingId:row[0],contractId:row[1],clientName:row[2],collectionAccountId:row[3],
         status:row[4],roomCount:row[5],
         checkIn:_fmtDate_(ci,tz,"yyyy-MM-dd"),
-        checkOut:_fmtDate_(co,tz,"yyyy-MM-dd"),salePrice:row[9], notes:row[15]||"" };
+        checkOut:_fmtDate_(co,tz,"yyyy-MM-dd"),salePrice:row[9], notes:row[15]||"",
+        // V3.58 — إصلاح فقد بيانات: النموذج لم يكن يستلم تاريخ السداد، فكان أي تعديل يحفظه فارغاً ويمسح المسجَّل
+        paymentDateIso: (row[21] !== "" && row[21] != null && !isNaN(new Date(row[21]).getTime())) ? _fmtDate_(row[21] instanceof Date ? row[21] : new Date(row[21]), tz, "yyyy-MM-dd") : "" };
     }
   }
   throw new Error("لم يتم العثور على الحجز.");
@@ -2028,7 +2092,9 @@ function saveBooking(b, currentUser) {
           var _oldCo = oldRow[7] instanceof Date ? oldRow[7] : new Date(oldRow[7]);
           _invalidateAvailCacheForRange_(_oldHotelName, _oldCi, _oldCo);
         } catch(cacheErr) {}
-        return {success:true,bookingId:b.editId, overCapacity: overCapacity, overCapacityType: overCapacityType};
+        var _savedRow = oldRow.slice(); for (var _k = 0; _k < 17; _k++) _savedRow[_k + 1] = newVals[_k];
+        if (b.paymentDate !== undefined) _savedRow[21] = paymentDate || "";
+        return {success:true,bookingId:b.editId, overCapacity: overCapacity, overCapacityType: overCapacityType, row: _savedBookingObj_(_savedRow, currentUser)};
       }
     }
     throw new Error("لم يتم العثور على الحجز المطلوب تعديله.");
@@ -2036,7 +2102,7 @@ function saveBooking(b, currentUser) {
 var bookingId=_getNextSequentialId_("D",3);
     sheet.appendRow([bookingId,contractId,clientName,collectionAccountId,status,roomCount,
       checkIn,checkOut,nights,salePrice,bookingValue,currentUser,now,"",false,
-      notes,overCapacity,overCapacityType,"","",paymentDate||""]);
+      notes,overCapacity,overCapacityType,"","","",paymentDate||""]); // V3.58 — إصلاح: تاريخ السداد في عمود Booking_Payment_Date (22) لا Client_Option_Date (21)
     logAudit("الحجوزات","إنشاء حجز",bookingId,"","","",
       "حجز جديد: "+clientName+" — "+(hotelMap[contractId]||contractId)+" — "+roomCount+" غرفة"+(overCapacity?" (مسجل اوفر)":""),currentUser);
     // v3.29 — تنبيه واحد فقط لكل حجز جديد: إن كان (مسجل اوفر) يُرسَل تنبيه الأوفر وحده، وإلا تنبيه الحجز الجديد العادي.
@@ -2060,7 +2126,8 @@ var bookingId=_getNextSequentialId_("D",3);
     }
     // v3.10 — نفس إصلاح إبطال كاش شارت التوافر (راجع التعليق بمسار التعديل أعلاه)
     _bumpAvailabilityVersion_(hotelMap[contractId]||contractId, checkIn, checkOut);
-    return {success:true,bookingId:bookingId, overCapacity: overCapacity, overCapacityType: overCapacityType};
+    return {success:true,bookingId:bookingId, overCapacity: overCapacity, overCapacityType: overCapacityType,
+      row: _savedBookingObj_([bookingId,contractId,clientName,collectionAccountId,status,roomCount,checkIn,checkOut,nights,salePrice,bookingValue,currentUser,now,"",false,notes,overCapacity,overCapacityType,"","","",paymentDate||""], currentUser)};
   }
 
   });
@@ -4461,7 +4528,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.57";
+var APP_VERSION = "V3.58";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -4859,10 +4926,10 @@ function getAppBootstrap(username, fullName, opts) {
     brandingVer: brandingVer,
     sessionTimeoutMinutes: getSessionTimeoutMinutes(),
     notifVersion: props.getProperty(_NOTIF_VERSION_PROP) || "0",
-    availVersion: props.getProperty(_AVAIL_VERSION_PROP) || "0",
-    notifications: getMyNotifications(username),
-    activeUsers: pingHeartbeatAndGetActiveUsers(username, fullName)
+    availVersion: props.getProperty(_AVAIL_VERSION_PROP) || "0"
   };
+  // V3.58 — opts.lite: الإشعارات والمتصلون يأتون من نداء دوري متوازٍ (pollAppState) فلا تنتظرهما الشاشة الرئيسية
+  if (!opts.lite) { out.notifications = getMyNotifications(username); out.activeUsers = pingHeartbeatAndGetActiveUsers(username, fullName); }
   // الإضافات اختيارية: فشل أي منها لا يُفشل الإقلاع (المتصفح يطلبها منفصلة عند غيابها)
   try { out.prefs = _getUserPrefsMap_(username); } catch(e1) {}
   try { out.hotelNames = getDistinctHotelNames(username); } catch(e2) {}
@@ -6091,6 +6158,12 @@ function _perfDiag_() {
     d.sheetRows = {};
     sheets.forEach(function(s) { cells += s.getMaxRows() * s.getMaxColumns(); try { d.sheetRows[s.getName()] = s.getLastRow(); } catch (eR) {} });
     d.sheetCount = sheets.length; d.totalCells = cells; d.cellLimit = 10000000;
+    // V3.58 — حجوزات جديدة سابقة كُتب تاريخ سدادها خطأً في عمود Client_Option_Date (21) بلا نوع تأكيد: عددها للتشخيص فقط
+    try {
+      var bd = _getSheetValues_("Bookings_Master"), mis = 0;
+      for (var bi = 1; bi < bd.length; bi++) { var br = bd[bi]; if (br[0] && br[14] !== true && br[20] !== "" && br[20] != null && !br[18] && (br[21] === "" || br[21] == null)) mis++; }
+      d.misplacedPaymentDates = mis;
+    } catch (eM) {}
     ["Perf", "PerfSlow", "PerfLog"].forEach(function(n) {
       var s = ss.getSheetByName(n);
       d[n] = s ? { lastRow: s.getLastRow(), maxRows: s.getMaxRows(), maxCols: s.getMaxColumns() } : null;

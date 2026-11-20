@@ -1813,15 +1813,18 @@ function _recordBootReady_() {
 // ═══════════════════════════════════════════════════════════════
 var _CC_TTL_MS = 10 * 60 * 1000;
 var _CC_DATA_FNS = { getDistinctHotelNames: 1, getCollectionAccounts: 1, getContractDateRange: 1, getContractMonthsByHotel: 1, getBookingsPage: 1,
+  getBookingsAll: 1, getBookingModalBootstrap: 1,
   getAvailabilityData: 1, getAvailabilityDataMulti: 1, getDashboardData: 1, getWaitlist: 1, getContracts: 1, getAccountsSummary: 1 };
 // V3.54 — صفحات الحجوزات تُحفظ دقيقتين فقط (الرجوع لفلتر/صفحة سابقة فوري)؛ تُبطلها أي كتابة أو تغيير من مستخدم آخر
 // V3.57 — بيانات الشاشات: مدة "طازجة" قصيرة تُجاب فيها بلا خادم، وبعدها حتى 30 دقيقة "قديمة قابلة للعرض"
-var _CC_TTL_BY_FN = { getBookingsPage: 2 * 60 * 1000, getAvailabilityData: 60 * 1000, getAvailabilityDataMulti: 60 * 1000,
+var _CC_TTL_BY_FN = { getBookingsPage: 2 * 60 * 1000, getBookingsAll: 2 * 60 * 1000, getAvailabilityData: 60 * 1000, getAvailabilityDataMulti: 60 * 1000,
   getDashboardData: 20 * 1000, getWaitlist: 20 * 1000, getContracts: 20 * 1000, getAccountsSummary: 20 * 1000 };
 // V3.57 — "اعرض فوراً ثم حدّث" لبيانات الشاشات: عند فتح شاشة سبق عرضها تُرسم آخر بيانات فوراً، ويُجلب الجديد
 // بالخلفية، ويُعاد الرسم فقط إن اختلف. (معالجات هذه الدوال ترسم الجدول/الشبكة فقط، فاستدعاؤها مرتين آمن)
-var _CC_SWR_FNS = { getBookingsPage: 1, getAvailabilityData: 1, getAvailabilityDataMulti: 1, getDashboardData: 1, getWaitlist: 1, getContracts: 1, getAccountsSummary: 1 };
+var _CC_SWR_FNS = { getBookingsPage: 1, getBookingsAll: 1, getAvailabilityData: 1, getAvailabilityDataMulti: 1, getDashboardData: 1, getWaitlist: 1, getContracts: 1, getAccountsSummary: 1 };
 var _CC_STALE_MAX_MS = 30 * 60 * 1000;
+// V3.58 — فقط ما تحمله حزمة الإقلاع ينتظرها؛ بيانات الشاشات (حجوزات/توافر…) لا تنتظر حزمة لا تحملها أصلاً
+var _CC_BOOT_FNS = { getUserPreference: 1, getDistinctHotelNames: 1, getCollectionAccounts: 1, getContractDateRange: 1, getContractMonthsByHotel: 1 };
 // نداءات لا تكتب شيئاً — كل ما عداها كتابة
 var _CC_NONWRITE_RE = /^(get|poll|ping|flush|search|list|check|load|is|has|export|count|preview|validate|login|logout|mark|send)/;
 // V3.54 — كتابات قد تغيّر البيانات المرجعية (فنادق/تعاقدات/جهات تحصيل/صلاحيات). كتابة غيرها (مثل حفظ حجز) تُبطل
@@ -1832,7 +1835,27 @@ function _ccKey_(fn, args) { try { return fn + ':' + JSON.stringify(args); } cat
 function _ccClone_(v) { try { return (v === null || typeof v !== 'object') ? v : JSON.parse(JSON.stringify(v)); } catch(e) { return v; } }
 function _ccPrefsLsKey_() { return 'hotelapp_prefs_' + ((typeof sessionUser !== 'undefined' && sessionUser && sessionUser.username) || ''); }
 function _ccIsMine_(u) { return typeof sessionUser !== 'undefined' && sessionUser && u === sessionUser.username; }
-function _ccCacheable_(fn) { return fn === 'getUserPreference' || !!_CC_DATA_FNS[fn]; }
+function _ccCacheable_(fn, args) {
+  if (fn === 'getBookingModalBootstrap' && args && args[1]) return false; // مع رقم حجز للتعديل: دائماً من الخادم
+  return fn === 'getUserPreference' || !!_CC_DATA_FNS[fn];
+}
+// V3.58 — يجعل مُدخلاً "منتهي الطزاجة" (يُعرض ثم يُحدَّث عند الطلب التالي)
+function _ccMarkStale_(fn, args) {
+  var key = _ccKey_(fn, args), e = key && _cc.data[key];
+  if (e) e.at = Math.min(e.at, Date.now() - (_CC_TTL_BY_FN[fn] || _CC_TTL_MS) - 1);
+}
+// V3.58 — بعد كتابة: بيانات نافذة الحجز (قوائم الفنادق/الجهات/أسماء العملاء) تُعاد جلبها صامتاً بالخلفية فتبقى النافذة فورية
+var _ccModalRefetchTimer = null;
+function _ccRefetchModalSoon_() {
+  try {
+    if (!sessionUser || !(_permCan('bookings', 'canAdd') || _permCan('bookings', 'canEdit'))) return;
+    if (_ccModalRefetchTimer) clearTimeout(_ccModalRefetchTimer);
+    _ccModalRefetchTimer = setTimeout(function() {
+      _ccModalRefetchTimer = null;
+      if (sessionUser) google.script.run.withSuccessHandler(function() {}).withFailureHandler(function() {}).getBookingModalBootstrap(sessionUser.username, null);
+    }, 1500);
+  } catch (e) {}
+}
 function _ccLookup_(fn, args) {
   if (fn === 'getUserPreference') {
     if (!_ccIsMine_(args[0])) return null;
@@ -1877,8 +1900,10 @@ function _ccInvalidateData_() { _cc.gen++; _cc.data = {}; }
 // كتابة من المستخدم نفسه: بيانات الشاشات تُحذف (لا تُعرض نسخة قبل حفظه)، والمرجعية فقط إن مسّتها الكتابة
 function _ccInvalidateWrite_(fn) {
   _cc.gen++;
-  if (_CC_REFDATA_WRITE_RE.test(fn)) { _cc.data = {}; return; }
-  Object.keys(_cc.data).forEach(function(k) { if (_CC_SWR_FNS[k.slice(0, k.indexOf(':'))]) delete _cc.data[k]; });
+  var hadModal = Object.keys(_cc.data).some(function(k) { return k.indexOf('getBookingModalBootstrap:') === 0; });
+  if (_CC_REFDATA_WRITE_RE.test(fn)) _cc.data = {};
+  else Object.keys(_cc.data).forEach(function(k) { var f = k.slice(0, k.indexOf(':')); if (_CC_SWR_FNS[f] || f === 'getBookingModalBootstrap') delete _cc.data[k]; });
+  if (hadModal) _ccRefetchModalSoon_();
 }
 function _ccReleaseWaiters_() { var w = _cc.waiters; _cc.waiters = []; w.forEach(function(f) { try { f(); } catch(e) {} }); }
 function _ccReset_() { _cc.data = {}; _cc.prefs = {}; _cc.prefsAuth = false; _cc.bootPending = false; _ccReleaseWaiters_(); }
@@ -1947,7 +1972,7 @@ function _ccRecordHit_(fn) {
             };
             try { _ccBeforeCall_(ctx.fnName, args); } catch(e) {}
             // v3.53 — قراءة قابلة للتخزين: تُجاب محلياً إن وُجدت، أو تنتظر حزمة الإقلاع الجارية بدل نداء مكرر
-            if (_ccCacheable_(ctx.fnName) && typeof ctx.userOk === 'function') {
+            if (_ccCacheable_(ctx.fnName, args) && typeof ctx.userOk === 'function') {
               ctx.ccArgs = args;
               var serve = function(h) {
                 _ccRecordHit_(ctx.fnName);
@@ -1956,7 +1981,7 @@ function _ccRecordHit_(fn) {
               };
               var h = null; try { h = _ccLookup_(ctx.fnName, args); } catch(e) {}
               if (h) { serve(h); return; }
-              if (_cc.bootPending) {
+              if (_cc.bootPending && _CC_BOOT_FNS[ctx.fnName]) {
                 _cc.waiters.push(function() { var h2 = null; try { h2 = _ccLookup_(ctx.fnName, args); } catch(e) {} if (h2) serve(h2); else { ctx.ccGen = _cc.gen; realCall(); } });
                 return;
               }
@@ -3201,6 +3226,10 @@ function _handleAvailVersion(v) {
     if (v !== _lastAvailVersion) {
       _lastAvailVersion = v;
       _ccOnRemoteChange_(); // تغيير من مستخدم آخر (حجز/تعاقد): المرجعية تُحذف، وبيانات الشاشات تُعرض ثم تُحدَّث (V3.57)
+      try { // V3.58 — شاشة الحجوزات المفتوحة تُطابَق صامتاً (تظهر تعديلات الآخرين بلا إعادة فتح)
+        var _bkScr = document.getElementById('Bookings_Screen');
+        if (_bkScr && _bkScr.classList.contains('active-screen') && _bkAllMode === 'local') _bkReloadData_();
+      } catch(e) {}
       invalidateScreenCache('Availability_Screen');
       var screenEl = document.getElementById('Availability_Screen');
       var hotelVal = document.getElementById('avail_hotel_select') ? document.getElementById('avail_hotel_select').value : '';
@@ -3505,7 +3534,9 @@ function _applyAppBootstrap() {
   // هوية الشركة (الشعار أغلب حجم الحزمة): نرسل نسخة المحفوظ محلياً، والخادم يحذف الشعار إن لم يتغيّر
   var cachedBranding = null;
   try { var rawB = localStorage.getItem('hotelapp_branding'); if (rawB) cachedBranding = JSON.parse(rawB); } catch(e) { cachedBranding = null; }
-  var bootOpts = { brandingVer: (cachedBranding && cachedBranding.ver && cachedBranding.data) ? cachedBranding.ver : '' };
+  var bootOpts = { brandingVer: (cachedBranding && cachedBranding.ver && cachedBranding.data) ? cachedBranding.ver : '', lite: true };
+  // V3.58 — الإشعارات والمتصلون في نداء دوري موازٍ (كانا داخل الحزمة فتنتظرهما الشاشة الرئيسية)
+  setTimeout(function() { try { _pollAppState(true); } catch(e) {} }, 0);
   google.script.run.withSuccessHandler(function(boot) {
     boot = boot || {};
     try {
@@ -3515,7 +3546,6 @@ function _applyAppBootstrap() {
       if (boot.collectionAccounts) _ccStore_('getCollectionAccounts', [], boot.collectionAccounts);
       if (boot.contractMonths) _ccStore_('getContractMonthsByHotel', [u], boot.contractMonths);
       if (boot.contractRanges) Object.keys(boot.contractRanges).forEach(function(h) { _ccStore_('getContractDateRange', [h, u], boot.contractRanges[h]); });
-      if (boot.notifVersion != null) _knownNotifVersion = boot.notifVersion; // أول نداء دوري لا يعيد تحميل القائمة
       if (boot.availVersion != null && _lastAvailVersion === null) _lastAvailVersion = boot.availVersion;
     } catch(e) {}
     _ccBootDone();
@@ -3528,10 +3558,10 @@ function _applyAppBootstrap() {
     _companyBranding = br || { nameAr:'', nameEn:'', logoUri:'' };
     _SESSION_TIMEOUT_MS = (parseInt(boot.sessionTimeoutMinutes,10)||15) * 60 * 1000;
     _resetSessionTimer();
-    _myNotifications = boot.notifications || [];
-    renderNotifBell();
-    _pushFreshNotifsToBrowser(_myNotifications); // v3.0 — إشعارات متصفح فورية
-    _renderConnectedUsers(boot.activeUsers || []);
+    if (boot.notifications) { // الحزمة الكاملة (غير lite) فقط
+      _myNotifications = boot.notifications; renderNotifBell(); _pushFreshNotifsToBrowser(_myNotifications);
+    }
+    if (boot.activeUsers) _renderConnectedUsers(boot.activeUsers);
     _applyServerVersion(boot.systemVersion); // v3.0 — رقم نسخة من الخادم
     _recordBootReady_(); // v3.44 — نهاية قياس زمن الإقلاع
   }).withFailureHandler(function() {
@@ -4754,32 +4784,70 @@ function _bkApplyDefaultFilters_() {
 // V3.57 — تحميل مسبق صامت لشاشتي الحجوزات والتوافر بعد الإقلاع، بنفس وسائط فتح الشاشة تماماً، فيكون أول فتح لهما
 // فورياً من الكاش. لا يُرسَم شيء ولا يُغيَّر أي اختيار ظاهر سوى تطبيق فلتر "من = أمس" الافتراضي الذي كانت الشاشة ستطبّقه.
 function _prefetchMainScreens_() {
+  // V3.58 — حزمة واحدة (getPrefetchBundle) لكل الشاشات المسموحة بدل نداء لكل شاشة؛ كل جزء يُخزَّن تحت مفتاح نداء
+  // الشاشة الأصلي، فيكون أول فتح لأي شاشة فورياً. يُتخطى ما هو طازج بالكاش (مثل الشاشة الرئيسية التي حُمّلت للتو).
   if (!sessionUser) return;
   var perms = sessionUser.permissions || {}, admin = String(sessionUser.role || '').toLowerCase() === 'admin';
   var can = function(id) { return admin || !!(perms[id] && perms[id].canView); };
-  var noop = function() {}, u = sessionUser.username;
+  var u = sessionUser.username, req = {}, n = 0;
+  var fresh = function(fn, args) { try { return !!_ccLookup_(fn, args); } catch(e) { return false; } };
   try {
     if (can('bookings')) {
-      _bkApplyDefaultFilters_();
-      var f = _bkBuildServerFilters(); f.includeOvercap = true;
-      google.script.run.withSuccessHandler(noop).withFailureHandler(noop).getBookingsPage(f, 1, _bkPageSize, u);
+      if (!fresh('getBookingsAll', [u])) { req.bookingsAll = true; n++; }
+      if ((admin || _permCan('bookings', 'canAdd') || _permCan('bookings', 'canEdit')) && !fresh('getBookingModalBootstrap', [u, null])) { req.bookingModal = true; n++; }
     }
+    if (can('dashboard') && !fresh('getDashboardData', [u])) { req.dashboard = true; n++; }
+    if (can('contracts') && !fresh('getContracts', [u])) { req.contracts = true; n++; }
+    if (can('waitlist') && !fresh('getWaitlist', [u])) { req.waitlist = true; n++; }
+    if (can('accounts') && !fresh('getAccountsSummary', ['collection', u, '', '', ''])) { req.accounts = { partyType: 'collection', hotel: '', fromIso: '', toIso: '' }; n++; }
+    if (can('availability')) { var av = _avPrefetchTargets_(null); if (av.length) { req.availability = av; n++; } }
   } catch(e) {}
-  try {
-    if (can('availability')) {
-      var hn = _ccLookup_('getDistinctHotelNames', [u]);
-      var hotel = hn && hn.value && hn.value[0];
-      if (hotel) {
-        var rg = _ccLookup_('getContractDateRange', [hotel, u]), range = rg && rg.value;
-        var now = new Date(), y = now.getFullYear(), m = now.getMonth() + 1;
-        if (range) { // نفس اختيار onAvailHotelChange: الشهر الحالي إن كان ضمن التعاقد وإلا أول شهر
-          var inRange = (y > range.minYear || (y === range.minYear && m >= range.minMonth)) && (y < range.maxYear || (y === range.maxYear && m <= range.maxMonth));
-          if (!inRange) { y = range.minYear; m = range.minMonth; }
-        }
-        google.script.run.withSuccessHandler(noop).withFailureHandler(noop).getAvailabilityData(hotel, y, m, u);
-      }
-    }
-  } catch(e) {}
+  if (n) _runPrefetchBundle_(req);
+}
+// يرسل الحزمة ويخزّن كل جزء بمفتاح نداء الشاشة؛ لا يُخزَّن شيء إن حدثت كتابة أثناء الطيران (عدّاد الأجيال)
+function _runPrefetchBundle_(req) {
+  var u = sessionUser.username, gen0 = _cc.gen;
+  google.script.run.withSuccessHandler(function(b) {
+    if (!b || !sessionUser || sessionUser.username !== u || _cc.gen !== gen0) return;
+    if (b.bookingsAll) _ccStore_('getBookingsAll', [u], b.bookingsAll);
+    if (b.bookingModal) _ccStore_('getBookingModalBootstrap', [u, null], b.bookingModal);
+    if (b.dashboard) _ccStore_('getDashboardData', [u], b.dashboard);
+    if (b.contracts) _ccStore_('getContracts', [u], b.contracts);
+    if (b.waitlist) _ccStore_('getWaitlist', [u], b.waitlist);
+    if (b.accounts && req.accounts) { var a = req.accounts; _ccStore_('getAccountsSummary', [a.partyType, u, a.hotel, a.fromIso, a.toIso], b.accounts); }
+    (b.availability || []).forEach(function(x) { if (x && x.data) _ccStore_('getAvailabilityData', [x.hotel, x.year, x.month, u], x.data); });
+  }).withFailureHandler(function() {}).getPrefetchBundle(u, req);
+}
+// أهداف التوافر: للفندق المعروض (أو الأول) الشهر الحالي ± شهر و+شهرين؛ ولبقية الفنادق الشهر الحالي — ضمن نطاق التعاقد، وغير الطازج فقط
+function _avPrefetchTargets_(focus) {
+  var u = sessionUser.username, out = [];
+  var hn = _ccLookup_('getDistinctHotelNames', [u]), names = (hn && hn.value) || [];
+  if (!names.length) return out;
+  var inRange = function(r, y, m) { return !r || ((y > r.minYear || (y === r.minYear && m >= r.minMonth)) && (y < r.maxYear || (y === r.maxYear && m <= r.maxMonth))); };
+  var add = function(h, y, m) {
+    while (m < 1) { m += 12; y--; } while (m > 12) { m -= 12; y++; }
+    var rg = _ccLookup_('getContractDateRange', [h, u]), r = rg && rg.value;
+    if (!inRange(r, y, m) || _ccLookup_('getAvailabilityData', [h, y, m, u])) return;
+    if (!out.some(function(o) { return o.hotel === h && o.year === y && o.month === m; })) out.push({ hotel: h, year: y, month: m });
+  };
+  var now = new Date(), fh = (focus && focus.hotel) || names[0];
+  var fy = (focus && focus.year) || now.getFullYear(), fm = (focus && focus.month) || (now.getMonth() + 1);
+  if (!focus) { // نفس اختيار الشاشة: الشهر الحالي إن كان ضمن التعاقد وإلا أول شهر
+    var rg0 = _ccLookup_('getContractDateRange', [fh, u]), r0 = rg0 && rg0.value;
+    if (r0 && !inRange(r0, fy, fm)) { fy = r0.minYear; fm = r0.minMonth; }
+  }
+  [0, 1, -1, 2].forEach(function(d) { add(fh, fy, fm + d); });
+  if (!focus) names.slice(0, 8).forEach(function(h) { if (h !== fh) add(h, now.getFullYear(), now.getMonth() + 1); });
+  return out.slice(0, 12);
+}
+// بعد عرض شهر توافر: تحميل الأشهر المجاورة بالخلفية فيكون التنقل بينها فورياً
+var _avNeighborTimer = null;
+function _avPrefetchNeighbors_(hotel, year, month) {
+  if (_avNeighborTimer) clearTimeout(_avNeighborTimer);
+  _avNeighborTimer = setTimeout(function() {
+    _avNeighborTimer = null;
+    try { var t = _avPrefetchTargets_({ hotel: hotel, year: year, month: month }); if (t.length) _runPrefetchBundle_({ availability: t }); } catch(e) {}
+  }, 800);
 }
 
 // v3.6 — تعبئة قوائم الفلاتر الفنادق وجهات التحصيل والشهور مرة واحدة فقط عند فتح الشاشة
@@ -4835,24 +4903,136 @@ function _bkRebuildMonthOptions() {
   if (cur && set[cur]) monthSel.value = cur; // شهر خارج تعاقدات الفندق المختار حالياً يُلغى تلقائياً
 }
 
+// ═══════════════════════════════════════════════════════════════
+// V3.58 — الحجوزات محلياً: كل حجوزات المستخدم في المتصفح (getBookingsAll)، والفلترة/الترتيب/الترقيم تتم هنا فوراً
+// بنفس منطق الخادم حرفياً (_bkFilterPage_ = getBookingsPage). كان كل تغيير فلتر أو صفحة نداء خادم (~3 ث).
+// فوق حد الحجم يعود تلقائياً للترقيم من الخادم. الحفظ/الحذف يحدّثان القائمة المحلية فوراً ثم تُطابَق مع الخادم بصمت.
+// ═══════════════════════════════════════════════════════════════
+var _bkAll = null, _bkAllMode = null; // 'local' | 'server'
 function _bkLoadCurrentPage(withOvercap) {
+  if (!withOvercap && _bkAllMode === 'local' && _bkAll) { _bkRenderLocal_(); return; } // فلتر/صفحة: فوري بلا خادم
+  if (_bkAllMode === 'server') { _bkLoadPageFromServer_(withOvercap); return; }
+  google.script.run.withSuccessHandler(function(res) {
+    if (!res || res.tooLarge) { _bkAllMode = 'server'; _bkAll = null; _bkLoadPageFromServer_(withOvercap); return; }
+    _bkAllMode = 'local'; _bkAll = res.rows || [];
+    if (res.overcap) _renderOverCapacityBanner(res.overcap);
+    _bkRenderLocal_();
+  }).withFailureHandler(function(e) {
+    var tbody = document.getElementById('bookingsTableBody');
+    if (tbody) tbody.innerHTML='<tr><td colspan="15" style="text-align:center;padding:20px;color:var(--clr-danger);">'+(e.message||e)+'</td></tr>';
+  }).getBookingsAll(sessionUser.username);
+}
+// بعد كتابة: إعادة جلب البيانات (لا عرض محلي فقط)
+function _bkReloadData_() { _bkLoadCurrentPage(true); }
+function _bkRenderLocal_() { _bkRenderPageResult_(_bkFilterPage_(_bkAll || [], _bkBuildServerFilters(), _bkPage, _bkPageSize)); }
+function _bkRenderPageResult_(res) {
+  res = res || {rows:[], total:0, totalPages:1, page:1};
+  _allBookingsRaw = res.rows||[];
+  // v3.6 — لم نعد نعيد بناء قوائم الفلاتر من نتائج الصفحة (كان يُسبب فقدان الاختيار وإخفاء الفنادق غير الظاهرة)
+  renderBkStatCards();
+  renderBookingsTable(_allBookingsRaw);
+  _lastFilteredBookings = _allBookingsRaw.slice();
+  _renderBookingsActiveFilters(); // v3.6 — رسم شريط الفلاتر المطبقة بعد كل تحميل
+  var host = document.getElementById('bookings_pagination');
+  if (host) host.innerHTML = renderPagination({page:res.page, totalPages:res.totalPages, total:res.total, pageSize:res.pageSize||_bkPageSize}, '_bkGotoPage');
+}
+// المسار الاحتياطي (بيانات أكبر من حد المتصفح): الترقيم من الخادم كما في V3.54
+function _bkLoadPageFromServer_(withOvercap) {
   var filters = _bkBuildServerFilters();
   if (withOvercap) filters.includeOvercap = true;
   google.script.run.withSuccessHandler(function(res) {
     res = res || {rows:[], total:0, totalPages:1, page:1};
     if (withOvercap) { if (res.overcap) _renderOverCapacityBanner(res.overcap); else loadOverCapacityBanner(); }
-    _allBookingsRaw = res.rows||[];
-    // v3.6 — لم نعد نعيد بناء قوائم الفلاتر من نتائج الصفحة (كان يُسبب فقدان الاختيار وإخفاء الفنادق غير الظاهرة)
-    renderBkStatCards();
-    renderBookingsTable(_allBookingsRaw);
-    _lastFilteredBookings = _allBookingsRaw.slice();
-    _renderBookingsActiveFilters(); // v3.6 — رسم شريط الفلاتر المطبقة بعد كل تحميل
-    var host = document.getElementById('bookings_pagination');
-    if (host) host.innerHTML = renderPagination({page:res.page, totalPages:res.totalPages, total:res.total, pageSize:res.pageSize||_bkPageSize}, '_bkGotoPage');
+    _bkRenderPageResult_(res);
   }).withFailureHandler(function(e) {
     var tbody = document.getElementById('bookingsTableBody');
     if (tbody) tbody.innerHTML='<tr><td colspan="15" style="text-align:center;padding:20px;color:var(--clr-danger);">'+(e.message||e)+'</td></tr>';
   }).getBookingsPage(filters, _bkPage, _bkPageSize, sessionUser.username);
+}
+// نسخة حرفية من فلترة/ترتيب/ترقيم getBookingsPage بالخادم (أي تعديل هناك يُنسخ هنا؛ اختبار التطابق يفحص الاثنين معاً)
+function _bkFilterPage_(full, filters, page, pageSize) {
+  filters = filters || {};
+  page = Math.max(1, parseInt(page,10)||1);
+  pageSize = Math.max(10, Math.min(500, parseInt(pageSize,10)||100));
+  var q = String(filters.q||"").trim().toLowerCase();
+  var fId = String(filters.bookingId||"").trim().toLowerCase();
+  var fClient = String(filters.client||"").trim().toLowerCase();
+  var fStatus = String(filters.status||"").trim();
+  var fStatusMode = String(filters.statusMode||"").trim();
+  var fStatusList = Array.isArray(filters.statusList) ? filters.statusList.map(String) : [];
+  var fHotel = String(filters.hotel||"").trim();
+  var fColl = String(filters.collection||"").trim();
+  var fMonth = String(filters.month||"").trim();
+  var _fmm = fMonth.match(/^(\d{4})-(\d{1,2})$/); if (_fmm) fMonth = _fmm[1] + "-" + (_fmm[2].length === 1 ? "0" : "") + _fmm[2];
+  var fFromIso = String(filters.fromIso||"").trim();
+  var fToIso = String(filters.toIso||"").trim();
+  var fCheckinIso = String(filters.checkinIso||"").trim();
+  var fNoPriceOnly = !!filters.noPriceOnly;
+  var fActiveOnIso = String(filters.activeOnIso||"").trim();
+  var dmy2iso = function(s){ if(!s) return ""; var p=String(s).split('/'); return (p.length===3) ? (p[2]+'-'+p[1]+'-'+p[0]) : ""; };
+  var _displayStatusOf = function(b) {
+    if (Number(b.roomCount) < 0) return "شراء";
+    if (b.overCapacity) return b.overCapacityType || "مسجل اوفر";
+    return b.status;
+  };
+  var filtered = (full || []).filter(function(b) {
+    if (q) {
+      var hay = (b.bookingId+" "+b.clientName+" "+b.hotelName+" "+(b.collectionAccount||"")+" "+(b.notes||"")).toLowerCase();
+      if (hay.indexOf(q) === -1) return false;
+    }
+    if (fId && String(b.bookingId).toLowerCase().indexOf(fId)===-1) return false;
+    if (fClient && String(b.clientName).toLowerCase().indexOf(fClient)===-1) return false;
+    if (fStatusMode === "allExceptCancelled") {
+      if (_displayStatusOf(b) === "ملغي") return false;
+    } else if (fStatusMode === "custom") {
+      if (fStatusList.length && fStatusList.indexOf(_displayStatusOf(b)) === -1) return false;
+    } else if (fStatus) {
+      if (_displayStatusOf(b) !== fStatus) return false;
+    }
+    if (fHotel && String(b.hotelName).indexOf(fHotel) === -1) return false;
+    if (fColl && String(b.collectionAccount||"").indexOf(fColl)===-1) return false;
+    var bIso = dmy2iso(b.checkIn);
+    if (fMonth && bIso.substring(0,7)!==fMonth) return false;
+    if (fFromIso && bIso && bIso < fFromIso) return false;
+    if (fToIso && bIso && bIso > fToIso) return false;
+    if (fCheckinIso && bIso !== fCheckinIso) return false;
+    if (fNoPriceOnly && Number(b.salePrice)>0) return false;
+    if (fActiveOnIso) {
+      var bCoIso = dmy2iso(b.checkOut);
+      if (!(bIso && bCoIso && bIso<=fActiveOnIso && bCoIso>fActiveOnIso)) return false;
+    }
+    return true;
+  });
+  var sortBy = String(filters.sortBy||"checkInAsc").trim();
+  var _isoKey = {}; filtered.forEach(function(b) { _isoKey[b.bookingId] = dmy2iso(b.checkIn); });
+  filtered.sort(function(a, b) {
+    var aIso = _isoKey[a.bookingId], bIso = _isoKey[b.bookingId];
+    if (sortBy === "checkInDesc") return (bIso||"").localeCompare(aIso||"");
+    if (sortBy === "bookingIdDesc") return String(b.bookingId).localeCompare(String(a.bookingId), undefined, {numeric:true});
+    if (sortBy === "bookingIdAsc")  return String(a.bookingId).localeCompare(String(b.bookingId), undefined, {numeric:true});
+    return (aIso||"").localeCompare(bIso||"");
+  });
+  var total = filtered.length;
+  var start = (page-1)*pageSize;
+  return { rows: filtered.slice(start, start+pageSize), total: total, page: page, pageSize: pageSize, totalPages: Math.max(1, Math.ceil(total/pageSize)) };
+}
+// الحفظ/الحذف: تحديث القائمة المحلية فوراً + نسخة الكاش (كـ"قديمة" لتُطابَق مع الخادم بصمت عند العرض)
+function _bkPatchLocal_(row, removeId) {
+  if (_bkAllMode !== 'local' || !_bkAll) return false;
+  var id = String(removeId != null ? removeId : (row && row.bookingId));
+  var i = -1; for (var k = 0; k < _bkAll.length; k++) if (String(_bkAll[k].bookingId) === id) { i = k; break; }
+  if (removeId != null) { if (i >= 0) _bkAll.splice(i, 1); }
+  else if (row) { if (i >= 0) _bkAll[i] = row; else _bkAll.unshift(row); }
+  else return false;
+  var u = sessionUser.username, key = _ccKey_('getBookingsAll', [u]), prev = _cc.data[key];
+  _ccStore_('getBookingsAll', [u], { total: _bkAll.length, tooLarge: false, rows: _bkAll, overcap: prev && prev.value ? prev.value.overcap : undefined });
+  _ccMarkStale_('getBookingsAll', [u]);
+  return true;
+}
+function _bkAfterSave_(res) {
+  var active = document.getElementById('Bookings_Screen').classList.contains('active-screen');
+  if (res && res.row && _bkPatchLocal_(res.row)) { if (active) { _bkRenderLocal_(); _bkReloadData_(); } return; }
+  if (active) loadBookings();
 }
 function _bkGotoPage(p) { _bkPage = p; _bkLoadCurrentPage(); }
 
@@ -4977,7 +5157,8 @@ function deleteBookingClick(bookingId, clientName) {
     function(){
       google.script.run.withSuccessHandler(function(){
         showToast('تم حذف الحجز بنجاح.', 'success');
-        _bkLoadCurrentPage();
+        if (_bkPatchLocal_(null, bookingId)) _bkRenderLocal_(); // V3.58 — يختفي فوراً
+        _bkReloadData_();
       }).withFailureHandler(function(e){ showAppAlert(e.message||e); }).deleteBooking(bookingId, sessionUser.username);
     },
     null,
@@ -4997,7 +5178,7 @@ function manualClearOverCapacityClick(bookingId) {
     function(){
       google.script.run.withSuccessHandler(function(){
         showToast('تم تأكيد الحجز وإزالة علامة (أوفر) عنه.', 'success');
-        _bkLoadCurrentPage();
+        _bkReloadData_();
       }).withFailureHandler(function(e){ showAppAlert(e.message||e); }).manuallyClearOverCapacityFlag(bookingId, sessionUser.username);
     },
     null,
@@ -5077,6 +5258,9 @@ function openBookingModal(editId) {
   document.getElementById('bk_nusuk_agreements_body').innerHTML = '';
 
   // نداء مجمّع واحد بدل 3-4 نداءات: التعاقدات + جهات التحصيل + أسماء العملاء (+ بيانات الحجز عند التعديل)
+  // V3.58 — القوائم من الكاش (تُحمَّل مسبقاً)، وبيانات التعديل من قائمة الحجوزات المحلية إن توفرت كاملة ⇒ فتح فوري،
+  // ثم يُتحقق من الخادم بالخلفية أن الحجز لم يُعدَّل من مستخدم آخر
+  var _localEdit = editId ? _bkLocalEditData_(editId) : null;
   google.script.run.withSuccessHandler(function(boot) {
     boot = boot || {};
     var contracts = boot.contracts || [];
@@ -5091,9 +5275,12 @@ function openBookingModal(editId) {
     var names = boot.clientNames || [];
     document.getElementById('clientNamesList').innerHTML=names.map(function(n){ return '<option value="'+escapeHtmlAttr(n)+'">'; }).join('');
 
-    if (editId && boot.booking) _bkFillFormForEdit(boot.booking);
+    if (editId) {
+      var _b = _localEdit || boot.booking;
+      if (_b) { _bkFillFormForEdit(_b); if (_localEdit) _bkVerifyEditFresh_(editId, _localEdit); }
+    }
   }).withFailureHandler(function(e){ showAppAlert(e.message||e); })
-  .getBookingModalBootstrap(sessionUser.username, editId||null); // تصفية حسب الفنادق المسموح بها لهذا المستخدم
+  .getBookingModalBootstrap(sessionUser.username, (editId && !_localEdit) ? editId : null); // تصفية حسب الفنادق المسموح بها لهذا المستخدم
 
   if (!editId) {
     document.getElementById('bk_client_name').value='';
@@ -5109,6 +5296,33 @@ function openBookingModal(editId) {
     var el=document.getElementById(fid);
     if(!el._bkBound){el.addEventListener('change',_bkRecalc);el._bkBound=true;}
   });
+}
+
+// V3.58 — بيانات نموذج التعديل من القائمة المحلية (فقط إن احتوت كل الحقول، بما فيها السعر — يغيب لمن لا يملك
+// الصلاحية المالية فيُجلب من الخادم كالسابق حتى لا يُحفظ السعر صفراً)
+function _bkLocalEditData_(editId) {
+  if (_bkAllMode !== 'local' || !_bkAll) return null;
+  var r = null; for (var i = 0; i < _bkAll.length; i++) if (String(_bkAll[i].bookingId) === String(editId)) { r = _bkAll[i]; break; }
+  if (!r || !('salePrice' in r) || !r.checkInIso || !r.checkOutIso) return null;
+  return { bookingId: r.bookingId, contractId: r.contractId, clientName: r.clientName, collectionAccountId: r.collectionAccountId,
+           status: r.status, roomCount: r.roomCount, checkIn: r.checkInIso, checkOut: r.checkOutIso, salePrice: r.salePrice,
+           notes: r.notes || '', paymentDateIso: r.paymentDateIso || '' };
+}
+var _BK_EDIT_FIELDS = ['contractId','clientName','collectionAccountId','status','roomCount','checkIn','checkOut','salePrice','notes','paymentDateIso'];
+var _BK_FORM_IDS = ['bk_contract_id','bk_client_name','bk_status','bk_collection_account','bk_checkin','bk_checkout','bk_room_count','bk_sale_price','bk_notes','bk_payment_date'];
+function _bkFormSnapshot_() { return _BK_FORM_IDS.map(function(id) { var el = document.getElementById(id); return el ? String(el.value) : ''; }).join('\u0001'); }
+function _bkVerifyEditFresh_(editId, local) {
+  var snap = _bkFormSnapshot_();
+  google.script.run.withSuccessHandler(function(boot) {
+    var fresh = boot && boot.booking;
+    if (!fresh) return;
+    var modalOpen = document.getElementById('Booking_Modal').classList.contains('open');
+    if (!modalOpen || String(document.getElementById('bk_edit_id').value) !== String(editId)) return;
+    var changed = _BK_EDIT_FIELDS.some(function(f) { return String(fresh[f] == null ? '' : fresh[f]) !== String(local[f] == null ? '' : local[f]); });
+    if (!changed) return;
+    if (_bkFormSnapshot_() === snap) { _bkFillFormForEdit(fresh); showToast('تم تحديث بيانات الحجز (عُدّل من مستخدم آخر للتو).', 'info'); }
+    else showToast('تنبيه: هذا الحجز عُدّل من مستخدم آخر للتو — راجع البيانات قبل الحفظ.', 'warning');
+  }).withFailureHandler(function() {}).getBookingModalBootstrap(sessionUser.username, editId);
 }
 
 // يملأ نموذج التعديل ببيانات الحجز (تصل الآن ضمن النداء المجمّع؛ القوائم مملوءة مسبقاً فلا حاجة لأي انتظار)
@@ -5243,7 +5457,7 @@ function saveBookingSubmit(forceOverCapacity) {
         !obj.editId ? { label:'📋 قائمة الانتظار', onClick:function(){ addCurrentBookingToWaitlist(obj); } } : null);
       return;
     }
-    closeBookingModal(); loadBookings();
+    closeBookingModal(); _bkAfterSave_(res); // V3.58 — الصف يظهر/يتحدّث فوراً بلا إعادة تحميل
     showToast('تم حفظ الحجز بنجاح'+(res.overCapacity?' (مسجّل أوفر)':''),'success');
     // إبطال ذاكرة الشاشات المتأثرة بتغيّر بيانات حجز (التوافر والتقرير المالي يعتمدان على الحجوزات)
     invalidateScreenCache('Availability_Screen'); invalidateScreenCache('FinancialReport_Screen');
@@ -5862,6 +6076,7 @@ function loadAvailabilityData(){
   google.script.run.withSuccessHandler(function(data){
     _avAttachGregorianToHeaders(data, year, month);
     _availData=data; renderAvailabilityGrid();
+    _avPrefetchNeighbors_(hotel, year, month); // V3.58
   })
     .withFailureHandler(function(e){document.getElementById('availGridContainer').innerHTML='<div class="placeholder-box" style="color:var(--clr-danger);">'+(e.message||e)+'</div>';})
     .getAvailabilityData(hotel,year,month,sessionUser.username);
@@ -10212,7 +10427,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.57';
+var CLIENT_APP_VERSION = 'V3.58';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {
