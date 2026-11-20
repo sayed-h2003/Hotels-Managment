@@ -1766,6 +1766,7 @@ function getBookings(currentUser) {
   var _fn="[getBookings]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   var _tStart=Date.now();
+  _prefetchRefMaps_(); // V3.57 — الخرائط المرجعية الثلاث في getAll واحدة بدل 3 قراءات كاش
   _requirePermission_(currentUser,"bookings","canView");
   var ss=_getSS_();
   var data=_getSheetValues_("Bookings_Master");
@@ -4460,7 +4461,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.56";
+var APP_VERSION = "V3.57";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -5436,6 +5437,20 @@ function _invalidateReferenceCache_(which) {
 // CacheService.get نفسه أكثر من مرة إن استُدعيت دالة البناء عدة مرات ضمن نفس الطلب الواحد)
 var __REF_MAP_MEMO = {};
 
+// V3.57 — يملأ الخرائط المرجعية الثلاث من الكاش بنداء getAll واحد (المفقود منها يُبنى لاحقاً كالمعتاد)
+function _prefetchRefMaps_() {
+  try {
+    var want = [];
+    if (!__REF_MAP_MEMO.contractHotel) want.push([_REF_CACHE_KEY_CONTRACT_HOTEL_MAP, "contractHotel"]);
+    if (!__REF_MAP_MEMO.collectionAccount) want.push([_REF_CACHE_KEY_COLLECTION_MAP, "collectionAccount"]);
+    if (!__REF_MAP_MEMO.contractLabel) want.push([_REF_CACHE_KEY_CONTRACT_LABEL_MAP, "contractLabel"]);
+    if (!want.length) return;
+    var got = CacheService.getScriptCache().getAll(want.map(function(w) { return w[0]; })) || {};
+    _incrementDailyQuota_("CACHEOP");
+    want.forEach(function(w) { if (got[w[0]]) { try { __REF_MAP_MEMO[w[1]] = JSON.parse(got[w[0]]); } catch (e) {} } });
+  } catch (e) {}
+}
+
 // نسخ مُغلَّفة بالكاش من الدوال المرجعية شبه الثابتة (تُستخدم داخل النقاط المجمّعة)
 function _getDistinctHotelNamesCached_(currentUser) {
   var cached = _getFromCache_(_REF_CACHE_KEY_HOTELS);
@@ -5545,36 +5560,79 @@ function _perfBucketKey_(d) {
 // يُسجِّل عينة أداء واحدة في الكاش فقط (بدون أي كتابة شيت) - رخيص وآمن للمسار الحرج تماماً.
 // user اختياري: يُمرَّر فقط من القياس المُرسَل من المتصفح (الذي يعرف المستخدم)، فارغ من قياس الخادم مباشرة
 function _recordPerfSample_(name, ms, ok, user, ver) {
+  // V3.57 — يُجمَّع في الذاكرة ويُكتب مع باقي قياسات التنفيذ في getAll + putAll واحدة (_perfFlushPending_).
+  // كان كل قياس = 4-6 عمليات كاش منفصلة، وكان القياس نفسه (مع عدّادات الحصص) يكلّف ~ثانية من زمن كل نداء.
   try {
     name = String(name||"").slice(0,100);
     if (!name) return;
     ms = Math.max(0, Math.round(Number(ms)||0));
-    var cache = CacheService.getScriptCache();
-    var bucket = _perfBucketKey_(new Date());
     // الإصدار يُثبَّت لحظة التسجيل (لا لحظة التفريغ): وإلا تُنسب قياسات الإصدار القديم للجديد بعد كل نشر
-    var ver = String(ver || APP_VERSION).slice(0, 20);
-
-    var aggKey = "PERF_AGG::" + name + "::" + ver + "::" + bucket;
-    var agg = _perfCacheGet_(aggKey) || { count:0, sum:0, max:0, fails:0 };
-    agg.count++; agg.sum += ms; if (ms > agg.max) agg.max = ms; if (ok===false) agg.fails++;
-    cache.put(aggKey, JSON.stringify(agg), _PERF_AGG_TTL_SEC);
-
-    var activeKey = "PERF_ACTIVE::" + bucket;
-    var active = _perfCacheGet_(activeKey) || [];
-    var tag = name + "@@" + ver;
-    if (active.indexOf(tag) === -1) { active.push(tag); cache.put(activeKey, JSON.stringify(active), _PERF_AGG_TTL_SEC); }
-
-    if (ms > 3000) {
-      var slowKey = "PERF_SLOWBUF::" + bucket;
-      var slow = _perfCacheGet_(slowKey) || [];
-      if (slow.length < 200) { // سقف أمان يمنع تضخم حجم قيمة الكاش الواحدة
-        slow.push([new Date().toISOString(), name, ms, String(user||""), ok!==false, ver]);
-        cache.put(slowKey, JSON.stringify(slow), _PERF_AGG_TTL_SEC);
-      }
-    }
+    _perfPending_().samples.push({ name: name, ms: ms, ok: ok !== false, user: String(user||""), ver: String(ver || APP_VERSION).slice(0, 20), t: new Date().toISOString() });
+    _perfMaybeFlush_();
   } catch(e) {} // فشل القياس لا يجب أبداً أن يكسر شيئاً
 }
 
+// V3.57 — دفعة قياسات التنفيذ الحالي: {samples, logs, quota}. تُفرَّغ عند خروج النداء الخارجي (_perfCall_/doGet)
+// أو فوراً إن لم يكن هناك نداء محيط (عمق 0 وبلا تعليق).
+var __PERF_PENDING = null, __PERF_HOLD = 0;
+function _perfPending_() { return __PERF_PENDING || (__PERF_PENDING = { samples: [], logs: [], quota: {} }); }
+function _perfMaybeFlush_() { if (__PERF_HOLD === 0 && __PERF_DEPTH === 0) _perfFlushPending_(); }
+function _perfFlushPending_() {
+  var p = __PERF_PENDING; __PERF_PENDING = null;
+  var res = { logged: 0 };
+  if (!p || (!p.samples.length && !p.logs.length && !Object.keys(p.quota).length)) return res;
+  try {
+    var cache = CacheService.getScriptCache(), bucket = _perfBucketKey_(new Date());
+    var parse = function(raw) { try { return raw ? JSON.parse(raw) : null; } catch (e) { return null; } };
+    var aggKeys = [], aggBy = {}, tags = [];
+    p.samples.forEach(function(sm) {
+      var k = "PERF_AGG::" + sm.name + "::" + sm.ver + "::" + bucket;
+      if (!aggBy[k]) { aggBy[k] = []; aggKeys.push(k); tags.push(sm.name + "@@" + sm.ver); }
+      aggBy[k].push(sm);
+    });
+    var activeKey = "PERF_ACTIVE::" + bucket, slowKey = "PERF_SLOWBUF::" + bucket;
+    var slows = p.samples.filter(function(sm) { return sm.ms > 3000; });
+    var logKey = p.logs.length ? ("PERF_LOGBUF::" + bucket + "::" + Math.floor(Math.random() * _PERF_LOG_SHARDS)) : null;
+    var qNames = Object.keys(p.quota);
+    var quotaKey = qNames.length ? ("PERF_QUOTA::" + bucket + "::" + Math.floor(Math.random() * _PERF_LOG_SHARDS)) : null;
+    var keys = aggKeys.slice();
+    if (tags.length) keys.push(activeKey);
+    if (slows.length) keys.push(slowKey);
+    if (logKey) keys.push(logKey);
+    if (quotaKey) keys.push(quotaKey);
+    var got = cache.getAll(keys) || {}, put = {};
+    aggKeys.forEach(function(k) {
+      var agg = parse(got[k]) || { count:0, sum:0, max:0, fails:0 };
+      aggBy[k].forEach(function(sm) { agg.count++; agg.sum += sm.ms; if (sm.ms > agg.max) agg.max = sm.ms; if (!sm.ok) agg.fails++; });
+      put[k] = JSON.stringify(agg);
+    });
+    if (tags.length) {
+      var active = parse(got[activeKey]) || [], changed = false;
+      tags.forEach(function(t) { if (active.indexOf(t) === -1) { active.push(t); changed = true; } });
+      if (changed) put[activeKey] = JSON.stringify(active);
+    }
+    if (slows.length) {
+      var slow = parse(got[slowKey]) || [];
+      slows.forEach(function(sm) { if (slow.length < 200) slow.push([sm.t, sm.name, sm.ms, sm.user, sm.ok, sm.ver]); });
+      put[slowKey] = JSON.stringify(slow);
+    }
+    if (logKey) {
+      var buf = parse(got[logKey]) || { items: [], dropped: 0 };
+      p.logs.forEach(function(it) { if (buf.items.length < _PERF_LOG_SHARD_CAP) { buf.items.push(it); res.logged++; } else buf.dropped++; });
+      var str = JSON.stringify(buf), guard = 0;
+      while (str.length > 95000 && buf.items.length && guard++ < 400) { buf.items.pop(); buf.dropped++; res.logged--; str = JSON.stringify(buf); } // حد قيمة الكاش 100KB
+      put[logKey] = str;
+    }
+    if (quotaKey) {
+      var q = parse(got[quotaKey]) || {};
+      qNames.forEach(function(n) { q[n] = (Number(q[n]) || 0) + p.quota[n]; });
+      put[quotaKey] = JSON.stringify(q);
+    }
+    cache.putAll(put, _PERF_AGG_TTL_SEC);
+  } catch (e) {}
+  res.logged = Math.max(0, res.logged);
+  return res;
+}
 // أسماء دوال مُشغَّلة فعلياً عبر Trigger (بعضها بادئتها "_" فلا يشملها التحويل البنائي تلقائياً،
 // فأُضيفت هنا صراحةً) - تُستخدم فقط لتحديد ما يُحتسَب ضمن حصة "وقت تشغيل المشغّلات اليومية"
 var _TRIGGER_HANDLER_NAMES_ = {
@@ -5601,10 +5659,14 @@ function _perfCall_(name, args, fn) {
     __PERF_DEPTH = Math.max(0, __PERF_DEPTH - 1);
     try {
       var dur = Date.now()-start;
-      _recordPerfSample_(name, dur, ok);
-      if (_TRIGGER_HANDLER_NAMES_[name]) _incrementDailyQuota_("TRIGGERMS", dur);
-      if (outer) _perfLogPush_({ t: new Date(start).toISOString(), src: _TRIGGER_HANDLER_NAMES_[name] ? "trigger" : "server",
-        kind: "exec", name: name, ms: dur, ok: ok, err: errMsg, v: APP_VERSION, con: __EXEC_CONSOLE.slice(0, 30) });
+      __PERF_HOLD++;
+      try {
+        _recordPerfSample_(name, dur, ok);
+        if (_TRIGGER_HANDLER_NAMES_[name]) _incrementDailyQuota_("TRIGGERMS", dur);
+        if (outer) _perfLogPush_({ t: new Date(start).toISOString(), src: _TRIGGER_HANDLER_NAMES_[name] ? "trigger" : "server",
+          kind: "exec", name: name, ms: dur, ok: ok, err: errMsg, v: APP_VERSION, con: __EXEC_CONSOLE.slice(0, 30) });
+      } finally { __PERF_HOLD--; }
+      if (__PERF_DEPTH === 0) _perfFlushPending_(); // V3.57 — كل قياسات هذا التنفيذ في getAll + putAll واحدة
     } catch(e2) {}
   }
 }
@@ -5615,6 +5677,8 @@ function flushClientPerfMetrics(entries, currentUser, extra) {
   var _fn="[flushClientPerfMetrics]";
   try {
     _ensurePerfFlushTriggerThrottled_(false); // يثبّت مشغّل التفريغ تلقائياً من أول استخدام فعلي للتطبيق
+    __PERF_HOLD++; // V3.57 — كل عيّنات الدفعة + سجلها في كتابة واحدة
+    try {
     (entries || []).forEach(function(e) {
       if (!e || !e.fn || typeof e.ms !== "number") return;
       // v3.53 — تبويب بكود قديم لا يرسل رقم إصداره: يُوسَم "legacy" بدل نسبه خطأً للإصدار الحالي،
@@ -5623,8 +5687,10 @@ function flushClientPerfMetrics(entries, currentUser, extra) {
       if (e.ms > 600000 && fname.indexOf("bg:") !== 0) fname = "bg:" + fname;
       _recordPerfSample_("client:" + fname, e.ms, e.ok !== false, currentUser, e.v || "legacy");
     });
+    try { _perfLogPush_(_perfClientExtraToItems_(extra, currentUser)); } catch(e2) {}
+    } finally { __PERF_HOLD--; }
     var logged = 0;
-    try { logged = _perfLogPush_(_perfClientExtraToItems_(extra, currentUser)); } catch(e2) {}
+    if (__PERF_DEPTH === 0) logged = _perfFlushPending_().logged;
     return { success:true, recorded: (entries || []).length, logged: logged };
   } catch(e) { _logError_(_fn, e); return { success:false }; }
 }
@@ -5680,21 +5746,12 @@ function _perfLogPush_(items) {
     if (!items) return 0;
     if (!Array.isArray(items)) items = [items];
     if (!items.length) return 0;
-    var cache = CacheService.getScriptCache(), bucket = _perfBucketKey_(new Date()), saved = 0;
-    for (var off = 0; off < items.length; off += 100) { // دفعات صغيرة على مفاتيح عشوائية مختلفة
-      var key = "PERF_LOGBUF::" + bucket + "::" + Math.floor(Math.random() * _PERF_LOG_SHARDS);
-      var buf = _perfCacheGet_(key) || { items: [], dropped: 0 };
-      items.slice(off, off + 100).forEach(function(it) {
-        if (buf.items.length < _PERF_LOG_SHARD_CAP) { buf.items.push(it); saved++; } else buf.dropped++;
-      });
-      var s = JSON.stringify(buf), guard = 0;
-      while (s.length > 95000 && buf.items.length && guard++ < 400) { buf.items.pop(); buf.dropped++; saved--; s = JSON.stringify(buf); } // حد قيمة الكاش 100KB
-      cache.put(key, s, _PERF_AGG_TTL_SEC);
-    }
-    return Math.max(0, saved);
+    var pend = _perfPending_();
+    items.forEach(function(it) { pend.logs.push(it); });
+    if (__PERF_HOLD === 0 && __PERF_DEPTH === 0) return _perfFlushPending_().logged;
+    return items.length;
   } catch (e) { return 0; }
 }
-
 function _perfIso_(t) {
   var d = (typeof t === "number") ? new Date(t) : new Date(String(t || ""));
   return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
@@ -5924,26 +5981,38 @@ function _flushPerfBucketsCore_() {
     function isDone(bucket, sheet) { return (partial[bucket] || []).indexOf(sheet) !== -1; }
 
     var cache = CacheService.getScriptCache();
+    var _pj = function(raw) { try { return raw ? JSON.parse(raw) : null; } catch (e) { return null; } };
+    // V3.57 — قراءتان مجمّعتان لكل نافذة (getAll) بدل قراءة كاش منفصلة لكل دالة مقاسة
     var perBucket = buckets.map(function(bucket) {
-      var b = { bucket: bucket, rows: [], slowRows: [], logItems: [], logDropped: 0 };
-      (_perfCacheGet_("PERF_ACTIVE::" + bucket) || []).forEach(function(tag) {
+      var b = { bucket: bucket, rows: [], slowRows: [], logItems: [], logDropped: 0, quota: {} };
+      var activeKey = "PERF_ACTIVE::" + bucket, slowKey = "PERF_SLOWBUF::" + bucket;
+      var keys = [activeKey, slowKey], logKeys = [], quotaKeys = [];
+      for (var sh = 0; sh < _PERF_LOG_SHARDS; sh++) { logKeys.push("PERF_LOGBUF::" + bucket + "::" + sh); quotaKeys.push("PERF_QUOTA::" + bucket + "::" + sh); }
+      var got = {};
+      try { got = cache.getAll(keys.concat(logKeys, quotaKeys)) || {}; } catch (ge) {}
+      var tags = _pj(got[activeKey]) || [], aggKeys = tags.map(function(tag) {
         // "name@@ver" (منذ v3.51)؛ الاسم المجرّد صيغة ما قبلها ما زال في الكاش خلال نافذة الانتقال
         var sep = String(tag).lastIndexOf("@@");
         var name = sep >= 0 ? tag.slice(0, sep) : tag, ver = sep >= 0 ? tag.slice(sep + 2) : APP_VERSION;
-        var agg = _perfCacheGet_(sep >= 0 ? ("PERF_AGG::" + name + "::" + ver + "::" + bucket) : ("PERF_AGG::" + name + "::" + bucket));
-        if (!agg || !agg.count) return;
-        b.rows.push([bucket.slice(0,8), bucket.slice(8,10), name, agg.count, agg.sum, agg.max, agg.fails||0, ver]);
+        return { name: name, ver: ver, key: sep >= 0 ? ("PERF_AGG::" + name + "::" + ver + "::" + bucket) : ("PERF_AGG::" + name + "::" + bucket) };
       });
-      (_perfCacheGet_("PERF_SLOWBUF::" + bucket) || []).forEach(function(s) {
+      var aggGot = {};
+      try { if (aggKeys.length) aggGot = cache.getAll(aggKeys.map(function(a) { return a.key; })) || {}; } catch (ge2) {}
+      aggKeys.forEach(function(a) {
+        var agg = _pj(aggGot[a.key]);
+        if (!agg || !agg.count) return;
+        b.rows.push([bucket.slice(0,8), bucket.slice(8,10), a.name, agg.count, agg.sum, agg.max, agg.fails||0, a.ver]);
+      });
+      (_pj(got[slowKey]) || []).forEach(function(s) {
         b.slowRows.push([new Date(s[0]), s[1], s[2], s[3], s[4] ? "نجاح" : "فشل", s[5] || APP_VERSION]);
       });
-      var keys = [];
-      for (var sh = 0; sh < _PERF_LOG_SHARDS; sh++) keys.push("PERF_LOGBUF::" + bucket + "::" + sh);
-      var got = {};
-      try { got = cache.getAll(keys) || {}; } catch (ge) {}
-      keys.forEach(function(k) {
-        if (!got[k]) return;
-        try { var lb = JSON.parse(got[k]); (lb.items || []).forEach(function(it) { b.logItems.push(it); }); b.logDropped += Number(lb.dropped) || 0; } catch (pe) {}
+      logKeys.forEach(function(k) {
+        var lb = _pj(got[k]); if (!lb) return;
+        (lb.items || []).forEach(function(it) { b.logItems.push(it); }); b.logDropped += Number(lb.dropped) || 0;
+      });
+      quotaKeys.forEach(function(k) {
+        var q = _pj(got[k]); if (!q) return;
+        Object.keys(q).forEach(function(n) { b.quota[n] = (b.quota[n] || 0) + (Number(q[n]) || 0); });
       });
       return b;
     });
@@ -5969,6 +6038,16 @@ function _flushPerfBucketsCore_() {
                                                  ms: 0, ok: false, v: APP_VERSION, msg: "dropped=" + logDropped }));
         return out;
       });
+      // V3.57 — عدّادات الحصص المجمّعة في الكاش تُضاف للخصائص هنا مرة واحدة (مرة واحدة لكل نافذة بفضل علامة partial)
+      var qPend = perBucket.filter(function(b) { return !isDone(b.bucket, "Quota"); });
+      var qTot = {};
+      qPend.forEach(function(b) { Object.keys(b.quota).forEach(function(n) { var k = "QUOTA_" + n + "_" + b.bucket.slice(0, 8); qTot[k] = (qTot[k] || 0) + b.quota[n]; }); });
+      if (Object.keys(qTot).length) {
+        var allP = props.getProperties(), upd = {};
+        Object.keys(qTot).forEach(function(k) { upd[k] = String((Number(allP[k]) || 0) + qTot[k]); });
+        props.setProperties(upd);
+      }
+      if (qPend.length) { qPend.forEach(function(b) { (partial[b.bucket] = partial[b.bucket] || []).push("Quota"); }); props.setProperty("PERF_FLUSH_PARTIAL", JSON.stringify(partial)); }
     } catch (we) {
       // لا يتقدّم مؤشر آخر نافذة عند الفشل: البيانات تبقى في الكاش (ساعتان) ويعيد التشغيل التالي المحاولة لما لم يُكتب فقط
       props.setProperty("PERF_LAST_FLUSH_ERROR", new Date().toISOString() + " | " + String(we && we.message || we));
@@ -6062,14 +6141,14 @@ function _ensurePerfFlushTrigger_() {
 function _quotaDateKey_() { return _fmtDate_(new Date(), _tz_(), "yyyyMMdd"); }
 
 function _incrementDailyQuota_(name, amount) {
+  // V3.57 — كان كل عدّاد = قراءة + كتابة في خصائص السكريبت (~100-200 مللي ثانية) مع كل قراءة شيت وكل عملية كاش
+  // وكل قفل. الآن يُجمَّع في دفعة التنفيذ (كاش)، ويُضاف للخصائص مرة كل 10 دقائق من مشغّل التفريغ.
   try {
-    var props = PropertiesService.getScriptProperties();
-    var key = "QUOTA_" + name + "_" + _quotaDateKey_();
-    var cur = Number(props.getProperty(key) || 0);
-    props.setProperty(key, String(cur + (amount||1)));
+    var q = _perfPending_().quota;
+    q[name] = (q[name] || 0) + (amount || 1);
+    _perfMaybeFlush_();
   } catch(e) {}
 }
-
 function _getDailyQuotaCounters_(dateKey) {
   try {
     var all = PropertiesService.getScriptProperties().getProperties();

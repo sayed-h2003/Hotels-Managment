@@ -1812,15 +1812,22 @@ function _recordBootReady_() {
 // google.script.run فلا يتغيّر أي موضع نداء). أي نداء كتابة أو تغيّر نسخة البيانات من مستخدم آخر يُبطلها.
 // ═══════════════════════════════════════════════════════════════
 var _CC_TTL_MS = 10 * 60 * 1000;
-var _CC_DATA_FNS = { getDistinctHotelNames: 1, getCollectionAccounts: 1, getContractDateRange: 1, getContractMonthsByHotel: 1, getBookingsPage: 1 };
+var _CC_DATA_FNS = { getDistinctHotelNames: 1, getCollectionAccounts: 1, getContractDateRange: 1, getContractMonthsByHotel: 1, getBookingsPage: 1,
+  getAvailabilityData: 1, getAvailabilityDataMulti: 1, getDashboardData: 1, getWaitlist: 1, getContracts: 1, getAccountsSummary: 1 };
 // V3.54 — صفحات الحجوزات تُحفظ دقيقتين فقط (الرجوع لفلتر/صفحة سابقة فوري)؛ تُبطلها أي كتابة أو تغيير من مستخدم آخر
-var _CC_TTL_BY_FN = { getBookingsPage: 2 * 60 * 1000 };
+// V3.57 — بيانات الشاشات: مدة "طازجة" قصيرة تُجاب فيها بلا خادم، وبعدها حتى 30 دقيقة "قديمة قابلة للعرض"
+var _CC_TTL_BY_FN = { getBookingsPage: 2 * 60 * 1000, getAvailabilityData: 60 * 1000, getAvailabilityDataMulti: 60 * 1000,
+  getDashboardData: 20 * 1000, getWaitlist: 20 * 1000, getContracts: 20 * 1000, getAccountsSummary: 20 * 1000 };
+// V3.57 — "اعرض فوراً ثم حدّث" لبيانات الشاشات: عند فتح شاشة سبق عرضها تُرسم آخر بيانات فوراً، ويُجلب الجديد
+// بالخلفية، ويُعاد الرسم فقط إن اختلف. (معالجات هذه الدوال ترسم الجدول/الشبكة فقط، فاستدعاؤها مرتين آمن)
+var _CC_SWR_FNS = { getBookingsPage: 1, getAvailabilityData: 1, getAvailabilityDataMulti: 1, getDashboardData: 1, getWaitlist: 1, getContracts: 1, getAccountsSummary: 1 };
+var _CC_STALE_MAX_MS = 30 * 60 * 1000;
 // نداءات لا تكتب شيئاً — كل ما عداها كتابة
 var _CC_NONWRITE_RE = /^(get|poll|ping|flush|search|list|check|load|is|has|export|count|preview|validate|login|logout|mark|send)/;
 // V3.54 — كتابات قد تغيّر البيانات المرجعية (فنادق/تعاقدات/جهات تحصيل/صلاحيات). كتابة غيرها (مثل حفظ حجز) تُبطل
 // صفحات الحجوزات فقط بدل كل شيء — كان حفظ الحجز يعيد جلب أسماء الفنادق وجهات التحصيل بلا داعٍ
 var _CC_REFDATA_WRITE_RE = /contract|hotel|collection|account|purge|restore|import|permission|allowed|user|backup|reset|migrat/i;
-var _cc = { data: {}, prefs: {}, prefsAuth: false, bootPending: false, waiters: [] };
+var _cc = { data: {}, prefs: {}, prefsAuth: false, bootPending: false, waiters: [], gen: 0 };
 function _ccKey_(fn, args) { try { return fn + ':' + JSON.stringify(args); } catch(e) { return null; } }
 function _ccClone_(v) { try { return (v === null || typeof v !== 'object') ? v : JSON.parse(JSON.stringify(v)); } catch(e) { return v; } }
 function _ccPrefsLsKey_() { return 'hotelapp_prefs_' + ((typeof sessionUser !== 'undefined' && sessionUser && sessionUser.username) || ''); }
@@ -1841,7 +1848,24 @@ function _ccStore_(fn, args, value) {
   if (fn === 'getUserPreference') { if (_ccIsMine_(args[0])) _ccSetPref_(args[1], value); return; }
   if (!_CC_DATA_FNS[fn]) return;
   var key = _ccKey_(fn, args);
-  if (key) _cc.data[key] = { at: Date.now(), value: _ccClone_(value) };
+  if (!key) return;
+  var json = null; try { json = JSON.stringify(value); } catch(e) {}
+  _cc.data[key] = { at: Date.now(), value: json != null ? JSON.parse(json) : value, json: json };
+}
+// V3.57 — نسخة قديمة (تجاوزت مدتها الطازجة) لدالة شاشة: تُعرض فوراً ريثما يصل الجديد
+function _ccLookupStale_(fn, args) {
+  if (!_CC_SWR_FNS[fn]) return null;
+  var key = _ccKey_(fn, args), e = key && _cc.data[key];
+  return (e && Date.now() - e.at < _CC_STALE_MAX_MS) ? { value: _ccClone_(e.value), json: e.json } : null;
+}
+// تغيير من مستخدم آخر: بيانات الشاشات تصبح "قديمة قابلة للعرض" (تُعرض ثم تُحدَّث)، والبقية تُحذف
+function _ccOnRemoteChange_() {
+  _cc.gen++;
+  Object.keys(_cc.data).forEach(function(k) {
+    var fn = k.slice(0, k.indexOf(':'));
+    if (_CC_SWR_FNS[fn]) _cc.data[k].at = Math.min(_cc.data[k].at, Date.now() - (_CC_TTL_BY_FN[fn] || _CC_TTL_MS) - 1); // منتهية الطزاجة لكن ضمن نافذة العرض
+    else delete _cc.data[k];
+  });
 }
 function _ccSetPref_(k, v) { _cc.prefs[String(k)] = (v === undefined ? null : v); _ccPersistPrefs_(); }
 function _ccPersistPrefs_() { try { localStorage.setItem(_ccPrefsLsKey_(), JSON.stringify(_cc.prefs)); } catch(e) {} }
@@ -1849,10 +1873,12 @@ function _ccLoadPersistedPrefs_() {
   _cc.prefs = {}; _cc.prefsAuth = false;
   try { var raw = localStorage.getItem(_ccPrefsLsKey_()); if (raw) _cc.prefs = JSON.parse(raw) || {}; } catch(e) { _cc.prefs = {}; }
 }
-function _ccInvalidateData_() { _cc.data = {}; }
+function _ccInvalidateData_() { _cc.gen++; _cc.data = {}; }
+// كتابة من المستخدم نفسه: بيانات الشاشات تُحذف (لا تُعرض نسخة قبل حفظه)، والمرجعية فقط إن مسّتها الكتابة
 function _ccInvalidateWrite_(fn) {
+  _cc.gen++;
   if (_CC_REFDATA_WRITE_RE.test(fn)) { _cc.data = {}; return; }
-  Object.keys(_cc.data).forEach(function(k) { if (k.indexOf('getBookingsPage:') === 0) delete _cc.data[k]; });
+  Object.keys(_cc.data).forEach(function(k) { if (_CC_SWR_FNS[k.slice(0, k.indexOf(':'))]) delete _cc.data[k]; });
 }
 function _ccReleaseWaiters_() { var w = _cc.waiters; _cc.waiters = []; w.forEach(function(f) { try { f(); } catch(e) {} }); }
 function _ccReset_() { _cc.data = {}; _cc.prefs = {}; _cc.prefsAuth = false; _cc.bootPending = false; _ccReleaseWaiters_(); }
@@ -1885,8 +1911,9 @@ function _ccRecordHit_(fn) {
               ctx.userOk = fn;
               var next = Reflect.apply(val, obj, [function(result) {
                 try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, true, { reqBytes: ctx.reqBytes, result: result, bg: ctx.bg0 || document.hidden || ctx.epoch0 !== _perfHiddenEpoch }); } catch(e) {}
-                if (ctx.ccArgs) { try { _ccStore_(ctx.fnName, ctx.ccArgs, result); } catch(e) {} }
+                if (ctx.ccArgs) { try { if (ctx.ccGen === _cc.gen) _ccStore_(ctx.fnName, ctx.ccArgs, result); } catch(e) {} } // لا يُخزَّن رد قراءة سبقتها كتابة أثناء طيرانها
                 else if (ctx.fnName && ctx.fnName !== 'saveUserPreference' && !_CC_NONWRITE_RE.test(ctx.fnName)) _ccInvalidateWrite_(ctx.fnName); // قراءة جرت أثناء الكتابة قد تحمل بيانات قديمة
+                if (ctx.swrJson != null) { var _same = false; try { _same = JSON.stringify(result) === ctx.swrJson; } catch(e) {} if (_same) return; } // V3.57 — نفس المعروض: لا إعادة رسم
                 if (typeof fn === 'function') fn(result);
               }]);
               return wrapChain(next, ctx);
@@ -1896,6 +1923,7 @@ function _ccRecordHit_(fn) {
             return function(fn) {
               var next = Reflect.apply(val, obj, [function(err) {
                 try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, false, { reqBytes: ctx.reqBytes, err: (err && err.message) || String(err), bg: ctx.bg0 || document.hidden || ctx.epoch0 !== _perfHiddenEpoch }); } catch(e) {}
+                if (ctx.swrJson != null) { try { showToast('تعذّر تحديث البيانات — المعروض آخر نسخة محمّلة.', 'warning'); } catch(e) {} return; } // V3.57 — تبقى البيانات المعروضة بدل رسالة خطأ
                 if (typeof fn === 'function') fn(err);
               }]);
               return wrapChain(next, ctx);
@@ -1929,9 +1957,12 @@ function _ccRecordHit_(fn) {
               var h = null; try { h = _ccLookup_(ctx.fnName, args); } catch(e) {}
               if (h) { serve(h); return; }
               if (_cc.bootPending) {
-                _cc.waiters.push(function() { var h2 = null; try { h2 = _ccLookup_(ctx.fnName, args); } catch(e) {} if (h2) serve(h2); else realCall(); });
+                _cc.waiters.push(function() { var h2 = null; try { h2 = _ccLookup_(ctx.fnName, args); } catch(e) {} if (h2) serve(h2); else { ctx.ccGen = _cc.gen; realCall(); } });
                 return;
               }
+              var st = null; try { st = _ccLookupStale_(ctx.fnName, args); } catch(e) {}
+              if (st) { serve(st); ctx.swrJson = st.json; } // V3.57 — عرض فوري ثم تحديث صامت
+              ctx.ccGen = _cc.gen;
             }
             return realCall();
           };
@@ -3169,7 +3200,7 @@ function _handleAvailVersion(v) {
     if (_lastAvailVersion === null) { _lastAvailVersion = v; return; } // أول فحص: تسجيل الأساس فقط دون تحديث
     if (v !== _lastAvailVersion) {
       _lastAvailVersion = v;
-      _ccInvalidateData_(); // v3.53 — تغيير من مستخدم آخر (حجز/تعاقد): أسماء الفنادق ونطاقات التعاقد قد تغيّرت
+      _ccOnRemoteChange_(); // تغيير من مستخدم آخر (حجز/تعاقد): المرجعية تُحذف، وبيانات الشاشات تُعرض ثم تُحدَّث (V3.57)
       invalidateScreenCache('Availability_Screen');
       var screenEl = document.getElementById('Availability_Screen');
       var hotelVal = document.getElementById('avail_hotel_select') ? document.getElementById('avail_hotel_select').value : '';
@@ -3488,6 +3519,7 @@ function _applyAppBootstrap() {
       if (boot.availVersion != null && _lastAvailVersion === null) _lastAvailVersion = boot.availVersion;
     } catch(e) {}
     _ccBootDone();
+    setTimeout(_prefetchMainScreens_, 2500); // V3.57
     _usernameFullNameMap = boot.userMap || {};
     var br = boot.branding || null;
     if (br && br.unchanged) br = (cachedBranding && cachedBranding.data) || null;
@@ -4699,8 +4731,13 @@ function loadBookings() {
   _bkPage = 1;
   // v3.6 — تعبئة قوائم الفلاتر مرة واحدة من مصدر شامل (كل الفنادق/كل جهات التحصيل)، لا من الصفحة الحالية
   _bkLoadFilterOptionsOnce();
-  // v3.7 — الفلتر الافتراضي الأول للجلسة: تاريخ "من" = أمس، وتاريخ "إلى" مفتوح
-  // بعد أول تطبيق نحترم أي تغيير من المستخدم (بما فيه المسح الكامل) طوال الجلسة
+  _bkApplyDefaultFilters_();
+  _bkLoadCurrentPage(true); // V3.54 — يجلب شريط "الأوفر" مع الصفحة في نداء واحد (كانا نداءين يقرأ كل منهما شيت الحجوزات)
+}
+// v3.7 — الفلتر الافتراضي الأول للجلسة: تاريخ "من" = أمس، وتاريخ "إلى" مفتوح
+// بعد أول تطبيق نحترم أي تغيير من المستخدم (بما فيه المسح الكامل) طوال الجلسة
+// (V3.57 — دالة مستقلة كي يبني التحميل المسبق نفس الفلاتر تماماً فيُصيب نفس مفتاح الكاش)
+function _bkApplyDefaultFilters_() {
   if (!_bkDefaultFromApplied) {
     _bkDefaultFromApplied = true;
     var fromHidden = document.getElementById('bkf_from');
@@ -4712,7 +4749,37 @@ function loadBookings() {
       fromDisp.value = String(y.getDate()).padStart(2,'0')+'/'+String(y.getMonth()+1).padStart(2,'0')+'/'+y.getFullYear();
     }
   }
-  _bkLoadCurrentPage(true); // V3.54 — يجلب شريط "الأوفر" مع الصفحة في نداء واحد (كانا نداءين يقرأ كل منهما شيت الحجوزات)
+}
+
+// V3.57 — تحميل مسبق صامت لشاشتي الحجوزات والتوافر بعد الإقلاع، بنفس وسائط فتح الشاشة تماماً، فيكون أول فتح لهما
+// فورياً من الكاش. لا يُرسَم شيء ولا يُغيَّر أي اختيار ظاهر سوى تطبيق فلتر "من = أمس" الافتراضي الذي كانت الشاشة ستطبّقه.
+function _prefetchMainScreens_() {
+  if (!sessionUser) return;
+  var perms = sessionUser.permissions || {}, admin = String(sessionUser.role || '').toLowerCase() === 'admin';
+  var can = function(id) { return admin || !!(perms[id] && perms[id].canView); };
+  var noop = function() {}, u = sessionUser.username;
+  try {
+    if (can('bookings')) {
+      _bkApplyDefaultFilters_();
+      var f = _bkBuildServerFilters(); f.includeOvercap = true;
+      google.script.run.withSuccessHandler(noop).withFailureHandler(noop).getBookingsPage(f, 1, _bkPageSize, u);
+    }
+  } catch(e) {}
+  try {
+    if (can('availability')) {
+      var hn = _ccLookup_('getDistinctHotelNames', [u]);
+      var hotel = hn && hn.value && hn.value[0];
+      if (hotel) {
+        var rg = _ccLookup_('getContractDateRange', [hotel, u]), range = rg && rg.value;
+        var now = new Date(), y = now.getFullYear(), m = now.getMonth() + 1;
+        if (range) { // نفس اختيار onAvailHotelChange: الشهر الحالي إن كان ضمن التعاقد وإلا أول شهر
+          var inRange = (y > range.minYear || (y === range.minYear && m >= range.minMonth)) && (y < range.maxYear || (y === range.maxYear && m <= range.maxMonth));
+          if (!inRange) { y = range.minYear; m = range.minMonth; }
+        }
+        google.script.run.withSuccessHandler(noop).withFailureHandler(noop).getAvailabilityData(hotel, y, m, u);
+      }
+    }
+  } catch(e) {}
 }
 
 // v3.6 — تعبئة قوائم الفلاتر الفنادق وجهات التحصيل والشهور مرة واحدة فقط عند فتح الشاشة
@@ -10145,7 +10212,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.56';
+var CLIENT_APP_VERSION = 'V3.57';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {
