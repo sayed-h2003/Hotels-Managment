@@ -447,6 +447,7 @@ function saveUserPermissions(targetUsername, permsArray, actingUsername) {
     sheet.appendRow([targetUsername, p.screen, !!p.canView, !!p.canAdd, !!p.canEdit, !!p.canDelete]);
   });
   logAudit("إدارة الصلاحيات","تعديل صلاحيات",targetUsername,"","","","تم تحديث صلاحيات "+targetUsername, actingUsername);
+  _bumpNotifVersion_(); // الصلاحيات تحدد أنواع الإشعارات الظاهرة للمستخدم
   return { success: true };
 
   });
@@ -837,6 +838,7 @@ function saveUserAllowedHotels(targetUsername, hotelNames, actingUser) {
   saveUserPreference(targetUsername, "allowed_hotels", hotelNames.length ? JSON.stringify(hotelNames) : "");
   logAudit("إدارة الصلاحيات","تعديل صلاحيات الفنادق",targetUsername,"","","",
     "تعديل الفنادق المسموح بها لـ "+targetUsername+": "+(hotelNames.join("، ")||"الكل"),actingUser);
+  _bumpNotifVersion_(); // الفنادق المسموح بها تحدد الإشعارات الظاهرة للمستخدم
   return {success:true};
   } catch(e) { _logError_(_fn, e); throw e; }
 }
@@ -2099,6 +2101,7 @@ function setNotifTypeEnabled(typeId, isEnabled, currentUser) {
   if (raw) { try { (JSON.parse(raw)||[]).forEach(function(t){ disabled[t]=true; }); } catch(e){} }
   if (isEnabled) delete disabled[typeId]; else disabled[typeId]=true;
   props.setProperty("DISABLED_NOTIF_TYPES", JSON.stringify(Object.keys(disabled)));
+  _bumpNotifVersion_();
   _notifTypesDisabledCache_ = null; // إبطال الكاش الداخلي كي يُعاد قراءته بالقيمة الجديدة فوراً
   logAudit("النظام", isEnabled?"تفعيل نوع تنبيه":"تعطيل نوع تنبيه", "", "", "", "",
     (isEnabled?"تم تفعيل":"تم تعطيل")+" كل التنبيهات من نوع: "+typeId+" على مستوى النظام بالكامل", currentUser);
@@ -2203,6 +2206,7 @@ function _createNotification_(type, bookingId, hotelName, message, details, crea
     if (!isDup) {
       var notifId = _getNextSequentialId_("N", 5);
       sheet.appendRow([notifId, type, bookingId, hotelName||"", message, details||"", now, createdBy||"النظام"]);
+      _bumpNotifVersion_();
     }
   }
 
@@ -4237,7 +4241,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "v3.51";
+var APP_VERSION = "v3.52";
 
 // ═══════════════════════════════════════════════════════════════
 // طبقة تشفير كلمات المرور (SHA-256 + Salt) — متوافقة مع الحسابات القديمة
@@ -4831,6 +4835,7 @@ function purgeHotelsCompletely(hotelNames, currentUser) {
       notifIds[String(row[0])] = true; return true;
     });
     backupAndDelete("Notification_Reads", function(row) { return !!notifIds[String(row[0])]; });
+    if (counts["Notifications_Master"]) _bumpNotifVersion_();
 
     _invalidateReferenceCache_(); // خرائط الفندق/التعاقد/جهة التحصيل المخزَّنة مؤقتاً أصبحت قديمة
     _bumpAvailabilityVersion_();
@@ -5191,6 +5196,29 @@ function _bumpAvailabilityVersion_(hotelName, startDate, endDate) {
   } catch(e) {}
   // إبطال كاش شارت التوافر لكل الشهور المتقاطعة مع فترة التعديل (إن مُرّرت)
   try { if (hotelName) _invalidateAvailCacheForRange_(hotelName, startDate, endDate); } catch(e) {}
+}
+
+// v3.52 — رقم نسخة للإشعارات: يتغيّر مع أي تغيير يؤثر على ما يظهر في الجرس (إشعار جديد، حذف،
+// صلاحيات، تعطيل نوع)، فيعيد النداء الدوري القائمة الكاملة (~45 كيلوبايت) عند التغيير فقط بدل كل 15 ثانية.
+// تعليم "مقروء" لا يغيّره عمداً: المتصفح الذي علّم يحدّث نفسه محلياً، وتغييره يجبر كل المستخدمين على إعادة الجلب.
+var _NOTIF_VERSION_PROP = "NOTIF_DATA_VERSION";
+function _bumpNotifVersion_() {
+  try { PropertiesService.getScriptProperties().setProperty(_NOTIF_VERSION_PROP, String(Date.now())); } catch(e) {}
+}
+
+// v3.52 — نداء دوري موحَّد بدل ثلاثة (نبضة + نسخة التوافر + الإشعارات): كل نداء من المتصفح يكلّف ~2 ثانية
+// ثابتة مهما صغر، فتقليل عدد النداءات هو المكسب الأكبر. wantNotifs: true=إجباري، false=تخطٍّ، غير ذلك=عند التغيير فقط
+function pollAppState(username, fullName, knownNotifVersion, wantHeartbeat, wantNotifs) {
+  var _fn="[pollAppState]";
+  try {
+    var props = PropertiesService.getScriptProperties();
+    // رقم النسخة يُقرأ قبل جلب القائمة: إشعار يُنشأ بينهما يغيّر الرقم فيُجلب في النداء التالي ولا يضيع
+    var nv = props.getProperty(_NOTIF_VERSION_PROP) || "0";
+    var out = { availVersion: props.getProperty(_AVAIL_VERSION_PROP) || "0", notifVersion: nv };
+    if (wantHeartbeat) out.activeUsers = pingHeartbeatAndGetActiveUsers(username, fullName);
+    if (wantNotifs === true || (wantNotifs !== false && String(knownNotifVersion || "") !== nv)) out.notifications = getMyNotifications(username);
+    return out;
+  } catch(e) { _logError_(_fn, e); throw e; }
 }
 
 // يجلب رقم النسخة الحالي - يُستدعى من كل عميل دورياً للمقارنة

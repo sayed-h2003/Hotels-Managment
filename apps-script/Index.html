@@ -1687,6 +1687,10 @@ body.sb-collapsed #availHScrollProxy { right: 0; }
 // تماماً - فشل القياس لا يجب أبداً أن يكسر نداءً حقيقياً واحداً في التطبيق.
 var _perfBuffer = [];
 var _PERF_EXCLUDE_FNS = { flushClientPerfMetrics:1, getPerformanceReport:1, getPerfExportJson:1, getPerfLog:1, getPerfCopyAllJson:1 };
+// v3.52 — نداء بدأ أو انتهى والتبويب في الخلفية (أو تخلّلته فترة خلفية) يؤجّله المتصفح أو يجمّده مع نوم الجهاز،
+// فيظهر بمئات الثواني ويشوّه المتوسطات؛ يُسجَّل باسم "bg:<الدالة>" منفصلاً عن الأداء الفعلي
+var _perfHiddenEpoch = 0;
+document.addEventListener('visibilitychange', function() { if (document.hidden) _perfHiddenEpoch++; });
 // v3.50 — سجل network/console/الموارد يُرسَل مع نفس الدفعة المجمّعة (بلا نداء إضافي لكل عملية)
 var _perfNet = [], _perfCon = [], _perfConDropped = 0, _perfResPending = null;
 function _perfJsonLen_(x) { try { var s = JSON.stringify(x); return s ? s.length : 0; } catch(e) { return 0; } }
@@ -1754,8 +1758,9 @@ function _markScreenOpenStart_(screenId) {
 function _recordServerCallTiming_(fn, ms, ok, info) {
   try {
     if (!fn || _PERF_EXCLUDE_FNS[fn]) return;
+    if (info && info.bg) fn = 'bg:' + fn; // خارج متوسطات الأداء الفعلي (انظر _perfHiddenEpoch)
     _perfBuffer.push({ fn: fn, ms: Math.round(ms), ok: ok !== false, v: CLIENT_APP_VERSION });
-    if (_screenOpenCtx) {
+    if (_screenOpenCtx && !(info && info.bg)) {
       _perfBuffer.push({ fn: 'screen:' + _screenOpenCtx.screenId, ms: Math.round(performance.now() - _screenOpenCtx.t0), ok: true, v: CLIENT_APP_VERSION });
       _screenOpenCtx = null;
     }
@@ -1817,7 +1822,7 @@ function _recordBootReady_() {
           if (prop === 'withSuccessHandler') {
             return function(fn) {
               var next = Reflect.apply(val, obj, [function(result) {
-                try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, true, { reqBytes: ctx.reqBytes, result: result }); } catch(e) {}
+                try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, true, { reqBytes: ctx.reqBytes, result: result, bg: ctx.bg0 || document.hidden || ctx.epoch0 !== _perfHiddenEpoch }); } catch(e) {}
                 if (typeof fn === 'function') fn(result);
               }]);
               return wrapChain(next, ctx);
@@ -1826,7 +1831,7 @@ function _recordBootReady_() {
           if (prop === 'withFailureHandler') {
             return function(fn) {
               var next = Reflect.apply(val, obj, [function(err) {
-                try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, false, { reqBytes: ctx.reqBytes, err: (err && err.message) || String(err) }); } catch(e) {}
+                try { _recordServerCallTiming_(ctx.fnName, performance.now() - ctx.t0, false, { reqBytes: ctx.reqBytes, err: (err && err.message) || String(err), bg: ctx.bg0 || document.hidden || ctx.epoch0 !== _perfHiddenEpoch }); } catch(e) {}
                 if (typeof fn === 'function') fn(err);
               }]);
               return wrapChain(next, ctx);
@@ -1842,6 +1847,7 @@ function _recordBootReady_() {
           return function() {
             ctx.fnName = String(prop);
             ctx.t0 = performance.now();
+            ctx.bg0 = !!document.hidden; ctx.epoch0 = _perfHiddenEpoch;
             try { ctx.reqBytes = _PERF_EXCLUDE_FNS[ctx.fnName] ? 0 : _perfJsonLen_(Array.prototype.slice.call(arguments)); } catch(e) { ctx.reqBytes = 0; }
             return Reflect.apply(val, obj, arguments);
           };
@@ -3073,7 +3079,9 @@ function stopAvailVersionPolling() {
 // يقارن رقم النسخة الحالي بآخر رقم معروف؛ عند الاختلاف يُبطل الكاش ويُحدّث الشبكة صامتاً إن كانت الشاشة مفتوحة
 function _checkAvailVersion() {
   if (!sessionUser) return;
-  google.script.run.withSuccessHandler(function(v) {
+  google.script.run.withSuccessHandler(_handleAvailVersion).withFailureHandler(function(){}).getAvailabilityVersion();
+}
+function _handleAvailVersion(v) {
     if (_lastAvailVersion === null) { _lastAvailVersion = v; return; } // أول فحص: تسجيل الأساس فقط دون تحديث
     if (v !== _lastAvailVersion) {
       _lastAvailVersion = v;
@@ -3085,8 +3093,54 @@ function _checkAvailVersion() {
         showToast('🔄 تم تحديث بيانات التوافر (تغييرات جديدة)', 'info');
       }
     }
-  }).withFailureHandler(function(){}).getAvailabilityVersion();
 }
+
+// ═══════════════════════════════════════════════════════════════
+// v3.52 — نداء دوري موحَّد (pollAppState) بدل ثلاثة منفصلة: الإشعارات كل 15ث + نسخة التوافر كل 20ث +
+// النبضة كل 60ث = ~480 نداءً/ساعة لكل تبويب، وكل نداء يكلّف ~2 ثانية ثابتة مهما صغر. الآن نداء واحد كل
+// 30ث والتبويب ظاهر (~120/ساعة)، والإشعارات (~45 كيلوبايت) تُجلب فقط عند تغيّر رقم نسختها، وفي الخلفية
+// نبضة فقط كل 5 دقائق (عتبة "متصل" في الخادم 30 دقيقة، فيبقى المستخدم ظاهراً متصلاً).
+// ═══════════════════════════════════════════════════════════════
+var APP_POLL_MS = 30000;              // الفاصل والتبويب ظاهر
+var APP_POLL_HEARTBEAT_MS = 120000;   // النبضة والتبويب ظاهر
+var APP_POLL_BG_HEARTBEAT_MS = 300000;// النبضة والتبويب في الخلفية
+var APP_POLL_NOTIF_FORCE_MS = 300000; // جلب كامل إجباري للإشعارات كضمان (مثلاً بعد تعليم مقروء من تبويب آخر)
+var _appPollTimer = null, _appPollInFlight = false, _lastVisiblePollAt = 0, _lastHeartbeatAt = 0, _lastNotifFullAt = 0, _knownNotifVersion = null;
+
+function startAppPolling() {
+  stopAppPolling();
+  _lastHeartbeatAt = Date.now(); _lastNotifFullAt = Date.now(); // النداء المجمّع عند الدخول جلب النبضة والإشعارات للتو
+  _appPollTimer = setInterval(function() { _pollAppState(false); }, APP_POLL_MS);
+}
+function stopAppPolling() {
+  if (_appPollTimer) clearInterval(_appPollTimer);
+  _appPollTimer = null;
+}
+function _pollAppState(force) {
+  if (!sessionUser || _appPollInFlight) return;
+  var now = Date.now(), hidden = !!document.hidden;
+  var wantHb = force || (now - _lastHeartbeatAt) >= (hidden ? APP_POLL_BG_HEARTBEAT_MS : APP_POLL_HEARTBEAT_MS) - 1000;
+  if (hidden && !wantHb) return; // في الخلفية: لا شيء غير النبضة
+  var wantNotifs = hidden ? false : ((force || now - _lastNotifFullAt >= APP_POLL_NOTIF_FORCE_MS) ? true : null);
+  _appPollInFlight = true; if (!hidden) _lastVisiblePollAt = now; // نبضة الخلفية لا تُحسب فحصاً للإشعارات
+  google.script.run.withSuccessHandler(function(r) {
+    _appPollInFlight = false;
+    if (!r) return;
+    if (wantHb) { _lastHeartbeatAt = now; if (r.activeUsers) _renderConnectedUsers(r.activeUsers); }
+    if (r.notifications) {
+      _lastNotifFullAt = now;
+      _myNotifications = r.notifications || [];
+      renderNotifBell(); _pushFreshNotifsToBrowser(_myNotifications);
+    }
+    if (r.notifVersion != null && (r.notifications || wantNotifs !== false)) _knownNotifVersion = r.notifVersion;
+    _handleAvailVersion(r.availVersion);
+  }).withFailureHandler(function() { _appPollInFlight = false; })
+  .pollAppState(sessionUser.username, sessionUser.fullName || sessionUser.username, _knownNotifVersion, wantHb, wantNotifs);
+}
+// عند العودة للتبويب: فحص فوري (إن مرّ وقت كافٍ) بدل انتظار الدورة التالية
+document.addEventListener('visibilitychange', function() {
+  if (!document.hidden && _appPollTimer && Date.now() - _lastVisiblePollAt > 10000) _pollAppState(false);
+});
 
 
 
@@ -3551,10 +3605,8 @@ function enterApp() {
   _initSidebarState_();
   // نداء مجمّع واحد بدلاً من 5 نداءات منفصلة (خريطة الأسماء + الهوية + مدة الجلسة + الإشعارات + المتصلون)
   _applyAppBootstrap();
-  _heartbeatInterval = setInterval(pingAndRefreshConnected, 60000);
   startHeaderClock();
-  startNotifPolling(true); // true = تخطّي الجلب الأولي (وصل ضمن النداء المجمّع)
-  startAvailVersionPolling(); // بدء فحص تحديثات شارت التوافر من مستخدمين آخرين
+  startAppPolling(); // v3.52 — نداء دوري واحد (نبضة + إشعارات عند التغيّر + نسخة التوافر) بدل ثلاثة
   _requestNotificationPermission(); // v3.0 — طلب إذن إشعارات المتصفح مرة واحدة
   _runDailyBackgroundChecksOnce();
 
@@ -3614,6 +3666,7 @@ function doLogout() {
   stopHeaderClock();
   stopNotifPolling();
   stopAvailVersionPolling();
+  stopAppPolling();
   _lastAvailVersion = null; // إعادة تصفير الأساس ليُعاد ضبطه من جديد عند الدخول التالي
   google.script.run.logoutUser(sessionUser.username, sessionUser.fullName);
   sessionUser = null;
@@ -9956,7 +10009,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'v3.51';
+var CLIENT_APP_VERSION = 'v3.52';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {
