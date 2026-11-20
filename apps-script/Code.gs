@@ -2223,6 +2223,38 @@ function deleteBooking(bookingId, currentUser) {
 // (راجع manuallyClearOverCapacityFlag) للتحقق: هل يتوفر هذا الحجز بمفرده مقابل الحجوزات "الصلبة" فقط؟
 // v3.53 — preloaded (اختياري): {contractsData, bookingsData} مقروءة مسبقاً — getOverCapacityNotifications كانت تعيد
 // قراءة شيتي التعاقدات والحجوزات كاملين لكل حجز أوفر على حدة
+// ═══ V3.62 — قاعدة الليالي الموحّدة (مصدر واحد لكل الشاشات والتقارير) ═══
+// • الحجز يشغل الليالي [تاريخ الدخول، تاريخ الخروج): يوم الخروج غرفته فارغة فلا يُخصم ولا يُحتسب له إيراد.
+// • التعاقد يغطي الليالي [تاريخ البداية، تاريخ النهاية): تاريخ النهاية يوم خروج وتسليم الغرف للفندق — لا طاقة ولا تكلفة فيه.
+//   (تعاقد 1→30 نوفمبر = 29 ليلة مدفوعة؛ ليلة 30 غير متاحة للبيع.)
+// • كل ليلة تُنسب لتاريخها هي (اليوم والشهر) في كل التقارير.
+// كانت الدوال تختلف: فحص التوافر والشارت والبيان اليومي ونسك تحسب يوم نهاية التعاقد ليلة متاحة ومكلِّفة،
+// والتقرير المالي وقيمة العقد لا تحسبانه؛ والتقرير المالي الشهري كان ينسب الليلة لشهر اليوم التالي لها.
+function _contractCoversNight_(c, day) { return day >= c.startDate && day < c.endDate; }
+// أرقام الحجوزات (غير الملغاة/المحذوفة، بغرف موجبة) التي تشغل ليلة هي تاريخ نهاية تعاقد لفندقها ولا يغطيها أي تعاقد آخر
+function _bookingsOnHandoverNight_() {
+  var cData = _getSheetValues_("Contracts_Master"), bData = _getSheetValues_("Bookings_Master");
+  var byHotel = {}, hotelOf = {};
+  for (var i = 1; i < cData.length; i++) {
+    var r = cData[i]; if (!r[0] || r[12] === true) continue;
+    hotelOf[r[0]] = r[1];
+    (byHotel[r[1]] = byHotel[r[1]] || []).push({ startDate: _dateOnly_(r[3] instanceof Date ? r[3] : new Date(r[3])), endDate: _dateOnly_(r[4] instanceof Date ? r[4] : new Date(r[4])) });
+  }
+  var out = [];
+  for (var j = 1; j < bData.length; j++) {
+    var b = bData[j]; if (!b[0] || b[14] === true || b[4] === "ملغي" || !((parseFloat(b[5]) || 0) > 0)) continue;
+    var cs = byHotel[hotelOf[b[1]]]; if (!cs) continue;
+    var ci = _dateOnly_(b[6] instanceof Date ? b[6] : new Date(b[6])), co = _dateOnly_(b[7] instanceof Date ? b[7] : new Date(b[7]));
+    var hit = false;
+    for (var k = 0; k < cs.length && !hit; k++) {
+      var e = cs[k].endDate;
+      if (e >= ci && e < co) { var covered = false; for (var m = 0; m < cs.length; m++) if (_contractCoversNight_(cs[m], e)) { covered = true; break; } if (!covered) hit = true; }
+    }
+    if (hit) out.push(String(b[0]));
+  }
+  return out;
+}
+
 function _checkBookingAvailability_(contractId, checkInDate, checkOutDate, roomCount, excludeBookingId, excludeOtherOverBookings, preloaded) {
   if (roomCount<0) return {ok:true, shortfallDays:[]};
   var ss=_getSS_();
@@ -2263,7 +2295,7 @@ function _checkBookingAvailability_(contractId, checkInDate, checkOutDate, roomC
   var cur=_dateOnly_(checkInDate), end=_dateOnly_(checkOutDate);
   while (cur<end) {
     var cap=0;
-    hotelContracts.forEach(function(hc){ if (cur>=hc.startDate&&cur<=hc.endDate) cap+=hc.roomCount; });
+    hotelContracts.forEach(function(hc){ if (_contractCoversNight_(hc, cur)) cap+=hc.roomCount; });
     var booked=0;
     otherBookings.forEach(function(ob){ if (cur>=ob.checkIn&&cur<ob.checkOut) booked+=ob.roomCount; });
     var available=cap-booked;
@@ -2742,7 +2774,7 @@ function _buildAvailabilityFull_(hotelName, year, month) {
     var dd=new Date(year,month-1,d), cap=0, costD=0;
     for (var hc=0; hc<hotelContracts.length; hc++) {
       var hcc=hotelContracts[hc];
-      if (dd>=hcc.startDate&&dd<=hcc.endDate) { cap+=hcc.roomCount; costD+=hcc.roomCount*hcc.roomPrice; }
+      if (_contractCoversNight_(hcc, dd)) { cap+=hcc.roomCount; costD+=hcc.roomCount*hcc.roomPrice; }
     }
     dailyCapacity.push(cap);
     dailyCost.push(Math.round(costD*100)/100);
@@ -3073,14 +3105,14 @@ function getFullProfitReport(hotelName, currentUser, periodStartMonth, periodSta
   }
 
   while (curYear < endYear || (curYear===endYear && curMonth<=endMonth)) {
-    // ═══ الحدود الشهرية بنظام الليالي (وفق تعريف المستخدم) ═══
-    // الليلة تُنسب إلى الشهر الذي يقع فيه تاريخ "الخروج" منها (checkOut)
-    // مثال: ليلة الدخول 31/7 (خروج 1/8) تُحتسب ضمن أغسطس وليس يوليو
-    // عملياً: نافذة الاحتساب لكل شهر = من (آخر يوم في الشهر السابق) إلى (آخر يوم في الشهر الحالي) حصرياً
+    // ═══ V3.62 — كل ليلة تُنسب لشهر تاريخها هي (قرار المستخدم 20/11/2026) ═══
+    // مثال: حجز دخول 28/11 وخروج 2/12 ⇒ ليالي 28 و29 و30 في نوفمبر، وليلة 1 في ديسمبر، ويوم 2 لا يُحتسب.
+    // (كانت الليلة تُنسب لشهر اليوم التالي لها: ليلة 30/11 تُحتسب في ديسمبر — فيختلف التقرير الشهري عن البيان اليومي والشارت.)
+    // نافذة الشهر = [أول يوم بالشهر، أول يوم بالشهر التالي)
     var dim = new Date(curYear, curMonth, 0).getDate(); // عدد أيام الشهر الحالي
-    var monthStart = new Date(curYear, curMonth-1, 1);              // لعرض التسمية والتقاطع مع الحجوزات فقط
-    var nightsWinStart = new Date(curYear, curMonth-1, 0);           // آخر يوم بالشهر السابق (نقطة بداية نافذة الليالي)
-    var nightsWinEnd   = new Date(curYear, curMonth-1, dim);         // آخر يوم بالشهر الحالي (حد نهاية حصري لنافذة الليالي)
+    var monthStart = new Date(curYear, curMonth-1, 1);
+    var nightsWinStart = new Date(curYear, curMonth-1, 1);           // أول ليلة بالشهر
+    var nightsWinEnd   = new Date(curYear, curMonth, 1);             // حد نهاية حصري: أول يوم بالشهر التالي
     var sales=0, cost=0, contractedNights=0, bookedNights=0;
     var costLines=[], salesLines=[];
 
@@ -3090,7 +3122,7 @@ function getFullProfitReport(hotelName, currentUser, periodStartMonth, periodSta
     while(cur2<nightsWinEnd) {
       for (var hc=0; hc<hotelContracts.length; hc++) {
         var c=hotelContracts[hc];
-        if (cur2>=c.startDate && cur2<c.endDate) {
+        if (_contractCoversNight_(c, cur2)) {
           cost+=c.roomCount*c.roomPrice; contractedNights+=c.roomCount;
           contractNightsMap[hc]=(contractNightsMap[hc]||0)+1;
         }
@@ -3130,7 +3162,7 @@ function getFullProfitReport(hotelName, currentUser, periodStartMonth, periodSta
 
     // فترة احتساب الليالي الفعلية لهذا الشهر (تُعرض بخط صغير أعلى التلميح لتوضيح أساس الحساب)
     var tzR = _tz_();
-    var periodLine = "🗓 فترة الاحتساب: "+_fmtDate_(nightsWinStart,tzR,'dd/MM/yyyy')+" — "+_fmtDate_(nightsWinEnd,tzR,'dd/MM/yyyy');
+    var periodLine = "🗓 ليالي الشهر: من "+_fmtDate_(nightsWinStart,tzR,'dd/MM/yyyy')+" إلى "+_fmtDate_(new Date(curYear, curMonth-1, dim),tzR,'dd/MM/yyyy');
 
     var calcDetail=periodLine
       +"\n──────────────"
@@ -3208,7 +3240,7 @@ function _dsDayFigures_(hotelContracts, hotelBookings, day) {
   var cost=0, sales=0, noPriceCount=0;
   for (var i=0; i<hotelContracts.length; i++) {
     var c=hotelContracts[i];
-    if (day>=c.startDate && day<=c.endDate) cost += c.roomCount*c.roomPrice;
+    if (_contractCoversNight_(c, day)) cost += c.roomCount*c.roomPrice;
   }
   for (var j=0; j<hotelBookings.length; j++) {
     var b=hotelBookings[j];
@@ -3363,6 +3395,7 @@ function getDashboardData(currentUser) {
 
   var salesMatrix = {}, hotelSalesTotal = {};
   var upcomingBookings = [];
+  var _tomorrowD = new Date(today.getFullYear(), today.getMonth(), today.getDate()+1); // V3.62 — حد حصري لـ"حتى ليلة اليوم"
   var weekLater = new Date(today.getFullYear(), today.getMonth(), today.getDate()+7);
 
   for (var j=1; j<bookingsData.length; j++) {
@@ -3379,10 +3412,15 @@ function getDashboardData(currentUser) {
     var bookingValue = parseFloat(brow[10])||0;
     var collName = collMap[brow[3]]||brow[3];
 
+    // V3.62 — "حتى تاريخه" = الليالي التي حلّت فعلاً (حتى ليلة اليوم)، بنفس أساس التكلفة أدناه والبيان اليومي والشارت.
+    // (كانت قيمة الحجز كاملة تُحتسب بمجرد بدء الدخول، بما فيها ليالٍ مستقبلية، مقابل تكلفة حتى اليوم فقط ⇒ ربح مبالغ فيه)
     if (ci <= today) {
+      var _toEx = co < _tomorrowD ? co : _tomorrowD;
+      var _nTD = Math.round((_toEx - ci)/86400000);
+      var _salesTD = _nTD > 0 ? Math.round(_nTD * roomCount * (parseFloat(brow[9])||0) * 100)/100 : 0;
       if (!salesMatrix[collName]) salesMatrix[collName] = {};
-      salesMatrix[collName][hn2] = (salesMatrix[collName][hn2]||0) + bookingValue;
-      hotelSalesTotal[hn2] = (hotelSalesTotal[hn2]||0) + bookingValue;
+      salesMatrix[collName][hn2] = (salesMatrix[collName][hn2]||0) + _salesTD;
+      hotelSalesTotal[hn2] = (hotelSalesTotal[hn2]||0) + _salesTD;
     }
 
     if (ci >= today && ci <= weekLater) {
@@ -3403,7 +3441,7 @@ function getDashboardData(currentUser) {
     var cost = 0;
     hotels[hn3].contracts.forEach(function(ct) {
       var start = ct.startDate;
-      var end = ct.endDate < today ? ct.endDate : today;
+      var end = ct.endDate < _tomorrowD ? ct.endDate : _tomorrowD; // V3.62 — حتى ليلة اليوم ضمناً (كانت حتى ليلة أمس)؛ نهاية التعاقد حصرية
       if (end <= start) return;
       var nights = Math.round((end-start)/86400000);
       cost += nights * ct.roomCount * ct.roomPrice;
@@ -3433,7 +3471,7 @@ function getDashboardData(currentUser) {
     contracts.forEach(function(ct) {
       for (var d2=0; d2<dayCount; d2++) {
         var dd=new Date(minStart.getFullYear(),minStart.getMonth(),minStart.getDate()+d2);
-        if (dd>=ct.startDate && dd<ct.endDate) dailyCap[d2]+=ct.roomCount;
+        if (_contractCoversNight_(ct, dd)) dailyCap[d2]+=ct.roomCount;
       }
     });
     for (var j2=1; j2<bookingsData.length; j2++) {
@@ -3675,7 +3713,7 @@ function _getNightlyAvailability_(contractId, checkInDate, checkOutDate, exclude
   var cur = _dateOnly_(checkInDate), end = _dateOnly_(checkOutDate);
   while (cur < end) {
     var cap = 0;
-    hotelContracts.forEach(function(hc){ if (cur>=hc.startDate && cur<=hc.endDate) cap += hc.roomCount; });
+    hotelContracts.forEach(function(hc){ if (_contractCoversNight_(hc, cur)) cap += hc.roomCount; });
     var booked = 0;
     otherBookings.forEach(function(ob){ if (cur>=ob.checkIn && cur<ob.checkOut) booked += ob.roomCount; });
     nights.push({ date: _fmtDate_(cur, tz, "dd/MM/yyyy"), capacity: cap, booked: booked, available: cap-booked });
@@ -4595,7 +4633,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.61";
+var APP_VERSION = "V3.62";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -4666,7 +4704,7 @@ var _AVAIL_CACHE_TTL_SEC = 900; // 15 دقيقة كحد أقصى (يُبطَل �
 function _availCacheKey_(hotelName, year, month) {
   // مفتاح آمن للكاش: تجزئة اسم الفندق (Base64) لتفادي أي رموز عربية أو خاصة في المفتاح
   // V3.55 — بادئة جديدة: النسخ القديمة المخزَّنة كانت مقصوصة حسب صلاحيات من فتحها أولاً فلا تصلح للنسخة الكاملة
-  return "AV2_" + Utilities.base64EncodeWebSafe(Utilities.newBlob(String(hotelName||"")).getBytes()) + "_" + year + "_" + month;
+  return "AV3_" + Utilities.base64EncodeWebSafe(Utilities.newBlob(String(hotelName||"")).getBytes()) + "_" + year + "_" + month;
 }
 function _getAvailFromCache_(hotelName, year, month) {
   try {
@@ -6261,6 +6299,8 @@ function _perfDiag_() {
       for (var bi = 1; bi < bd.length; bi++) { var br = bd[bi]; if (br[0] && br[14] !== true && br[20] !== "" && br[20] != null && !br[18] && (br[21] === "" || br[21] == null)) mis++; }
       d.misplacedPaymentDates = mis;
     } catch (eM) {}
+    // V3.62 — حجوزات تشغل ليلة "يوم تسليم" تعاقد (تاريخ نهايته) بلا تعاقد آخر يغطيها: كانت تُعدّ ضمن الطاقة قبل توحيد القاعدة
+    try { d.bookingsOnHandoverNight = _bookingsOnHandoverNight_().length; } catch (eH) {}
     ["Perf", "PerfSlow", "PerfLog"].forEach(function(n) {
       var s = ss.getSheetByName(n);
       d[n] = s ? { lastRow: s.getLastRow(), maxRows: s.getMaxRows(), maxCols: s.getMaxColumns() } : null;
@@ -6839,7 +6879,7 @@ function getNusukGridData(hotelName, startDateIso, endDateIso, filters, currentU
     var dd=new Date(startDate.getTime()+d*86400000);
     for (var hc=0; hc<hotelContracts.length; hc++) {
       var hcc=hotelContracts[hc];
-      if (dd>=hcc.startDate&&dd<=hcc.endDate) dailyCapacity[d]+=hcc.dailyPersonsCap;
+      if (_contractCoversNight_(hcc, dd)) dailyCapacity[d]+=hcc.dailyPersonsCap;
     }
     dailyCapacity[d]=Math.round(dailyCapacity[d]); // نعرضها كأعداد صحيحة بالأفراد
   }
