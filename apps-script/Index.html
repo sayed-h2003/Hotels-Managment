@@ -324,14 +324,24 @@ body.sb-collapsed #top-header { margin-right:0; }
   #notif_permission_banner { position:static !important; }
   /* V3.61 — الشريط العلوي على الموبايل: مربع البحث ينكمش بدل أن يغطي زر القائمة (كان بعرض ثابت 230px ولا ينكمش) */
   #top-header { padding:0 8px; gap:6px; }
-  .th-start { flex-shrink:0; max-width:42%; }
-  .th-right { flex:1 1 auto; min-width:0; gap:6px; justify-content:flex-end; }
-  .gs-wrap { flex:1 1 auto; min-width:0; margin-inline:2px; }
-  .gs-input { width:100%; min-width:0; }
+  .th-start { flex:1 1 auto; min-width:0; }
+  .th-start .th-title { min-width:0; }
+  .th-right { flex:0 0 auto; gap:6px; justify-content:flex-end; }
+  /* V3.67 — البحث على الموبايل أيقونة 🔍 بحجم زر؛ عند اللمس يتمدد بعرض الشريط كله ونتائجه تحته بعرض الشاشة.
+     (كان مربعه يتمدد خارج حاويته فيغطي زر الوضع الليلي بعد إضافة زر العرض وأيقونة المتصلين) */
+  .gs-wrap { flex:0 0 38px; width:38px; margin-inline:0; position:static; }
+  .gs-input { width:38px !important; min-width:0; height:36px !important; min-height:0 !important; padding:0 8px !important; cursor:pointer; text-overflow:clip; }
+  .gs-input:focus { position:fixed; top:7px; left:8px; right:8px; width:auto !important; height:40px !important; padding:0 14px !important; z-index:1300; cursor:text; font-size:16px !important; }
+  .gs-panel { position:fixed !important; top:54px !important; left:8px !important; right:8px !important; width:auto !important; max-width:none !important; max-height:65vh; overflow-y:auto; z-index:1300; }
   #app-sidebar { transform:translateX(100%); width:var(--sb-w) !important; }
   #app-sidebar.sb-open { transform:translateX(0); }
   #Main_Application, #top-header { margin-right:0 !important; }
-  .th-connected { display:none; }
+  /* V3.67 — أيقونة المتصلين تظهر على الموبايل بشكل مضغوط (النقطة الخضراء + العدد)، والقائمة تنفتح بعرض الشاشة تحت الشريط العلوي.
+     كانت مخفية تماماً على الشاشات الصغيرة بلا بديل. */
+  .th-connected { display:flex; padding:5px 8px; gap:4px; font-size:12px; font-weight:800; min-height:34px; flex-shrink:0; }
+  .th-connected .th-connected-word { display:none; }
+  .th-connected .connected-dropdown { position:fixed; top:58px; left:10px; right:10px; width:auto; max-width:none; max-height:60vh; overflow-y:auto; z-index:1200; }
+  .th-connected .connected-dropdown .item { font-size:14px !important; padding:10px 14px !important; }
   .th-datetime { display:none; }
   .th-title { font-size:10pt; }
   .th-user span { display:none; }
@@ -1136,7 +1146,7 @@ body.sb-collapsed #availHScrollProxy { right: 0; }
     </div>
     <div class="th-connected" id="th_connected_toggle" onclick="toggleConnectedDropdown()">
       <span class="dot"></span>
-      <span id="th_connected_count">0</span> متصل
+      <span id="th_connected_count">0</span><span class="th-connected-word"> متصل</span>
       <div class="connected-dropdown" id="connected_dropdown"></div>
     </div>
     <div class="user-menu-wrap" onclick="toggleUserDropdown(event)">
@@ -11086,7 +11096,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.66';
+var CLIENT_APP_VERSION = 'V3.67';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {
