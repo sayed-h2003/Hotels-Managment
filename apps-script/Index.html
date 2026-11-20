@@ -2687,7 +2687,7 @@ function recheckWaitlistStatusNow() {
     showToast('تم الفحص — تحديث '+(res.notificationsCreated||0)+' حالة.', 'success');
     loadWaitlist();
   }).withFailureHandler(function(e){ showToast(e.message||e, 'error'); })
-  .checkWaitlistAvailabilityAndNotify();
+  .checkWaitlistAvailabilityAndNotify(true); // زر صريح من المستخدم: يتجاوز حد الـ3 ساعات
 }
 
 function loadWaitlist() {
@@ -3530,6 +3530,11 @@ function _translateUsernamesInText(text) {
 // تُشغَّل الفحوصات الخلفية (دفعات مستحقة/انتظار/تليجرام/تواريخ تأكيد) مرة واحدة فقط يومياً لكل متصفح
 // بدلاً من كل تسجيل دخول - يقلّل الاعتماد على Drive/UrlFetch المتكرر ويقلّل فرص أي عطل عابر بمنصة Google
 function _runDailyBackgroundChecksOnce() {
+  // V3.55 — تأجيل 20 ثانية: كانت 4 نداءات ثقيلة تنطلق مع الإقلاع نفسه فتتزاحم معه على الخادم
+  setTimeout(_runDailyBackgroundChecksNow_, 20000);
+}
+function _runDailyBackgroundChecksNow_() {
+  if (!sessionUser) return;
   var todayKey = new Date().toISOString().slice(0,10);
   var lastRun = null;
   try { lastRun = localStorage.getItem('hotelapp_bg_checks_date'); } catch(e) {}
@@ -3922,8 +3927,9 @@ function switchScreen(screenId) {
   // تحميل بيانات الشاشة عند الدخول إليها لأول مرة أو بعد انتهاء صلاحية ذاكرة التخزين المؤقت
   if (screenId === 'Dashboard_Screen')         loadDashboard();
   if (screenId === 'Waitlist_Screen') {
-    // فحص الإمكانية تلقائياً عند فتح الشاشة (بصمت، دون رسائل توست) ثم تحميل القائمة المُحدَّثة
-    google.script.run.withSuccessHandler(function(){ loadWaitlist(); }).withFailureHandler(function(){ loadWaitlist(); }).checkWaitlistAvailabilityAndNotify();
+    // V3.55 — القائمة تُحمَّل فوراً والفحص بالتوازي (كانت الشاشة تنتظر الفحص الكامل أولاً)، وتُعاد فقط إن تغيّرت حالة
+    loadWaitlist();
+    google.script.run.withSuccessHandler(function(r){ if (r && r.notificationsCreated) loadWaitlist(); }).withFailureHandler(function(){}).checkWaitlistAvailabilityAndNotify(true);
   }
   if (screenId === 'Contracts_Screen')        loadContracts();
   if (screenId === 'Bookings_Screen')          loadBookings();
@@ -10139,7 +10145,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.55';
+var CLIENT_APP_VERSION = 'V3.56';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {

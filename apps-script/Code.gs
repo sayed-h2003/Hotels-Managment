@@ -430,6 +430,25 @@ function getUserPermissions(username, role) {
   } catch(e) { _logError_(_fn, e); throw e; }
 }
 
+
+// V3.55 — استبدال صفوف صلاحيات مستخدم/مستخدمين بكتابة واحدة: كان الحفظ يحذف كل صف بـ deleteRow ثم يضيف كل شاشة
+// بـ appendRow (~40 شاشة ⇒ ~80 عملية كتابة منفصلة لكل مستخدم، وتُضرب في عدد المستخدمين عند نشر دور). يُستدعى تحت القفل.
+function _replacePermissionRows_(matchUser, newRows) {
+  var sheet = _getOrCreateSheet_("Permissions_Master");
+  var data = sheet.getDataRange().getValues();
+  var width = Math.max(6, (data[0] || []).length);
+  var pad = function(r) { r = r.slice(0, width); while (r.length < width) r.push(""); return r; };
+  var keep = [pad(data.length ? data[0] : SHEET_SCHEMAS["Permissions_Master"])];
+  for (var i = 1; i < data.length; i++) if (!matchUser(String(data[i][0]))) keep.push(pad(data[i]));
+  newRows.forEach(function(r) { keep.push(pad(r)); });
+  var maxRows = sheet.getMaxRows();
+  if (keep.length > maxRows) sheet.insertRowsAfter(maxRows, keep.length - maxRows);
+  sheet.getRange(1, 1, keep.length, width).setValues(keep);
+  var extra = data.length - keep.length;
+  if (extra > 0) sheet.deleteRows(keep.length + 1, extra);
+  _invalidateSheetCache_("Permissions_Master");
+}
+
 // يحفظ/يُحدّث صلاحيات مستخدم معيّن لكل الشاشات دفعة واحدة (Admin فقط)
 function saveUserPermissions(targetUsername, permsArray, actingUsername) {
   var _fn="[saveUserPermissions]"; _logInfo_(_fn, "START | "+"targetUsername:"+String(JSON.stringify(targetUsername)||"").slice(0, 80)+", "+"permsArray:[data]"+", "+"actingUsername:"+String(JSON.stringify(actingUsername)||"").slice(0, 80));
@@ -437,14 +456,8 @@ function saveUserPermissions(targetUsername, permsArray, actingUsername) {
   return _withLock_(function() {
   _invalidateSheetCache_("Permissions_Master"); // ضمان قراءة حديثة بعد أي كتابة ضمن نفس التنفيذ
   if (_getUserRole_(actingUsername) !== "Admin") throw new Error("غير مصرح.");
-  var sheet = _getOrCreateSheet_("Permissions_Master");
-  var data = sheet.getDataRange().getValues();
-  for (var i = data.length-1; i >= 1; i--) {
-    if (String(data[i][0]) === String(targetUsername)) sheet.deleteRow(i+1);
-  }
-  permsArray.forEach(function(p) {
-    sheet.appendRow([targetUsername, p.screen, !!p.canView, !!p.canAdd, !!p.canEdit, !!p.canDelete]);
-  });
+  _replacePermissionRows_(function(u) { return u === String(targetUsername); },
+    (permsArray || []).map(function(p) { return [targetUsername, p.screen, !!p.canView, !!p.canAdd, !!p.canEdit, !!p.canDelete]; }));
   _invalidateAuthCache_(); // V3.55 — بعد الكتابة أيضاً (يغلق نافذة إعادة بناء اللقطة بقيم قديمة أثناء الكتابة)
   logAudit("إدارة الصلاحيات","تعديل صلاحيات",targetUsername,"","","","تم تحديث صلاحيات "+targetUsername, actingUsername);
   _bumpNotifVersion_(); // الصلاحيات تحدد أنواع الإشعارات الظاهرة للمستخدم
@@ -527,8 +540,7 @@ function _getOrCreateSheet_(sheetName) {
 
 function _getNextSequentialId_(prefix, digits) {
   digits = digits || 3;
-  var lock = LockService.getScriptLock(); lock.waitLock(15000);
-  try {
+  return _withLock_(function() { // V3.55 — عبر القفل القابل لإعادة الدخول (لا يفك قفل عملية الحفظ المحيطة)
     var seqSheet = _getOrCreateSheet_("ID_Sequences");
     var data = seqSheet.getDataRange().getValues(), rowIdx=-1, lastNum=0;
     for (var i=1; i<data.length; i++) {
@@ -537,14 +549,13 @@ function _getNextSequentialId_(prefix, digits) {
     var nextNum = lastNum+1;
     if (rowIdx>-1) seqSheet.getRange(rowIdx,2).setValue(nextNum); else seqSheet.appendRow([prefix,nextNum]);
     return prefix + String(nextNum).padStart(digits,"0");
-  } finally { lock.releaseLock(); }
+  }, 15000);
 }
 
 // يُولّد رقماً تسلسلياً بسيطاً (بدون حرف بادئة) لأغراض أخرى داخل النظام
 function _getNextPlainNumber_(seqKey, digits) {
   digits = digits || 3;
-  var lock = LockService.getScriptLock(); lock.waitLock(15000);
-  try {
+  return _withLock_(function() { // V3.55 — عبر القفل القابل لإعادة الدخول (لا يفك قفل عملية الحفظ المحيطة)
     var seqSheet = _getOrCreateSheet_("ID_Sequences");
     var data = seqSheet.getDataRange().getValues(), rowIdx=-1, lastNum=0;
     for (var i=1; i<data.length; i++) {
@@ -553,7 +564,7 @@ function _getNextPlainNumber_(seqKey, digits) {
     var nextNum = lastNum+1;
     if (rowIdx>-1) seqSheet.getRange(rowIdx,2).setValue(nextNum); else seqSheet.appendRow([seqKey,nextNum]);
     return String(nextNum).padStart(digits,"0");
-  } finally { lock.releaseLock(); }
+  }, 15000);
 }
 
 // ===================== 7. سجل التدقيق =====================
@@ -1602,9 +1613,10 @@ function saveDualPayment(p, currentUser) {
 
 // يفحص كل أقساط السداد غير المكتملة التي يقترب استحقاقها (خلال 7 أيام) أو فات موعدها، وينشئ تنبيهاً لكل منها
 // (بفضل الحارس الداخلي في _createNotification_ لن يتكرر نفس التنبيه أكثر من مرة كل 24 ساعة، محققاً "يظهر يومياً حتى السداد")
-function checkDuePaymentsAndNotify(currentUser) {
+function checkDuePaymentsAndNotify(currentUser, force) {
   var _fn="[checkDuePaymentsAndNotify]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
+  if (!_bgCheckShouldRun_("DUE_PAYMENTS", force)) return { success:true, skipped:"ran recently" };
   var ss=_getSS_();
   var paymentsData=_getOrCreateSheet_("Contract_Payments").getDataRange().getValues();
   var contractsData=_getOrCreateSheet_("Contracts_Master").getDataRange().getValues();
@@ -2795,13 +2807,8 @@ function deleteUser(username, currentUser) {
   }
   if (!found) throw new Error("المستخدم غير موجود.");
   // حذف صلاحياته المخصصة أيضاً
-  var permsSheet=_getOrCreateSheet_("Permissions_Master");
-  if (permsSheet) {
-    var pdata=permsSheet.getDataRange().getValues();
-    for (var j=pdata.length-1; j>=1; j--) {
-      if (String(pdata[j][0])===String(username)) permsSheet.deleteRow(j+1);
-    }
-  }
+  // V3.55 — كتابة واحدة تحت القفل بدل حذف صف بصف (~40 صفاً لكل مستخدم)
+  _withLock_(function() { _replacePermissionRows_(function(u) { return u === String(username); }, []); });
   _invalidateAuthCache_(); // V3.55 — بعد الكتابة أيضاً (يغلق نافذة إعادة بناء اللقطة بقيم قديمة أثناء الكتابة)
   logAudit("إدارة المستخدمين","حذف مستخدم",username,"","","","تم حذف المستخدم: "+fullName+" ("+username+")",currentUser);
   return {success:true};
@@ -3582,9 +3589,10 @@ function _classifyWaitlistAvailability_(nights, roomCount) {
 }
 
 // يفحص كل طلبات قائمة الانتظار النشطة، يُحدّث حالتها (متاح بالكامل/جزئياً) وينشئ تنبيهاً مفصَّلاً (يشمل عدد الغرف) عند أي تغيير
-function checkWaitlistAvailabilityAndNotify() {
+function checkWaitlistAvailabilityAndNotify(force) {
   var _fn="[checkWaitlistAvailabilityAndNotify]"; _logInfo_(_fn, "START | "+"");
   try {
+  if (!_bgCheckShouldRun_("WAITLIST", force)) return { success:true, skipped:"ran recently" };
   var sheet = _getOrCreateSheet_("Waitlist_Master");
   var data = sheet.getDataRange().getValues();
   var hotelMap = _buildContractHotelMap_();
@@ -3739,32 +3747,53 @@ function _sendTelegramMessage_(text) {
 // v3.43 — إرسال غير متزامن: بدل انتظار استجابة تليجرام أثناء حفظ حجز/تعاقد (قد تُبطئ الحفظ على المستخدم
 // إن كانت تليجرام بطيئة أو معلّقة)، نُضيف النص لطابور مؤقت ونُجدول مشغّلاً زمنياً لمرة واحدة (يُحذف تلقائياً
 // بعد تنفيذه) يُرسل كل ما تراكم في الطابور فعلياً خلال ثانية تقريباً — فيعود المستخدم لحالة "تم الحفظ" فوراً
+// V3.55 — (1) كل رسالة بمفتاح خصائص مستقل: الطابور القديم (قراءة-تعديل-كتابة لمفتاح واحد بلا قفل) كان يُضيّع رسالة
+// إذا حفظ مستخدمان في نفس اللحظة. (2) مشغّل واحد فقط معلَّق في أي وقت: إنشاء مشغّل (~0.5-1 ث) كان يحدث مع كل رسالة
+// داخل عملية الحفظ وتحت القفل، والمشغّلات المتراكمة تقترب من حد Google (20 مشغّلاً). (3) مشغّل التفريغ الدوري
+// (كل 10 دقائق) يلتقط أي رسالة عالقة لو فشل إنشاء المشغّل.
+var _TGQ_PREFIX = "TGQ_", _TG_FLUSH_FLAG = "TG_FLUSH_SCHEDULED_AT", __TGQ_SEQ = 0;
 function _sendTelegramMessageAsync_(text) {
   try {
     var props = PropertiesService.getScriptProperties();
-    var raw = props.getProperty("TG_ASYNC_QUEUE") || "[]";
-    var queue; try { queue = JSON.parse(raw); } catch(e) { queue = []; }
-    queue.push(text);
-    props.setProperty("TG_ASYNC_QUEUE", JSON.stringify(queue));
-    ScriptApp.newTrigger("_flushTelegramQueue_").timeBased().after(1000).create();
+    __TGQ_SEQ++; // ترتيب ثابت للرسائل المتولدة في نفس المللي ثانية (المفاتيح تُفرز نصياً عند التفريغ)
+    props.setProperty(_TGQ_PREFIX + Date.now() + "_" + ("0000" + __TGQ_SEQ).slice(-5) + "_" + Math.floor(Math.random() * 1e6), String(text));
+    var flag = Number(props.getProperty(_TG_FLUSH_FLAG) || 0);
+    if (Date.now() - flag > 120000) {
+      ScriptApp.newTrigger("_flushTelegramQueue_").timeBased().after(1000).create();
+      props.setProperty(_TG_FLUSH_FLAG, String(Date.now()));
+    }
   } catch (e) { _logError_("[_sendTelegramMessageAsync_]", e); }
+}
+function _tgQueuePending_() {
+  try {
+    var all = PropertiesService.getScriptProperties().getProperties();
+    if (all.TG_ASYNC_QUEUE && all.TG_ASYNC_QUEUE !== "[]") return true;
+    return Object.keys(all).some(function(k) { return k.indexOf(_TGQ_PREFIX) === 0; });
+  } catch (e) { return false; }
 }
 
 // يُنفَّذ تلقائياً عبر المشغّل أعلاه: يُرسل كل الرسائل المتراكمة في الطابور فعلياً ثم يُفرغه. آمن للتكرار
 // (لو استُدعي أكثر من مرة متقاربة بسبب عدة حفظات متتالية، كل تنفيذ يُفرغ ما وجده فقط تحت القفل فلا تكرار إرسال)
 function _flushTelegramQueue_() {
-  return _withLock_(function() {
-    var props = PropertiesService.getScriptProperties();
-    var raw = props.getProperty("TG_ASYNC_QUEUE") || "[]";
-    var queue; try { queue = JSON.parse(raw); } catch(e) { queue = []; }
-    if (!queue.length) return;
-    props.deleteProperty("TG_ASYNC_QUEUE"); // نُفرغ الطابور أولاً لتفادي إرسال نفس الرسائل مرتين لو تداخل مشغّلان
-    queue.forEach(function(text) {
-      try {
-        var res = _sendTelegramMessage_(text);
-        if (!res || !res.success) _logError_("[_flushTelegramQueue_]", new Error("فشل إرسال رسالة تليجرام مؤجَّلة: "+((res&&res.error)||"سبب غير معروف")));
-      } catch(e) { _logError_("[_flushTelegramQueue_]", e); }
+  var props = PropertiesService.getScriptProperties();
+  // حذف مشغّلات التفريغ المنتهية (المشغّل لمرة واحدة يبقى مسجلاً ويُحتسب ضمن حد الـ20)
+  try { ScriptApp.getProjectTriggers().forEach(function(t) { if (t.getHandlerFunction() === "_flushTelegramQueue_") ScriptApp.deleteTrigger(t); }); } catch (eT) {}
+  try { props.deleteProperty(_TG_FLUSH_FLAG); } catch (eF) {}
+  // السحب فقط تحت القفل (لحظي)، والإرسال الفعلي عبر الإنترنت خارجه — كان الإرسال يحجز قفل الحفظ طوال مدة اتصال تليجرام
+  var queue = _withLock_(function() {
+    var all = props.getProperties(), out = [];
+    var raw = all.TG_ASYNC_QUEUE; // توافق: طابور الصيغة القديمة
+    if (raw) { try { (JSON.parse(raw) || []).forEach(function(t) { out.push(t); }); } catch (e) {} props.deleteProperty("TG_ASYNC_QUEUE"); }
+    Object.keys(all).filter(function(k) { return k.indexOf(_TGQ_PREFIX) === 0; }).sort().forEach(function(k) {
+      out.push(all[k]); props.deleteProperty(k); // يُحذف قبل الإرسال: تفريغان متداخلان لا يرسلان نفس الرسالة مرتين
     });
+    return out;
+  });
+  (queue || []).forEach(function(text) {
+    try {
+      var res = _sendTelegramMessage_(text);
+      if (!res || !res.success) _logError_("[_flushTelegramQueue_]", new Error("فشل إرسال رسالة تليجرام مؤجَّلة: "+((res&&res.error)||"سبب غير معروف")));
+    } catch(e) { _logError_("[_flushTelegramQueue_]", e); }
   });
 }
 
@@ -4132,9 +4161,10 @@ function deleteSharedReportFile(fileId, currentUser) {
 }
 
 // يفحص كل الحجوزات التي لها تاريخ سداد تأكيد (Client Option Date) خلال 3 أيام أو فات موعدها، وينشئ تنبيهاً لكل منها
-function checkConfirmationOptionDatesAndNotify() {
+function checkConfirmationOptionDatesAndNotify(force) {
   var _fn="[checkConfirmationOptionDatesAndNotify]"; _logInfo_(_fn, "START | "+"");
   try {
+  if (!_bgCheckShouldRun_("OPTION_DATES", force)) return { success:true, skipped:"ran recently" };
   var data = _getOrCreateSheet_("Bookings_Master").getDataRange().getValues();
   var hotelMap = _buildContractHotelMap_();
   var tz = _tz_();
@@ -4316,17 +4346,10 @@ function applyRoleToUser(targetUsername, roleName, currentUser) {
   var roles = getRoles();
   if (!roles[roleName]) throw new Error("الدور '"+roleName+"' غير موجود.");
   var perms = roles[roleName];
-  var sheet = _getOrCreateSheet_("Permissions_Master");
-  var data = sheet.getDataRange().getValues();
-  // حذف صلاحيات المستخدم الحالية
-  for (var i = data.length-1; i >= 1; i--) {
-    if (String(data[i][0]).toLowerCase() === String(targetUsername).toLowerCase()) sheet.deleteRow(i+1);
-  }
-  // كتابة صلاحيات الدور الجديد
-  Object.keys(perms).forEach(function(screen) {
-    var p = perms[screen];
-    sheet.appendRow([targetUsername, screen, !!p.canView, !!p.canAdd, !!p.canEdit, !!p.canDelete]);
-  });
+  // حذف صلاحيات المستخدم الحالية وكتابة صلاحيات الدور الجديد — كتابة واحدة (V3.55)
+  var _tl = String(targetUsername).toLowerCase();
+  _replacePermissionRows_(function(u) { return u.toLowerCase() === _tl; },
+    Object.keys(perms).map(function(screen) { var p = perms[screen]; return [targetUsername, screen, !!p.canView, !!p.canAdd, !!p.canEdit, !!p.canDelete]; }));
   _setUserRoleName_(targetUsername, roleName);
   _invalidateAuthCache_(); // V3.55 — بعد الكتابة أيضاً (يغلق نافذة إعادة بناء اللقطة بقيم قديمة أثناء الكتابة)
   logAudit("إدارة الصلاحيات","تطبيق دور على مستخدم",targetUsername,"","",roleName,"تم تطبيق الدور '"+roleName+"' على المستخدم "+targetUsername,currentUser);
@@ -4370,17 +4393,13 @@ function updateRoleAndPropagate(roleName, perms, currentUser) {
   saveRole(roleName, perms, currentUser);
   var roleMap = _getUserRoleNamesMap_();
   var affected = Object.keys(roleMap).filter(function(u){ return roleMap[u] === roleName; });
+  // V3.55 — كل المستخدمين المتأثرين في كتابة واحدة (كانت قراءة كاملة + حذف/إضافة صف بصف لكل مستخدم)
+  var _affLower = {}; affected.forEach(function(u) { _affLower[String(u).toLowerCase()] = true; });
+  var _newRows = [];
   affected.forEach(function(username) {
-    var sheet = _getOrCreateSheet_("Permissions_Master");
-    var data = sheet.getDataRange().getValues();
-    for (var i = data.length-1; i >= 1; i--) {
-      if (String(data[i][0]).toLowerCase() === String(username).toLowerCase()) sheet.deleteRow(i+1);
-    }
-    Object.keys(perms).forEach(function(screen) {
-      var p = perms[screen];
-      sheet.appendRow([username, screen, !!p.canView, !!p.canAdd, !!p.canEdit, !!p.canDelete]);
-    });
+    Object.keys(perms).forEach(function(screen) { var p = perms[screen]; _newRows.push([username, screen, !!p.canView, !!p.canAdd, !!p.canEdit, !!p.canDelete]); });
   });
+  if (affected.length) _replacePermissionRows_(function(u) { return !!_affLower[u.toLowerCase()]; }, _newRows);
   _invalidateAuthCache_(); // V3.55 — بعد الكتابة أيضاً (يغلق نافذة إعادة بناء اللقطة بقيم قديمة أثناء الكتابة)
   logAudit("إدارة الصلاحيات","تعديل دور ونشره",roleName,"","","","تم تعديل الدور '"+roleName+"' ونشر التغيير على "+affected.length+" مستخدم(ين)",currentUser);
   return {success:true, affectedCount: affected.length};
@@ -4441,7 +4460,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.55";
+var APP_VERSION = "V3.56";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -5123,10 +5142,25 @@ function setupApplicationComplete(currentUser) {
 
 // دوال Wrapper للمشغّلات الزمنية: التريجر يمرّر "كائن الحدث" كأول باراميتر،
 // وهذه الأغلفة تمنع وصوله للدوال الأصلية (كان سيفسد force/currentUser)
-function trigger_checkDuePayments() { checkDuePaymentsAndNotify("النظام (مشغّل يومي)"); }
-function trigger_checkWaitlist() { checkWaitlistAvailabilityAndNotify(); }
+function trigger_checkDuePayments() { checkDuePaymentsAndNotify("النظام (مشغّل يومي)", true); }
+function trigger_checkWaitlist() { checkWaitlistAvailabilityAndNotify(true); }
 function trigger_telegramReminders() { sendTelegramCheckinReminders(false); }
-function trigger_checkOptionDates() { checkConfirmationOptionDatesAndNotify(); }
+function trigger_checkOptionDates() { checkConfirmationOptionDatesAndNotify(true); }
+
+// V3.55 — الفحوصات الخلفية تعمل يومياً بالمشغّلات الزمنية، وكانت تُشغَّل أيضاً من متصفح كل مستخدم عند أول دخول يومياً
+// (4 نداءات ثقيلة تتزاحم مع الإقلاع × عدد المستخدمين). الآن تشغيل المتصفح يُنفَّذ فعلياً مرة كل 3 ساعات على الأكثر
+// لكل النظام (يبقى التقاط التغييرات بين المشغّلات اليومية)، والمشغّلات الزمنية تعمل دائماً.
+var _BGCHECK_MIN_HOURS = 3;
+function _bgCheckShouldRun_(key, force) {
+  if (force === true) { try { PropertiesService.getScriptProperties().setProperty("BGCHECK_LAST_" + key, String(Date.now())); } catch (e) {} return true; }
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var last = Number(props.getProperty("BGCHECK_LAST_" + key) || 0);
+    if (Date.now() - last < _BGCHECK_MIN_HOURS * 3600000) return false;
+    props.setProperty("BGCHECK_LAST_" + key, String(Date.now()));
+  } catch (e) {}
+  return true;
+}
 
 // يُثبّت المشغّلات الزمنية اليومية مرة واحدة فقط (يحذف المكرر ويضيف الناقص)
 function _ensureDailyTriggers_() {
@@ -5265,7 +5299,7 @@ var SYSTEM_TRIGGERS = [
     hour: 8,
     label: "فحص الدفعات المستحقة",
     description: "ينشئ تنبيهات بالدفعات المتأخرة أو التي تستحق خلال أسبوع.",
-    runFn: function() { checkDuePaymentsAndNotify("النظام (تشغيل يدوي)"); return "تم فحص الدفعات المستحقة."; }
+    runFn: function() { checkDuePaymentsAndNotify("النظام (تشغيل يدوي)", true); return "تم فحص الدفعات المستحقة."; }
   },
   {
     key: "waitlist",
@@ -5273,7 +5307,7 @@ var SYSTEM_TRIGGERS = [
     hour: 7,
     label: "فحص توافر قائمة الانتظار",
     description: "يفحص طلبات الانتظار وينشئ تنبيهات عند توفر الغرف المطلوبة.",
-    runFn: function() { checkWaitlistAvailabilityAndNotify(); return "تم فحص قائمة الانتظار."; }
+    runFn: function() { checkWaitlistAvailabilityAndNotify(true); return "تم فحص قائمة الانتظار."; }
   },
   {
     key: "telegram",
@@ -5289,7 +5323,7 @@ var SYSTEM_TRIGGERS = [
     hour: 8,
     label: "فحص تواريخ الأوبشن",
     description: "ينشئ تنبيهات بتواريخ سداد التأكيدات (Client Option Dates) القريبة أو المتأخرة.",
-    runFn: function() { checkConfirmationOptionDatesAndNotify(); return "تم فحص تواريخ الأوبشن."; }
+    runFn: function() { checkConfirmationOptionDatesAndNotify(true); return "تم فحص تواريخ الأوبشن."; }
   }
 ];
 
@@ -5862,12 +5896,15 @@ function getPerfLog(currentUser, filters) {
 // يُشغَّل كل 10 دقائق عبر مشغّل زمني (يُقاس وقته ضمن حصة المشغّلات) — المنطق الفعلي في _flushPerfBucketsCore_
 function _flushPerfBuckets_() {
   try { _flushPerfBucketsCore_(); } catch(e) { _logError_("[_flushPerfBuckets_]", e); }
+  try { if (_tgQueuePending_()) _flushTelegramQueue_(); } catch(e2) { _logError_("[_flushPerfBuckets_→Telegram]", e2); } // V3.55 — شبكة أمان للرسائل العالقة
 }
 
 // يُفرِّغ كل النوافذ المكتملة التي لم تُفرَّغ بعد (منذ آخر نافذة محفوظة في PERF_LAST_FLUSHED_BUCKET) دفعة واحدة:
 // المشغّلات الزمنية تتأخر/تتقدّم دقائق، فقراءة "النافذة السابقة" وحدها كانت تُضيِّع نوافذ أو تكررها
 function _flushPerfBucketsCore_() {
-  var lock = LockService.getScriptLock();
+  // V3.55 — قفل المستند (مستقل عن قفل السكريبت): التفريغ يستغرق ~4 ثوانٍ كل 10 دقائق، وكان يحجز قفل السكريبت
+  // نفسه الذي ينتظره كل حفظ حجز/تعاقد/دفعة — فيتأخر حفظ المستخدم بلا سبب ظاهر
+  var lock = (function() { try { return LockService.getDocumentLock() || LockService.getScriptLock(); } catch (e) { return LockService.getScriptLock(); } })();
   if (!lock.tryLock(5000)) return { skipped: "busy" }; // تشغيل آخر يفرّغ الآن
   try {
     var props = PropertiesService.getScriptProperties();
@@ -6193,16 +6230,22 @@ function getPerfExportJson(currentUser, filters) {
  * الأسلوب: يقفل الاسكريبت بأكمله (Script Lock) لمدة قصيرة أثناء الكتابة الحرجة،
  * ثم يُفرج فوراً. المهلة 20 ثانية لتفادي انتظار طويل وتفشل بأدب مع رسالة واضحة.
  */
-function _withLock_(fn) {
+// V3.55 — قفل قابل لإعادة الدخول: دالة مقفولة تنادي أخرى مقفولة (مثل تحويل طلب انتظار → حفظ حجز، أو توليد رقم
+// تسلسلي داخل الحفظ) كانت تستدعي waitLock ثم releaseLock داخلياً، فيُفَك قفل العملية الخارجية وهي لم تنتهِ بعد
+// ويدخل حفظ متزامن آخر في منتصفها. الآن: العمق يُعدّ، ولا يُفَك القفل إلا عند خروج العملية الخارجية.
+var __LOCK_DEPTH = 0, __LOCK_OBJ = null;
+function _withLock_(fn, timeoutMs) {
+  if (__LOCK_DEPTH > 0) { __LOCK_DEPTH++; try { return fn(); } finally { __LOCK_DEPTH--; } }
   var lock = LockService.getScriptLock();
   try {
-    lock.waitLock(20000); // 20 ثانية كحد أقصى
+    lock.waitLock(timeoutMs || 20000); // 20 ثانية كحد أقصى
   } catch(e) {
     throw new Error("النظام مشغول بمعالجة حفظ متزامن. يرجى إعادة المحاولة بعد لحظات.");
   }
+  __LOCK_DEPTH = 1; __LOCK_OBJ = lock;
   try { _incrementDailyQuota_("LOCK"); } catch(e) {} // نقطة عبور شاملة لكل استخدامات القفل في المشروع
   try { return fn(); }
-  finally { try { lock.releaseLock(); } catch(e) {} }
+  finally { __LOCK_DEPTH = 0; __LOCK_OBJ = null; try { lock.releaseLock(); } catch(e) {} }
 }
 
 
