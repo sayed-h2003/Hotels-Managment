@@ -739,7 +739,13 @@ function _logRead_(screen, recordId, description, user) {
 }
 
 // ===================== 8. تفضيلات المستخدم =====================
+// V3.60 — الدالة العامة ترفض مفتاح "allowed_hotels" (قيد أمني يُكتب فقط عبر saveUserAllowedHotels بصلاحية المدير؛
+// كان أي نداء يستطيع رفع قيد الفنادق عن أي مستخدم بكتابة قيمة فارغة). الكتابة الفعلية في _saveUserPreference_.
 function saveUserPreference(username, prefKey, prefValue) {
+  if (String(prefKey) === "allowed_hotels") throw new Error("غير مصرح.");
+  return _saveUserPreference_(username, prefKey, prefValue);
+}
+function _saveUserPreference_(username, prefKey, prefValue) {
   var _fn="[saveUserPreference]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", "+"prefKey:"+String(JSON.stringify(prefKey)||"").slice(0, 80)+", "+"prefValue:"+String(JSON.stringify(prefValue)||"").slice(0, 80));
   try {
   var sheet = _getOrCreateSheet_("User_Preferences");
@@ -986,7 +992,7 @@ function saveUserAllowedHotels(targetUsername, hotelNames, actingUser) {
   var _fn="[saveUserAllowedHotels]"; _logInfo_(_fn, "START | "+"targetUsername:"+String(JSON.stringify(targetUsername)||"").slice(0, 80)+", "+"hotelNames:"+String(JSON.stringify(hotelNames)||"").slice(0, 80)+", "+"actingUser:"+String(JSON.stringify(actingUser)||"").slice(0, 80));
   try {
   if (_getUserRole_(actingUser)!=="Admin") throw new Error("غير مصرح.");
-  saveUserPreference(targetUsername, "allowed_hotels", hotelNames.length ? JSON.stringify(hotelNames) : "");
+  _saveUserPreference_(targetUsername, "allowed_hotels", hotelNames.length ? JSON.stringify(hotelNames) : "");
   logAudit("إدارة الصلاحيات","تعديل صلاحيات الفنادق",targetUsername,"","","",
     "تعديل الفنادق المسموح بها لـ "+targetUsername+": "+(hotelNames.join("، ")||"الكل"),actingUser);
   _bumpNotifVersion_(); // الفنادق المسموح بها تحدد الإشعارات الظاهرة للمستخدم
@@ -1004,7 +1010,8 @@ function changeUserPassword(username, oldPassword, newPassword) {
   var data = sheet.getDataRange().getValues();
   for (var i=1; i<data.length; i++) {
     if (String(data[i][0]).toLowerCase() === String(username).toLowerCase()) {
-      if (String(data[i][1]) !== String(oldPassword)) throw new Error("كلمة المرور الحالية غير صحيحة.");
+      // V3.60 — المقارنة عبر _pwVerify_ (كانت مقارنة نصية بالقيمة المخزّنة المشفّرة، فيفشل تغيير كلمة المرور دائماً بعد أول دخول)
+      if (!_pwVerify_(oldPassword, data[i][1], data[i][5]||"")) throw new Error("كلمة المرور الحالية غير صحيحة.");
       var _s2 = _pwGenerateSalt_();
       sheet.getRange(i+1, 2).setValue(_pwHash_(newPassword, _s2));
       sheet.getRange(i+1, 6).setValue(_s2);
@@ -1945,7 +1952,8 @@ function getBookingForEdit(bookingId) {
 function getBookingFullDetails(bookingId, currentUser) {
   var _fn="[getBookingFullDetails]"; _logInfo_(_fn, "START | "+"bookingId:"+String(JSON.stringify(bookingId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
-  if (currentUser) _requirePermission_(currentUser,"bookings","canView"); _logRead_("الحجوزات", bookingId, "عرض تفاصيل حجز #"+bookingId, currentUser);
+  if (!currentUser) throw new Error("غير مصرح."); // V3.60 — كان غياب اسم المستخدم يُعامَل كمدير ويُرجع البيانات المالية
+  _requirePermission_(currentUser,"bookings","canView"); _logRead_("الحجوزات", bookingId, "عرض تفاصيل حجز #"+bookingId, currentUser);
   var data=_getOrCreateSheet_("Bookings_Master").getDataRange().getValues();
   var tz=_tz_();
   var hotelMap=_buildContractHotelMap_(), collMap=_buildCollectionAccountMap_();
@@ -2936,7 +2944,10 @@ function adminResetPassword(targetUsername, newPassword, currentUser) {
   var data=sheet.getDataRange().getValues();
   for (var i=1; i<data.length; i++) {
     if (String(data[i][0])===String(targetUsername)) {
-      sheet.getRange(i+1,2).setValue(newPassword);
+      // V3.60 — تُخزَّن مشفّرة بملح جديد (كانت تُكتب نصاً صريحاً حتى أول دخول تالٍ)
+      var _sR = _pwGenerateSalt_();
+      sheet.getRange(i+1,2).setValue(_pwHash_(newPassword, _sR));
+      sheet.getRange(i+1,6).setValue(_sR);
       logAudit("إدارة المستخدمين","إعادة تعيين كلمة المرور",targetUsername,"","","","تم إعادة تعيين كلمة مرور "+targetUsername+" بواسطة "+currentUser,currentUser);
       return {success:true};
     }
@@ -3950,7 +3961,7 @@ function sendTelegramCheckinReminders(force) {
 
   if (!lines.length) return { success:true, sent:false, count:0 };
 
-  var msg = "📅 <b>تذكير: حجوزات تدخل غداً ("+_fmtDate_(tomorrow,tz,"dd/MM/yyyy")+")</b>\\n\\n" + lines.join("\\n");
+  var msg = "📅 <b>تذكير: حجوزات تدخل غداً ("+_fmtDate_(tomorrow,tz,"dd/MM/yyyy")+")</b>\n\n" + lines.join("\n"); // V3.60 — أسطر جديدة فعلية (كانت تظهر حرفياً بالرسالة)
   var result = _sendTelegramMessage_(msg);
   if (result.success) props.setProperty("TELEGRAM_LAST_SENT_DATE", todayKey);
   return { success: result.success, sent: result.success, count: lines.length, error: result.error||"" };
@@ -4052,7 +4063,10 @@ function updateUserDetails(oldUsername, newUsername, newFullName, currentUser) {
       {name:"Contract_Payments",  col:8},
       {name:"Contract_Payment_Receipts", col:8},
       {name:"Account_Payments",  col:9},
-      {name:"Waitlist_Master",    col:11}
+      {name:"Waitlist_Master",    col:11},
+      // V3.60 — كانت تُنسى: التفضيلات (ومنها قيد الفنادق المسموحة ⇒ المستخدم المُعاد تسميته يصبح بلا قيد) والجلسات النشطة
+      {name:"User_Preferences",   col:1},
+      {name:"Active_Sessions",    col:3}
     ];
     // v3.42 — كانت تكتب كل صف مطابق بـ setValue منفصل (قد تصل لمئات نداءات الشيت لمستخدم قديم
     // له سجلات كثيرة) - الآن تقرأ عمود المرجع مرة واحدة وتكتبه مرة واحدة فقط بغض النظر عن عدد المطابقات
@@ -4068,6 +4082,12 @@ function updateUserDetails(oldUsername, newUsername, newFullName, currentUser) {
       }
       if (changed) colRange.setValues(colVals);
     });
+    // V3.60 — اسم الدور المربوط بالمستخدم (خاصية USER_ROLE_NAMES) ينتقل للاسم الجديد
+    try {
+      var _rn = _getUserRoleNamesMap_();
+      if (Object.prototype.hasOwnProperty.call(_rn, oldUsername)) { _setUserRoleName_(newUsername, _rn[oldUsername]); _setUserRoleName_(oldUsername, ""); }
+    } catch (eRN) { _logError_(_fn, eRN); }
+    _invalidateSheetCache_("User_Preferences");
   }
 
   _invalidateAuthCache_(); // V3.55 — بعد الكتابة أيضاً (يغلق نافذة إعادة بناء اللقطة بقيم قديمة أثناء الكتابة)
@@ -4263,7 +4283,12 @@ function generateReportPdfForShare(htmlContent, fileName, currentUser) {
 function deleteSharedReportFile(fileId, currentUser) {
   if (!fileId) return {success:false};
   try {
-    DriveApp.getFileById(fileId).setTrashed(true);
+    // V3.60 — يُحذف فقط ملف داخل مجلد التقارير المؤقتة (كانت تقبل أي معرّف ملف يصل إليه مالك السكربت، بلا أي تحقق)
+    var _tmpId = PropertiesService.getScriptProperties().getProperty("TEMP_REPORTS_FOLDER_ID");
+    var _file = DriveApp.getFileById(fileId), _inTmp = false, _parents = _file.getParents();
+    while (_tmpId && _parents.hasNext()) { if (_parents.next().getId() === _tmpId) { _inTmp = true; break; } }
+    if (!_inTmp) return {success:false, message:"غير مسموح: الملف خارج مجلد التقارير المؤقتة."};
+    _file.setTrashed(true);
     return {success:true};
   } catch(e) {
     return {success:false, message:e.message};
@@ -4570,7 +4595,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) {
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.59";
+var APP_VERSION = "V3.60";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
