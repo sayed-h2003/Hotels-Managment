@@ -5196,7 +5196,8 @@ function _pfMainReq_() {
     if (can('contracts') && !fresh('getContracts', [u])) req.contracts = true;
     if (can('waitlist') && !fresh('getWaitlist', [u])) req.waitlist = true;
     if (can('accounts') && !fresh('getAccountsSummary', ['collection', u, '', '', ''])) req.accounts = { partyType: 'collection', hotel: '', fromIso: '', toIso: '' };
-    if (can('availability')) { var av = _avPrefetchTargets_(_avCurrentFocus_()); if (av.length) req.availability = av; }
+    if (!fresh('getDistinctHotelNames', [u])) req.refs = true; // V3.68 — المرجعيات تُعاد مع الحزمة بعد مسحها
+    if (can('availability') && !req.refs) { var av = _avPrefetchTargets_(_avCurrentFocus_()); if (av.length) req.availability = av; }
   } catch(e) {}
   return req;
 }
@@ -5257,6 +5258,14 @@ function _ccStoreBundle_(u, b, req) {
   if (b.contracts) _ccStore_('getContracts', [u], b.contracts);
   if (b.waitlist) _ccStore_('getWaitlist', [u], b.waitlist);
   if (b.users) _ccStore_('getUsersScreenData', [u], b.users);
+  if (b.refs) {
+    var rf = b.refs;
+    if (rf.hotelNames) _ccStore_('getDistinctHotelNames', [u], rf.hotelNames);
+    if (rf.collectionAccounts) _ccStore_('getCollectionAccounts', [], rf.collectionAccounts);
+    if (rf.contractMonths) _ccStore_('getContractMonthsByHotel', [u], rf.contractMonths);
+    if (rf.contractRanges) Object.keys(rf.contractRanges).forEach(function(h) { _ccStore_('getContractDateRange', [h, u], rf.contractRanges[h]); });
+    _pfEnqueue_(_pfMainReq_); // بعد توفر أسماء الفنادق: أشهر التوافر في حزمة تالية
+  }
   if (b.accounts && req.accounts) { var a = req.accounts; _ccStore_('getAccountsSummary', [a.partyType, u, a.hotel, a.fromIso, a.toIso], b.accounts); }
   (b.availability || []).forEach(function(x) { if (x && x.data) _ccStore_('getAvailabilityData', [x.hotel, x.year, x.month, u], x.data); });
   (b.replay || []).forEach(function(x) { if (x && x.fn && x.args && !x.error && _CC_REPLAY_FNS[x.fn]) _ccStore_(x.fn, x.args, x.data); });
@@ -5968,9 +5977,9 @@ function openBookingViewModal(bookingId) {
   var cBtn=document.getElementById('bv_confirm_btn'); // v3.40 — إخفاء زر "تأكيد الحجز" لمن لا يملك صلاحية booking_confirmation المستقلة
   if(cBtn) cBtn.style.display=_permCan('booking_confirmation','canView')?'':'none';
   _bvCurrentBookingId=bookingId;
-  document.getElementById('bookingViewBody').innerHTML='<div style="text-align:center;padding:24px;color:var(--clr-muted);">جاري التحميل...</div>';
-  document.getElementById('BookingView_Modal').classList.add('open');
-  google.script.run.withSuccessHandler(function(b) {
+  // V3.68 — النافذة تُرسم فوراً من صف الحجز الموجود بالمتصفح (كانت تنتظر ~4.5 ث لنداء التفاصيل)، ثم تُجلب التفاصيل
+  // بالخلفية (النداء نفسه يسجّل "قراءة" بسجل التعديلات كما كان) ويُعاد الرسم فقط إن اختلفت البيانات.
+  var _bvBuild = function(b) {
     var statusCls=_bkStatusClass(b);
     var overBadge=b.overCapacity?('<span class="overcap-badge">⚠</span>'):'';
     var html='<div class="bv-header">'
@@ -5998,10 +6007,24 @@ function openBookingViewModal(bookingId) {
           ?bvRow('آخر تعديل','<span class="last-edit-cell" onclick="closeBookingViewModal();openAuditHistoryModal(\''+b.bookingId+'\',\'bookings\')">'+escapeHtml(_translateUsernamesInText(b.lastEditSummary))+'</span>')
           :(b.lastEditSummary?bvRow('آخر تعديل','<span style="color:var(--clr-text-sub);">تم التعديل (لا صلاحية لعرض التفاصيل)</span>'):bvRow('آخر تعديل','<span style="color:var(--clr-muted);">لا يوجد تعديل بعد</span>')))
       +'</div>';
+    return html;
+  };
+  var _bvShown = null, _local = null;
+  try { if (_bkAllMode === 'local' && _bkAll) for (var _i = 0; _i < _bkAll.length; _i++) if (String(_bkAll[_i].bookingId) === String(bookingId)) { _local = _bkAll[_i]; break; } } catch (eL) {}
+  if (_local) {
+    try { _bvShown = _bvBuild(_local); document.getElementById('bookingViewBody').innerHTML = _bvShown; _appendNusukAgreementsToBookingView(bookingId); } catch (eB) { _bvShown = null; }
+  }
+  if (_bvShown == null) document.getElementById('bookingViewBody').innerHTML='<div style="text-align:center;padding:24px;color:var(--clr-muted);">جاري التحميل...</div>';
+  document.getElementById('BookingView_Modal').classList.add('open');
+  google.script.run.withSuccessHandler(function(b) {
+    if (_bvCurrentBookingId !== bookingId || !b) return; // فُتح حجز آخر في الأثناء
+    var html = _bvBuild(b);
+    if (html === _bvShown) return;
     document.getElementById('bookingViewBody').innerHTML=html;
     // نجلب اتفاقيات نسك المرتبطة بهذا الحجز (إن وُجدت) ونُلحقها كقسم إضافي بنهاية النموذج
     _appendNusukAgreementsToBookingView(bookingId);
   }).withFailureHandler(function(e){
+    if (_bvShown != null) return; // المعروض من القائمة المحلية يبقى
     document.getElementById('bookingViewBody').innerHTML='<div style="color:var(--clr-danger);padding:20px;text-align:center;">'+(e.message||e)+'</div>';
   }).getBookingFullDetails(bookingId, sessionUser.username);
 }
@@ -6024,7 +6047,9 @@ function _appendNusukAgreementsToBookingView(bookingId) {
         + '</tr>';
     }).join('');
     var totalPersons = res.totalPersons || 0;
-    var section = '<div class="bv-section" style="background:#fff8e1;border:1px solid #fde68a;border-radius:8px;">'
+    if (_bvCurrentBookingId !== bookingId) return; // V3.68 — فُتح حجز آخر قبل وصول الرد
+    var _oldSec = body.querySelector('.bv-nusuk-sec'); if (_oldSec) _oldSec.remove(); // لا تكرار للقسم عند إعادة الرسم
+    var section = '<div class="bv-section bv-nusuk-sec" style="background:#fff8e1;border:1px solid #fde68a;border-radius:8px;">'
       + '<h4>🌙 اتفاقيات نسك ('+agreements.length+' اتفاقية · مجموع '+totalPersons+' فرد)</h4>'
       + '<div style="overflow-x:auto;background:#fff;border-radius:6px;margin-top:4px;">'
       + '<table style="width:100%;font-size:8pt;border-collapse:collapse;">'
@@ -6036,7 +6061,7 @@ function _appendNusukAgreementsToBookingView(bookingId) {
       + '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>'
       + '<div style="font-size:7pt;color:var(--clr-muted);margin-top:4px;">💡 اضغط على أي اتفاقية لعرض تفاصيلها الكاملة.</div>'
       + '</div>';
-    body.innerHTML += section;
+    body.insertAdjacentHTML('beforeend', section);
   }).withFailureHandler(function(){ /* تجاهل الأخطاء - لا نُفسد عرض الحجز إن فشل جلب الاتفاقيات */ })
     .getNusukAgreementsForBooking(bookingId, sessionUser.username);
 }
@@ -11096,7 +11121,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.67';
+var CLIENT_APP_VERSION = 'V3.68';
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
   showConfirm('سيقوم النظام بفحص كل الشيتات وتحويل الأرقام العربية/الفارسية القديمة إلى أرقام إنجليزية (Latin).\n\nآمن للتكرار — يعالج فقط الخلايا المصابة ولا يمس البيانات الأخرى.\n\nالمتابعة؟', function() {

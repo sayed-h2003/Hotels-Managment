@@ -2129,6 +2129,12 @@ function getPrefetchBundle(currentUser, req) { _apiGuard_();
     });
   }
   if (req.users) part("users", function() { return getUsersScreenData(currentUser); });
+  // V3.68 — البيانات المرجعية (أسماء الفنادق، نطاقات وأشهر التعاقد، جهات التحصيل): تُمسح من كاش المتصفح بعد أي كتابة تمسّها
+  // (تعاقد/صلاحيات/فنادق مسموحة)، فكان أول فتح لأي شاشة بعدها يدفع نداءً كاملاً (~3.5 ث) لأسماء الفنادق وحدها
+  if (req.refs) part("refs", function() {
+    return { hotelNames: getDistinctHotelNames(currentUser), contractRanges: _getContractDateRangesMap_(currentUser),
+             collectionAccounts: _getCollectionAccountsCached_(), contractMonths: getContractMonthsByHotel(currentUser) };
+  });
   // V3.59 — "إعادة تشغيل" نداءات شاشات فتحها المستخدم سابقاً بنفس وسائطها (سجل التعديلات/شبكة نسك/ملخص الحسابات)
   // فيكون فتحها فورياً. قائمة بيضاء صريحة، واسم المستخدم داخل الوسائط يُفرض = صاحب الطلب (لا قراءة باسم غيره).
   if (Array.isArray(req.replay) && req.replay.length) {
@@ -4926,7 +4932,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.67";
+var APP_VERSION = "V3.68";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -6769,6 +6775,8 @@ function _gatherPerfDashboardData_(filters) {
     version: APP_VERSION,
     versions: Object.keys(versionsSeen).sort(_cmpVersion_),
     topByVolume: topByVolume.slice(0, 50),
+    // V3.68 — عيّنات المراحل الداخلية (~الدالة:المرحلة) للإصدار الحالي كاملةً: كانت تضيع خارج "أعلى 50" فلا يُعرف أين يذهب زمن الحفظ/الدخول
+    phases: topByVolume.filter(function(r) { return String(r.fn).charAt(0) === "~" && r.version === APP_VERSION; }).slice(0, 80),
     slowCalls: slowCalls,
     logHours: lg ? lg.hours : 0,
     log: lg ? lg.rows : [],
