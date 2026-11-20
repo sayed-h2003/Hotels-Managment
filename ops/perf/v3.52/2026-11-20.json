@@ -1,0 +1,3629 @@
+{
+  "generatedAt": "2026-11-20T01:47:05.874Z",
+  "version": "v3.52",
+  "versions": [
+    "v3.48",
+    "v3.49",
+    "v3.50",
+    "v3.51",
+    "v3.52"
+  ],
+  "topByVolume": [
+    {
+      "fn": "client:getMyNotifications",
+      "version": "v3.52",
+      "totalCount": 6,
+      "avgMs": 563983,
+      "maxMs": 3363593,
+      "totalTimeMs": 3383897,
+      "fails": 0
+    },
+    {
+      "fn": "client:getMyNotifications",
+      "version": "v3.51",
+      "totalCount": 14,
+      "avgMs": 34980,
+      "maxMs": 435595,
+      "totalTimeMs": 489725,
+      "fails": 0
+    },
+    {
+      "fn": "client:getAvailabilityVersion",
+      "version": "v3.51",
+      "totalCount": 11,
+      "avgMs": 41454,
+      "maxMs": 435604,
+      "totalTimeMs": 455992,
+      "fails": 0
+    },
+    {
+      "fn": "client:pingHeartbeatAndGetActiveUsers",
+      "version": "v3.51",
+      "totalCount": 3,
+      "avgMs": 147262,
+      "maxMs": 435622,
+      "totalTimeMs": 441787,
+      "fails": 0
+    },
+    {
+      "fn": "client:getBookingsPage",
+      "version": "v3.49",
+      "totalCount": 2,
+      "avgMs": 55418,
+      "maxMs": 75153,
+      "totalTimeMs": 110836,
+      "fails": 0
+    },
+    {
+      "fn": "getBookingsPage",
+      "version": "v3.49",
+      "totalCount": 2,
+      "avgMs": 53248,
+      "maxMs": 72561,
+      "totalTimeMs": 106496,
+      "fails": 0
+    },
+    {
+      "fn": "getBookings",
+      "version": "v3.49",
+      "totalCount": 2,
+      "avgMs": 52229,
+      "maxMs": 71187,
+      "totalTimeMs": 104458,
+      "fails": 0
+    },
+    {
+      "fn": "_flushPerfBuckets_",
+      "version": "v3.51",
+      "totalCount": 12,
+      "avgMs": 6216,
+      "maxMs": 25510,
+      "totalTimeMs": 74589,
+      "fails": 0
+    },
+    {
+      "fn": "client:getMyNotifications",
+      "version": "v3.48",
+      "totalCount": 14,
+      "avgMs": 4334,
+      "maxMs": 5533,
+      "totalTimeMs": 60671,
+      "fails": 0
+    },
+    {
+      "fn": "client:getMyNotifications",
+      "version": "v3.50",
+      "totalCount": 10,
+      "avgMs": 4184,
+      "maxMs": 6187,
+      "totalTimeMs": 41838,
+      "fails": 0
+    },
+    {
+      "fn": "getMyNotifications",
+      "version": "v3.51",
+      "totalCount": 18,
+      "avgMs": 1986,
+      "maxMs": 3879,
+      "totalTimeMs": 35739,
+      "fails": 0
+    },
+    {
+      "fn": "getMyNotifications",
+      "version": "v3.48",
+      "totalCount": 17,
+      "avgMs": 1976,
+      "maxMs": 2965,
+      "totalTimeMs": 33592,
+      "fails": 0
+    },
+    {
+      "fn": "getBookingsPage",
+      "version": "v3.52",
+      "totalCount": 4,
+      "avgMs": 7283,
+      "maxMs": 8139,
+      "totalTimeMs": 29131,
+      "fails": 0
+    },
+    {
+      "fn": "client:getBookingsPage",
+      "version": "v3.51",
+      "totalCount": 3,
+      "avgMs": 9644,
+      "maxMs": 13348,
+      "totalTimeMs": 28932,
+      "fails": 0
+    },
+    {
+      "fn": "client:getBookingsPage",
+      "version": "v3.52",
+      "totalCount": 3,
+      "avgMs": 9628,
+      "maxMs": 9937,
+      "totalTimeMs": 28884,
+      "fails": 0
+    },
+    {
+      "fn": "client:getMyNotifications",
+      "version": "v3.49",
+      "totalCount": 6,
+      "avgMs": 4550,
+      "maxMs": 7119,
+      "totalTimeMs": 27301,
+      "fails": 0
+    },
+    {
+      "fn": "getMyNotifications",
+      "version": "v3.50",
+      "totalCount": 13,
+      "avgMs": 2017,
+      "maxMs": 3641,
+      "totalTimeMs": 26221,
+      "fails": 0
+    },
+    {
+      "fn": "client:boot:ready",
+      "version": "v3.48",
+      "totalCount": 2,
+      "avgMs": 12932,
+      "maxMs": 15478,
+      "totalTimeMs": 25863,
+      "fails": 0
+    },
+    {
+      "fn": "getBookingsPage",
+      "version": "v3.51",
+      "totalCount": 3,
+      "avgMs": 7403,
+      "maxMs": 11194,
+      "totalTimeMs": 22208,
+      "fails": 0
+    },
+    {
+      "fn": "client:getAvailabilityData",
+      "version": "v3.48",
+      "totalCount": 6,
+      "avgMs": 3383,
+      "maxMs": 4210,
+      "totalTimeMs": 20300,
+      "fails": 0
+    },
+    {
+      "fn": "client:getAvailabilityData",
+      "version": "v3.52",
+      "totalCount": 3,
+      "avgMs": 6365,
+      "maxMs": 12813,
+      "totalTimeMs": 19094,
+      "fails": 0
+    },
+    {
+      "fn": "client:getAvailabilityVersion",
+      "version": "v3.48",
+      "totalCount": 10,
+      "avgMs": 1865,
+      "maxMs": 2793,
+      "totalTimeMs": 18653,
+      "fails": 0
+    },
+    {
+      "fn": "client:getUserPreference",
+      "version": "v3.48",
+      "totalCount": 7,
+      "avgMs": 2652,
+      "maxMs": 3515,
+      "totalTimeMs": 18561,
+      "fails": 0
+    },
+    {
+      "fn": "getMyNotifications",
+      "version": "v3.49",
+      "totalCount": 9,
+      "avgMs": 2007,
+      "maxMs": 4488,
+      "totalTimeMs": 18063,
+      "fails": 0
+    },
+    {
+      "fn": "client:getDistinctHotelNames",
+      "version": "v3.51",
+      "totalCount": 5,
+      "avgMs": 3541,
+      "maxMs": 4456,
+      "totalTimeMs": 17706,
+      "fails": 0
+    },
+    {
+      "fn": "client:getAppBootstrap",
+      "version": "v3.48",
+      "totalCount": 2,
+      "avgMs": 8393,
+      "maxMs": 10310,
+      "totalTimeMs": 16786,
+      "fails": 0
+    },
+    {
+      "fn": "client:getAvailabilityData",
+      "version": "v3.51",
+      "totalCount": 3,
+      "avgMs": 5444,
+      "maxMs": 7344,
+      "totalTimeMs": 16331,
+      "fails": 0
+    },
+    {
+      "fn": "client:getOverCapacityNotifications",
+      "version": "v3.51",
+      "totalCount": 2,
+      "avgMs": 7782,
+      "maxMs": 8618,
+      "totalTimeMs": 15564,
+      "fails": 0
+    },
+    {
+      "fn": "client:getAvailabilityVersion",
+      "version": "v3.50",
+      "totalCount": 7,
+      "avgMs": 2086,
+      "maxMs": 2622,
+      "totalTimeMs": 14599,
+      "fails": 0
+    },
+    {
+      "fn": "client:boot:ready",
+      "version": "v3.50",
+      "totalCount": 1,
+      "avgMs": 14140,
+      "maxMs": 14140,
+      "totalTimeMs": 14140,
+      "fails": 0
+    },
+    {
+      "fn": "getOverCapacityNotifications",
+      "version": "v3.52",
+      "totalCount": 3,
+      "avgMs": 4634,
+      "maxMs": 5585,
+      "totalTimeMs": 13902,
+      "fails": 0
+    },
+    {
+      "fn": "client:getOverCapacityNotifications",
+      "version": "v3.52",
+      "totalCount": 2,
+      "avgMs": 6836,
+      "maxMs": 7899,
+      "totalTimeMs": 13672,
+      "fails": 0
+    },
+    {
+      "fn": "client:getUserPreference",
+      "version": "v3.52",
+      "totalCount": 4,
+      "avgMs": 3178,
+      "maxMs": 4985,
+      "totalTimeMs": 12711,
+      "fails": 0
+    },
+    {
+      "fn": "client:getDistinctHotelNames",
+      "version": "v3.48",
+      "totalCount": 3,
+      "avgMs": 4121,
+      "maxMs": 4624,
+      "totalTimeMs": 12363,
+      "fails": 0
+    },
+    {
+      "fn": "_flushPerfBuckets_",
+      "version": "v3.52",
+      "totalCount": 2,
+      "avgMs": 5849,
+      "maxMs": 9917,
+      "totalTimeMs": 11697,
+      "fails": 0
+    },
+    {
+      "fn": "client:getUserPreference",
+      "version": "v3.51",
+      "totalCount": 4,
+      "avgMs": 2873,
+      "maxMs": 3011,
+      "totalTimeMs": 11490,
+      "fails": 0
+    },
+    {
+      "fn": "getAppBootstrap",
+      "version": "v3.48",
+      "totalCount": 2,
+      "avgMs": 5528,
+      "maxMs": 7023,
+      "totalTimeMs": 11055,
+      "fails": 0
+    },
+    {
+      "fn": "client:pollAppState",
+      "version": "v3.52",
+      "totalCount": 4,
+      "avgMs": 2723,
+      "maxMs": 4394,
+      "totalTimeMs": 10893,
+      "fails": 0
+    },
+    {
+      "fn": "client:boot:ready",
+      "version": "v3.52",
+      "totalCount": 1,
+      "avgMs": 10588,
+      "maxMs": 10588,
+      "totalTimeMs": 10588,
+      "fails": 0
+    },
+    {
+      "fn": "formatHijriDisplay",
+      "version": "v3.49",
+      "totalCount": 331,
+      "avgMs": 31,
+      "maxMs": 85,
+      "totalTimeMs": 10227,
+      "fails": 0
+    },
+    {
+      "fn": "getOverCapacityNotifications",
+      "version": "v3.51",
+      "totalCount": 2,
+      "avgMs": 5104,
+      "maxMs": 5815,
+      "totalTimeMs": 10208,
+      "fails": 0
+    },
+    {
+      "fn": "getAvailabilityData",
+      "version": "v3.52",
+      "totalCount": 4,
+      "avgMs": 2507,
+      "maxMs": 7168,
+      "totalTimeMs": 10029,
+      "fails": 0
+    },
+    {
+      "fn": "client:getDistinctHotelNames",
+      "version": "v3.52",
+      "totalCount": 3,
+      "avgMs": 3279,
+      "maxMs": 3525,
+      "totalTimeMs": 9836,
+      "fails": 0
+    },
+    {
+      "fn": "client:pingHeartbeatAndGetActiveUsers",
+      "version": "v3.50",
+      "totalCount": 2,
+      "avgMs": 4866,
+      "maxMs": 4978,
+      "totalTimeMs": 9731,
+      "fails": 0
+    },
+    {
+      "fn": "client:getAvailabilityVersion",
+      "version": "v3.49",
+      "totalCount": 5,
+      "avgMs": 1935,
+      "maxMs": 2311,
+      "totalTimeMs": 9676,
+      "fails": 0
+    },
+    {
+      "fn": "client:loginUser",
+      "version": "v3.48",
+      "totalCount": 2,
+      "avgMs": 4495,
+      "maxMs": 5128,
+      "totalTimeMs": 8989,
+      "fails": 0
+    },
+    {
+      "fn": "getAvailabilityData",
+      "version": "v3.51",
+      "totalCount": 3,
+      "avgMs": 2987,
+      "maxMs": 4532,
+      "totalTimeMs": 8962,
+      "fails": 0
+    },
+    {
+      "fn": "client:getAppBootstrap",
+      "version": "v3.50",
+      "totalCount": 1,
+      "avgMs": 8058,
+      "maxMs": 8058,
+      "totalTimeMs": 8058,
+      "fails": 0
+    },
+    {
+      "fn": "getAvailabilityData",
+      "version": "v3.48",
+      "totalCount": 6,
+      "avgMs": 1341,
+      "maxMs": 2390,
+      "totalTimeMs": 8044,
+      "fails": 0
+    },
+    {
+      "fn": "client:getUserPreference",
+      "version": "v3.50",
+      "totalCount": 3,
+      "avgMs": 2653,
+      "maxMs": 2877,
+      "totalTimeMs": 7960,
+      "fails": 0
+    }
+  ],
+  "slowCalls": [
+    {
+      "time": "20/11 03:31:12",
+      "fn": "client:getMyNotifications",
+      "ms": 3363593,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.52"
+    },
+    {
+      "time": "20/11 01:20:28",
+      "fn": "client:pingHeartbeatAndGetActiveUsers",
+      "ms": 435622,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.51"
+    },
+    {
+      "time": "20/11 01:20:28",
+      "fn": "client:getAvailabilityVersion",
+      "ms": 435604,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.51"
+    },
+    {
+      "time": "20/11 01:20:28",
+      "fn": "client:getMyNotifications",
+      "ms": 435595,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.51"
+    },
+    {
+      "time": "20/11 00:51:09",
+      "fn": "client:getBookingsPage",
+      "ms": 75153,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.49"
+    },
+    {
+      "time": "20/11 00:50:42",
+      "fn": "getBookingsPage",
+      "ms": 72561,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.49"
+    },
+    {
+      "time": "20/11 00:50:42",
+      "fn": "getBookings",
+      "ms": 71187,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.49"
+    },
+    {
+      "time": "20/11 00:51:09",
+      "fn": "client:getBookingsPage",
+      "ms": 35683,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.49"
+    },
+    {
+      "time": "20/11 00:50:55",
+      "fn": "getBookingsPage",
+      "ms": 33935,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.49"
+    },
+    {
+      "time": "20/11 00:50:55",
+      "fn": "getBookings",
+      "ms": 33271,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.49"
+    },
+    {
+      "time": "20/11 01:55:00",
+      "fn": "_flushPerfBuckets_",
+      "ms": 25510,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.51"
+    },
+    {
+      "time": "20/11 00:45:05",
+      "fn": "client:boot:ready",
+      "ms": 15478,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.48"
+    },
+    {
+      "time": "20/11 01:12:04",
+      "fn": "client:boot:ready",
+      "ms": 14140,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.50"
+    },
+    {
+      "time": "20/11 01:21:51",
+      "fn": "client:getBookingsPage",
+      "ms": 13348,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.51"
+    },
+    {
+      "time": "20/11 03:33:04",
+      "fn": "client:getAvailabilityData",
+      "ms": 12813,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.52"
+    },
+    {
+      "time": "20/11 01:21:38",
+      "fn": "getBookingsPage",
+      "ms": 11194,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.51"
+    },
+    {
+      "time": "20/11 03:33:03",
+      "fn": "client:boot:ready",
+      "ms": 10588,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.52"
+    },
+    {
+      "time": "20/11 00:48:09",
+      "fn": "client:boot:ready",
+      "ms": 10385,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.48"
+    },
+    {
+      "time": "20/11 00:45:05",
+      "fn": "client:getAppBootstrap",
+      "ms": 10310,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.48"
+    },
+    {
+      "time": "20/11 03:33:04",
+      "fn": "client:getBookingsPage",
+      "ms": 9937,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.52"
+    },
+    {
+      "time": "20/11 03:24:43",
+      "fn": "_flushPerfBuckets_",
+      "ms": 9917,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.52"
+    },
+    {
+      "time": "20/11 03:33:46",
+      "fn": "client:getBookingsPage",
+      "ms": 9912,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.52"
+    },
+    {
+      "time": "20/11 03:33:05",
+      "fn": "client:getBookingsPage",
+      "ms": 9035,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.52"
+    },
+    {
+      "time": "20/11 01:21:50",
+      "fn": "client:getOverCapacityNotifications",
+      "ms": 8618,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.51"
+    },
+    {
+      "time": "20/11 01:21:49",
+      "fn": "client:getBookingsPage",
+      "ms": 8160,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.51"
+    },
+    {
+      "time": "20/11 03:33:46",
+      "fn": "getBookingsPage",
+      "ms": 8139,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.52"
+    },
+    {
+      "time": "20/11 01:12:04",
+      "fn": "client:getAppBootstrap",
+      "ms": 8058,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.50"
+    },
+    {
+      "time": "20/11 03:33:04",
+      "fn": "client:getOverCapacityNotifications",
+      "ms": 7899,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.52"
+    },
+    {
+      "time": "20/11 02:34:41",
+      "fn": "_flushPerfBuckets_",
+      "ms": 7877,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.51"
+    },
+    {
+      "time": "20/11 01:21:44",
+      "fn": "client:boot:ready",
+      "ms": 7635,
+      "user": "",
+      "ok": "نجاح",
+      "version": "v3.51"
+    }
+  ],
+  "logHours": 24,
+  "log": [
+    {
+      "time": "2026-11-20 03:39:25",
+      "src": "server",
+      "kind": "exec",
+      "name": "pollAppState",
+      "ms": 815,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:34:31",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 1780,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:34:07",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityData",
+      "ms": 496,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:34:03",
+      "src": "server",
+      "kind": "exec",
+      "name": "getContractDateRange",
+      "ms": 1386,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:34:01",
+      "src": "server",
+      "kind": "exec",
+      "name": "getUserPreference",
+      "ms": 1595,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:34:01",
+      "src": "server",
+      "kind": "exec",
+      "name": "getUserPreference",
+      "ms": 333,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:34:00",
+      "src": "server",
+      "kind": "exec",
+      "name": "getDistinctHotelNames",
+      "ms": 688,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:57",
+      "src": "server",
+      "kind": "exec",
+      "name": "getUserPreference",
+      "ms": 656,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:57",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAppBootstrap",
+      "ms": 3671,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:54",
+      "src": "server",
+      "kind": "exec",
+      "name": "loginUser",
+      "ms": 847,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:47",
+      "src": "web",
+      "kind": "exec",
+      "name": "doGet:index",
+      "ms": 20,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:47",
+      "src": "server",
+      "kind": "exec",
+      "name": "logoutUser",
+      "ms": 662,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:37",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 8139,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:37",
+      "src": "server",
+      "kind": "exec",
+      "name": "getOverCapacityNotifications",
+      "ms": 5585,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:33",
+      "src": "server",
+      "kind": "exec",
+      "name": "pollAppState",
+      "ms": 528,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:30",
+      "src": "client",
+      "kind": "network",
+      "name": "pollAppState",
+      "ms": 2527,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:27",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAccountStatement",
+      "ms": 1626,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:23",
+      "src": "client",
+      "kind": "network",
+      "name": "getAccountStatement",
+      "ms": 3851,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:19",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAccountsSummary",
+      "ms": 1605,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:16",
+      "src": "client",
+      "kind": "network",
+      "name": "getAccountsSummary",
+      "ms": 4031,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:16",
+      "src": "server",
+      "kind": "exec",
+      "name": "getDistinctHotelNames",
+      "ms": 991,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:13",
+      "src": "client",
+      "kind": "network",
+      "name": "getDistinctHotelNames",
+      "ms": 3035,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:04",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityData",
+      "ms": 658,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:03",
+      "src": "server",
+      "kind": "exec",
+      "name": "pollAppState",
+      "ms": 47,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:02",
+      "src": "client",
+      "kind": "network",
+      "name": "getAvailabilityData",
+      "ms": 2577,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:00",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityData",
+      "ms": 1707,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:33:00",
+      "src": "client",
+      "kind": "network",
+      "name": "pollAppState",
+      "ms": 1954,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:57",
+      "src": "server",
+      "kind": "exec",
+      "name": "markAllNotificationsRead",
+      "ms": 1536,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:57",
+      "src": "client",
+      "kind": "network",
+      "name": "getAvailabilityData",
+      "ms": 3704,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:55",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1340,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:55",
+      "src": "client",
+      "kind": "network",
+      "name": "markAllNotificationsRead",
+      "ms": 3279,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:52",
+      "src": "client",
+      "kind": "network",
+      "name": "getMyNotifications",
+      "ms": 3316,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:52",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 7561,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:52",
+      "src": "server",
+      "kind": "exec",
+      "name": "getOverCapacityNotifications",
+      "ms": 3760,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:49",
+      "src": "client",
+      "kind": "network",
+      "name": "getOverCapacityNotifications",
+      "ms": 5773,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:49",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingsPage",
+      "ms": 9912,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:48",
+      "src": "server",
+      "kind": "exec",
+      "name": "saveBooking",
+      "ms": 1832,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:46",
+      "src": "server",
+      "kind": "exec",
+      "name": "getNusukAgreementsForBooking",
+      "ms": 790,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:45",
+      "src": "client",
+      "kind": "network",
+      "name": "saveBooking",
+      "ms": 4363,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:43",
+      "src": "client",
+      "kind": "network",
+      "name": "getNusukAgreementsForBooking",
+      "ms": 3156,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:42",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingModalBootstrap",
+      "ms": 1740,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:39",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingModalBootstrap",
+      "ms": 3790,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:33",
+      "src": "server",
+      "kind": "exec",
+      "name": "pollAppState",
+      "ms": 20,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:30",
+      "src": "client",
+      "kind": "network",
+      "name": "pollAppState",
+      "ms": 2018,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:29",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 5917,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:25",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingsPage",
+      "ms": 9035,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:32:01",
+      "src": "server",
+      "kind": "exec",
+      "name": "pollAppState",
+      "ms": 2549,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:59",
+      "src": "client",
+      "kind": "network",
+      "name": "pollAppState",
+      "ms": 4394,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:53",
+      "src": "server",
+      "kind": "exec",
+      "name": "getCollectionAccounts",
+      "ms": 488,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:53",
+      "src": "server",
+      "kind": "exec",
+      "name": "getOverCapacityNotifications",
+      "ms": 4557,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:53",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 7514,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:53",
+      "src": "server",
+      "kind": "exec",
+      "name": "getUserPreference",
+      "ms": 341,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:53",
+      "src": "server",
+      "kind": "exec",
+      "name": "getDistinctHotelNames",
+      "ms": 876,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:50",
+      "src": "client",
+      "kind": "network",
+      "name": "getOverCapacityNotifications",
+      "ms": 7899,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:50",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingsPage",
+      "ms": 9937,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:50",
+      "src": "client",
+      "kind": "network",
+      "name": "getCollectionAccounts",
+      "ms": 3269,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:50",
+      "src": "client",
+      "kind": "network",
+      "name": "getDistinctHotelNames",
+      "ms": 3276,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:50",
+      "src": "client",
+      "kind": "network",
+      "name": "getUserPreference",
+      "ms": 3207,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:44",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityData",
+      "ms": 7168,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:40",
+      "src": "server",
+      "kind": "exec",
+      "name": "getContractDateRange",
+      "ms": 685,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:40",
+      "src": "client",
+      "kind": "network",
+      "name": "getAvailabilityData",
+      "ms": 12813,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:37",
+      "src": "client",
+      "kind": "network",
+      "name": "getContractDateRange",
+      "ms": 2894,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:37",
+      "src": "server",
+      "kind": "exec",
+      "name": "getDistinctHotelNames",
+      "ms": 1255,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:37",
+      "src": "server",
+      "kind": "exec",
+      "name": "getUserPreference",
+      "ms": 428,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:36",
+      "src": "server",
+      "kind": "exec",
+      "name": "getUserPreference",
+      "ms": 482,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:34",
+      "src": "client",
+      "kind": "network",
+      "name": "getUserPreference",
+      "ms": 2402,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:34",
+      "src": "client",
+      "kind": "network",
+      "name": "getUserPreference",
+      "ms": 2117,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:34",
+      "src": "client",
+      "kind": "network",
+      "name": "getDistinctHotelNames",
+      "ms": 3525,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:32",
+      "src": "server",
+      "kind": "exec",
+      "name": "getUserPreference",
+      "ms": 522,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:32",
+      "src": "server",
+      "kind": "exec",
+      "name": "checkWaitlistAvailabilityAndNotify",
+      "ms": 1897,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:32",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAppBootstrap",
+      "ms": 2627,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:32",
+      "src": "server",
+      "kind": "exec",
+      "name": "checkConfirmationOptionDatesAndNotify",
+      "ms": 1322,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:32",
+      "src": "server",
+      "kind": "exec",
+      "name": "checkDuePaymentsAndNotify",
+      "ms": 687,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:32",
+      "src": "server",
+      "kind": "exec",
+      "name": "sendTelegramCheckinReminders",
+      "ms": 12,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:29",
+      "src": "client",
+      "kind": "network",
+      "name": "getUserPreference",
+      "ms": 4985,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:29",
+      "src": "client",
+      "kind": "network",
+      "name": "getAppBootstrap",
+      "ms": 7186,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:28",
+      "src": "server",
+      "kind": "exec",
+      "name": "loginUser",
+      "ms": 1142,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:25",
+      "src": "client",
+      "kind": "network",
+      "name": "loginUser",
+      "ms": 3344,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:19",
+      "src": "client",
+      "kind": "resource",
+      "name": "https://fonts.googleapis.com/css2",
+      "ms": 40,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": "link size=0B"
+    },
+    {
+      "time": "2026-11-20 03:31:19",
+      "src": "client",
+      "kind": "resource",
+      "name": "https://csp.withgoogle.com/csp/proto/[id]",
+      "ms": 219,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": "beacon size=0B"
+    },
+    {
+      "time": "2026-11-20 03:31:19",
+      "src": "client",
+      "kind": "resource",
+      "name": "https://www.google.com/jsapi",
+      "ms": 652,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": "script size=0B"
+    },
+    {
+      "time": "2026-11-20 03:31:19",
+      "src": "client",
+      "kind": "resource",
+      "name": "https://sayed-h2003.github.io/Hotels-Managment/icon-512.png",
+      "ms": 926,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": "img size=0B"
+    },
+    {
+      "time": "2026-11-20 03:31:19",
+      "src": "client",
+      "kind": "nav",
+      "name": "page-load",
+      "ms": 67,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": "dcl=67ms ttfb=27ms"
+    },
+    {
+      "time": "2026-11-20 03:31:14",
+      "src": "client",
+      "kind": "console",
+      "name": "Availability_Screen",
+      "ms": 0,
+      "status": "log",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:13",
+      "src": "web",
+      "kind": "exec",
+      "name": "doGet:index",
+      "ms": 18,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:12",
+      "src": "web",
+      "kind": "exec",
+      "name": "doGet:index",
+      "ms": 20,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:08",
+      "src": "server",
+      "kind": "exec",
+      "name": "logoutUser",
+      "ms": 1469,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:07",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1671,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:06",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 78,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:31:06",
+      "src": "server",
+      "kind": "exec",
+      "name": "pingHeartbeatAndGetActiveUsers",
+      "ms": 1369,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:24:32",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 9917,
+      "status": "ok",
+      "user": "",
+      "version": "v3.52",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:14:31",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 5685,
+      "status": "ok",
+      "user": "",
+      "version": "v3.51",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 03:04:32",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 6742,
+      "status": "ok",
+      "user": "",
+      "version": "v3.51",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 02:54:32",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 4234,
+      "status": "ok",
+      "user": "",
+      "version": "v3.51",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 02:44:39",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 7351,
+      "status": "ok",
+      "user": "",
+      "version": "v3.51",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 02:34:32",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 7877,
+      "status": "ok",
+      "user": "",
+      "version": "v3.51",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 02:24:32",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 5743,
+      "status": "ok",
+      "user": "",
+      "version": "v3.51",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 02:14:31",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 4237,
+      "status": "ok",
+      "user": "",
+      "version": "v3.51",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 02:04:31",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 3408,
+      "status": "ok",
+      "user": "",
+      "version": "v3.51",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:54:34",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 25510,
+      "status": "ok",
+      "user": "",
+      "version": "v3.51",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:44:32",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 3488,
+      "status": "ok",
+      "user": "",
+      "version": "v3.51",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:34:31",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 151,
+      "status": "ok",
+      "user": "",
+      "version": "v3.51",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:31:11",
+      "src": "web",
+      "kind": "exec",
+      "name": "doGet:perfReport",
+      "ms": 5855,
+      "status": "ok",
+      "user": "",
+      "version": "v3.51",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:24:54",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 2775,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:24:39",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 14,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:24:39",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 2631,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:24:39",
+      "src": "server",
+      "kind": "exec",
+      "name": "pingHeartbeatAndGetActiveUsers",
+      "ms": 643,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:24:37",
+      "src": "web",
+      "kind": "exec",
+      "name": "doGet:perfReport",
+      "ms": 2590,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:24:32",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 163,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:24:24",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 2063,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:24:19",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 13,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:24:09",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1927,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:59",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 19,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:53",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 2101,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:48",
+      "src": "server",
+      "kind": "exec",
+      "name": "getPerfCopyAllJson",
+      "ms": 1511,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:38",
+      "src": "server",
+      "kind": "exec",
+      "name": "pingHeartbeatAndGetActiveUsers",
+      "ms": 658,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:38",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1075,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:38",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 116,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:31",
+      "src": "server",
+      "kind": "exec",
+      "name": "getPerfLog",
+      "ms": 742,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:24",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 3879,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:20",
+      "src": "client",
+      "kind": "network",
+      "name": "getMyNotifications",
+      "ms": 7291,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:18",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 24,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:15",
+      "src": "client",
+      "kind": "network",
+      "name": "getAvailabilityVersion",
+      "ms": 2055,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:12",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAccountsSummary",
+      "ms": 1666,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:09",
+      "src": "client",
+      "kind": "network",
+      "name": "getAccountsSummary",
+      "ms": 3902,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:08",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1686,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:08",
+      "src": "server",
+      "kind": "exec",
+      "name": "getDistinctHotelNames",
+      "ms": 1897,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:06",
+      "src": "client",
+      "kind": "network",
+      "name": "getDistinctHotelNames",
+      "ms": 3740,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:23:05",
+      "src": "client",
+      "kind": "network",
+      "name": "getMyNotifications",
+      "ms": 3887,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:59",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 19,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:56",
+      "src": "server",
+      "kind": "exec",
+      "name": "getDailyStatementSummary",
+      "ms": 2827,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:55",
+      "src": "client",
+      "kind": "network",
+      "name": "getAvailabilityVersion",
+      "ms": 2458,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:53",
+      "src": "client",
+      "kind": "network",
+      "name": "getDailyStatementSummary",
+      "ms": 5440,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:53",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1688,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:52",
+      "src": "server",
+      "kind": "exec",
+      "name": "getDistinctHotelNames",
+      "ms": 1163,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:50",
+      "src": "client",
+      "kind": "network",
+      "name": "getMyNotifications",
+      "ms": 3690,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:49",
+      "src": "client",
+      "kind": "network",
+      "name": "getDistinctHotelNames",
+      "ms": 3792,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:49",
+      "src": "server",
+      "kind": "exec",
+      "name": "getFullProfitReport",
+      "ms": 1526,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:45",
+      "src": "client",
+      "kind": "network",
+      "name": "getFullProfitReport",
+      "ms": 4158,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:42",
+      "src": "server",
+      "kind": "exec",
+      "name": "getFullProfitReport",
+      "ms": 1632,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:39",
+      "src": "client",
+      "kind": "network",
+      "name": "getFullProfitReport",
+      "ms": 3208,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:38",
+      "src": "server",
+      "kind": "exec",
+      "name": "getContractDateRange",
+      "ms": 1559,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:38",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 42,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:38",
+      "src": "server",
+      "kind": "exec",
+      "name": "pingHeartbeatAndGetActiveUsers",
+      "ms": 826,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:38",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 2088,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:35",
+      "src": "client",
+      "kind": "network",
+      "name": "getAvailabilityVersion",
+      "ms": 1931,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:35",
+      "src": "client",
+      "kind": "network",
+      "name": "getMyNotifications",
+      "ms": 4110,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:35",
+      "src": "client",
+      "kind": "network",
+      "name": "pingHeartbeatAndGetActiveUsers",
+      "ms": 2818,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:35",
+      "src": "client",
+      "kind": "network",
+      "name": "getContractDateRange",
+      "ms": 3831,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:35",
+      "src": "server",
+      "kind": "exec",
+      "name": "getDistinctHotelNames",
+      "ms": 802,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:32",
+      "src": "client",
+      "kind": "network",
+      "name": "getDistinctHotelNames",
+      "ms": 2931,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:29",
+      "src": "server",
+      "kind": "exec",
+      "name": "getContracts",
+      "ms": 868,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:26",
+      "src": "client",
+      "kind": "network",
+      "name": "getContracts",
+      "ms": 3387,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:23",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1392,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:20",
+      "src": "client",
+      "kind": "network",
+      "name": "getMyNotifications",
+      "ms": 3513,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:20",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityData",
+      "ms": 2214,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:20",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityData",
+      "ms": 2216,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:18",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 13,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:17",
+      "src": "client",
+      "kind": "network",
+      "name": "getAvailabilityData",
+      "ms": 4596,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:17",
+      "src": "client",
+      "kind": "network",
+      "name": "getAvailabilityData",
+      "ms": 4391,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:15",
+      "src": "client",
+      "kind": "network",
+      "name": "getAvailabilityVersion",
+      "ms": 1492,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:08",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 2993,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:05",
+      "src": "client",
+      "kind": "network",
+      "name": "getMyNotifications",
+      "ms": 5430,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:03",
+      "src": "server",
+      "kind": "exec",
+      "name": "getOverCapacityNotifications",
+      "ms": 4393,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:03",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 5244,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:00",
+      "src": "client",
+      "kind": "network",
+      "name": "getOverCapacityNotifications",
+      "ms": 6946,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:22:00",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingsPage",
+      "ms": 7424,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:58",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 36,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:56",
+      "src": "server",
+      "kind": "exec",
+      "name": "saveBooking",
+      "ms": 4196,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:55",
+      "src": "client",
+      "kind": "network",
+      "name": "getAvailabilityVersion",
+      "ms": 2159,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:53",
+      "src": "client",
+      "kind": "network",
+      "name": "saveBooking",
+      "ms": 6769,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:53",
+      "src": "server",
+      "kind": "exec",
+      "name": "getNusukAgreementsForBooking",
+      "ms": 1272,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:53",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1564,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:50",
+      "src": "client",
+      "kind": "network",
+      "name": "getNusukAgreementsForBooking",
+      "ms": 3666,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:50",
+      "src": "client",
+      "kind": "network",
+      "name": "getMyNotifications",
+      "ms": 3206,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:49",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingModalBootstrap",
+      "ms": 1940,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:46",
+      "src": "server",
+      "kind": "exec",
+      "name": "getNusukAgreementsForBooking",
+      "ms": 637,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:46",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingModalBootstrap",
+      "ms": 4565,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:43",
+      "src": "client",
+      "kind": "network",
+      "name": "getNusukAgreementsForBooking",
+      "ms": 2747,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:42",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingFullDetails",
+      "ms": 1499,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:39",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingFullDetails",
+      "ms": 4074,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:39",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1606,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:39",
+      "src": "server",
+      "kind": "exec",
+      "name": "pingHeartbeatAndGetActiveUsers",
+      "ms": 957,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:38",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 25,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:35",
+      "src": "client",
+      "kind": "network",
+      "name": "getAvailabilityVersion",
+      "ms": 1827,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:35",
+      "src": "client",
+      "kind": "network",
+      "name": "getMyNotifications",
+      "ms": 4154,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:35",
+      "src": "client",
+      "kind": "network",
+      "name": "pingHeartbeatAndGetActiveUsers",
+      "ms": 3347,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:27",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 11194,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:26",
+      "src": "web",
+      "kind": "exec",
+      "name": "doGet:perfReport",
+      "ms": 13351,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:24",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingsPage",
+      "ms": 13348,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:23",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1661,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:20",
+      "src": "client",
+      "kind": "network",
+      "name": "getMyNotifications",
+      "ms": 3321,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:18",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 21,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:15",
+      "src": "client",
+      "kind": "network",
+      "name": "getAvailabilityVersion",
+      "ms": 1929,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:08",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1270,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:06",
+      "src": "server",
+      "kind": "exec",
+      "name": "getOverCapacityNotifications",
+      "ms": 5815,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:06",
+      "src": "server",
+      "kind": "exec",
+      "name": "getUserPreference",
+      "ms": 386,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:06",
+      "src": "server",
+      "kind": "exec",
+      "name": "getBookingsPage",
+      "ms": 5770,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:06",
+      "src": "server",
+      "kind": "exec",
+      "name": "getDistinctHotelNames",
+      "ms": 668,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:05",
+      "src": "client",
+      "kind": "network",
+      "name": "getMyNotifications",
+      "ms": 3442,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:05",
+      "src": "server",
+      "kind": "exec",
+      "name": "getCollectionAccounts",
+      "ms": 447,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:03",
+      "src": "client",
+      "kind": "network",
+      "name": "getOverCapacityNotifications",
+      "ms": 8618,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:03",
+      "src": "client",
+      "kind": "network",
+      "name": "getBookingsPage",
+      "ms": 8160,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:03",
+      "src": "client",
+      "kind": "network",
+      "name": "getCollectionAccounts",
+      "ms": 2714,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:03",
+      "src": "client",
+      "kind": "network",
+      "name": "getDistinctHotelNames",
+      "ms": 2787,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:21:03",
+      "src": "client",
+      "kind": "network",
+      "name": "getUserPreference",
+      "ms": 2999,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:58",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 25,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:55",
+      "src": "client",
+      "kind": "network",
+      "name": "getAvailabilityVersion",
+      "ms": 1967,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:53",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1570,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:50",
+      "src": "client",
+      "kind": "network",
+      "name": "getMyNotifications",
+      "ms": 4246,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:49",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityData",
+      "ms": 4532,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:46",
+      "src": "client",
+      "kind": "network",
+      "name": "getAvailabilityData",
+      "ms": 7344,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:45",
+      "src": "server",
+      "kind": "exec",
+      "name": "getContractDateRange",
+      "ms": 1073,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:43",
+      "src": "client",
+      "kind": "network",
+      "name": "getContractDateRange",
+      "ms": 3345,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:41",
+      "src": "server",
+      "kind": "exec",
+      "name": "getUserPreference",
+      "ms": 466,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:41",
+      "src": "server",
+      "kind": "exec",
+      "name": "getDistinctHotelNames",
+      "ms": 1414,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:41",
+      "src": "server",
+      "kind": "exec",
+      "name": "getUserPreference",
+      "ms": 409,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:38",
+      "src": "server",
+      "kind": "exec",
+      "name": "getUserPreference",
+      "ms": 777,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:38",
+      "src": "client",
+      "kind": "network",
+      "name": "getUserPreference",
+      "ms": 3011,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:38",
+      "src": "client",
+      "kind": "network",
+      "name": "getUserPreference",
+      "ms": 2846,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:38",
+      "src": "client",
+      "kind": "network",
+      "name": "getDistinctHotelNames",
+      "ms": 4456,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:38",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAppBootstrap",
+      "ms": 2314,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:35",
+      "src": "client",
+      "kind": "network",
+      "name": "getUserPreference",
+      "ms": 2634,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:35",
+      "src": "client",
+      "kind": "network",
+      "name": "getAppBootstrap",
+      "ms": 4262,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:35",
+      "src": "server",
+      "kind": "exec",
+      "name": "loginUser",
+      "ms": 1048,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:33",
+      "src": "client",
+      "kind": "resource",
+      "name": "https://fonts.gstatic.com/s/cairo/v31/[id].woff2",
+      "ms": 0,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": "css size=0B"
+    },
+    {
+      "time": "2026-11-20 01:20:33",
+      "src": "client",
+      "kind": "resource",
+      "name": "https://fonts.gstatic.com/s/cairo/v31/[id].woff2",
+      "ms": 0,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": "css size=0B"
+    },
+    {
+      "time": "2026-11-20 01:20:33",
+      "src": "client",
+      "kind": "resource",
+      "name": "https://fonts.googleapis.com/css2",
+      "ms": 34,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": "link size=0B"
+    },
+    {
+      "time": "2026-11-20 01:20:33",
+      "src": "client",
+      "kind": "resource",
+      "name": "https://sayed-h2003.github.io/Hotels-Managment/icon-512.png",
+      "ms": 431,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": "img size=0B"
+    },
+    {
+      "time": "2026-11-20 01:20:33",
+      "src": "client",
+      "kind": "resource",
+      "name": "https://csp.withgoogle.com/csp/proto/[id]",
+      "ms": 138,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": "beacon size=0B"
+    },
+    {
+      "time": "2026-11-20 01:20:33",
+      "src": "client",
+      "kind": "resource",
+      "name": "https://www.google.com/jsapi",
+      "ms": 191,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": "script size=0B"
+    },
+    {
+      "time": "2026-11-20 01:20:33",
+      "src": "client",
+      "kind": "nav",
+      "name": "page-load",
+      "ms": 78,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": "dcl=77ms ttfb=40ms"
+    },
+    {
+      "time": "2026-11-20 01:20:32",
+      "src": "client",
+      "kind": "network",
+      "name": "loginUser",
+      "ms": 3318,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:28",
+      "src": "client",
+      "kind": "console",
+      "name": "Availability_Screen",
+      "ms": 0,
+      "status": "log",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:27",
+      "src": "web",
+      "kind": "exec",
+      "name": "doGet:index",
+      "ms": 18,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:27",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 83,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:27",
+      "src": "server",
+      "kind": "exec",
+      "name": "logoutUser",
+      "ms": 781,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:23",
+      "src": "server",
+      "kind": "exec",
+      "name": "pingHeartbeatAndGetActiveUsers",
+      "ms": 1355,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:23",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 9,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:20:23",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1770,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:14:32",
+      "src": "trigger",
+      "kind": "exec",
+      "name": "_flushPerfBuckets_",
+      "ms": 338,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:13:02",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 104,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:13:02",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 2424,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:13:01",
+      "src": "server",
+      "kind": "exec",
+      "name": "pingHeartbeatAndGetActiveUsers",
+      "ms": 1311,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:46",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1412,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:42",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 25,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:32",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1658,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:21",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 11,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:16",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 1399,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:03",
+      "src": "server",
+      "kind": "exec",
+      "name": "getAvailabilityVersion",
+      "ms": 10,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:03",
+      "src": "server",
+      "kind": "exec",
+      "name": "pingHeartbeatAndGetActiveUsers",
+      "ms": 1916,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:12:02",
+      "src": "server",
+      "kind": "exec",
+      "name": "getMyNotifications",
+      "ms": 2600,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    },
+    {
+      "time": "2026-11-20 01:11:18",
+      "src": "web",
+      "kind": "exec",
+      "name": "doGet:perfReport",
+      "ms": 3611,
+      "status": "ok",
+      "user": "",
+      "version": "v3.50",
+      "details": ""
+    }
+  ],
+  "logSummary": {
+    "total": 253,
+    "byKind": {
+      "exec": 156,
+      "network": 83,
+      "resource": 10,
+      "nav": 2,
+      "console": 2
+    },
+    "bySource": {
+      "server": 133,
+      "trigger": 15,
+      "web": 8,
+      "client": 97
+    },
+    "byStatus": {
+      "ok": 251,
+      "log": 2
+    },
+    "topConsole": [
+      {
+        "level": "log",
+        "msg": "",
+        "count": 6
+      }
+    ],
+    "topNetworkByResp": [
+      {
+        "name": "getAppBootstrap",
+        "time": "2026-11-20 03:31:29",
+        "ms": 7186,
+        "respBytes": 111002
+      },
+      {
+        "name": "getAppBootstrap",
+        "time": "2026-11-20 01:20:35",
+        "ms": 4262,
+        "respBytes": 111002
+      },
+      {
+        "name": "pollAppState",
+        "time": "2026-11-20 03:31:59",
+        "ms": 4394,
+        "respBytes": 45875
+      },
+      {
+        "name": "getMyNotifications",
+        "time": "2026-11-20 03:32:52",
+        "ms": 3316,
+        "respBytes": 45773
+      },
+      {
+        "name": "getMyNotifications",
+        "time": "2026-11-20 01:23:20",
+        "ms": 7291,
+        "respBytes": 45773
+      },
+      {
+        "name": "getMyNotifications",
+        "time": "2026-11-20 01:23:05",
+        "ms": 3887,
+        "respBytes": 45773
+      },
+      {
+        "name": "getMyNotifications",
+        "time": "2026-11-20 01:22:50",
+        "ms": 3690,
+        "respBytes": 45773
+      },
+      {
+        "name": "getMyNotifications",
+        "time": "2026-11-20 01:22:35",
+        "ms": 4110,
+        "respBytes": 45773
+      },
+      {
+        "name": "getMyNotifications",
+        "time": "2026-11-20 01:22:20",
+        "ms": 3513,
+        "respBytes": 45773
+      },
+      {
+        "name": "getMyNotifications",
+        "time": "2026-11-20 01:22:05",
+        "ms": 5430,
+        "respBytes": 45773
+      }
+    ]
+  },
+  "today": {
+    "totalCalls": 1007,
+    "avgMs": 6294,
+    "failRatePct": 0
+  },
+  "quotas": {
+    "urlFetch": {
+      "used": 1,
+      "limit": 20000
+    },
+    "triggerMinutes": {
+      "used": 1.7,
+      "limit": 90
+    },
+    "sheetReadsToday": 328,
+    "cacheOpsToday": 83,
+    "lockAcquisitionsToday": 3
+  },
+  "health": {
+    "flushTrigger": "المشغّل مثبّت مسبقاً",
+    "flush": {
+      "flushed": 0,
+      "rows": 0
+    },
+    "diag": {
+      "sheetCount": 26,
+      "totalCells": 668174,
+      "cellLimit": 10000000,
+      "Perf": {
+        "lastRow": 211,
+        "maxRows": 1000,
+        "maxCols": 26
+      },
+      "PerfSlow": {
+        "lastRow": 187,
+        "maxRows": 1000,
+        "maxCols": 26
+      },
+      "PerfLog": {
+        "lastRow": 254,
+        "maxRows": 1000,
+        "maxCols": 26
+      },
+      "lastFlushedBucket": "202611200330",
+      "lastFlushError": ""
+    }
+  },
+  "exportedAt": "2026-11-20T01:47:05.877Z",
+  "detail": "redacted"
+}
