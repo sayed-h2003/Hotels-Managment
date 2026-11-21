@@ -340,9 +340,12 @@ var _SES_PREFIX = "SES_", _SES_TTL_SEC = 21600, _SES_REFRESH_MS = 30 * 60 * 1000
 // الرمز يُحفظ في الكاش (سريع) وفي خصائص السكربت (دائم، يحمي من إخلاء الكاش). لا يُخزَّن في أي شيت.
 function _sessionCreate_(username, fullName) {
   var token = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, "").toLowerCase();
-  var rec = JSON.stringify({ u: String(username), f: String(fullName || username), r: Date.now() });
-  try { CacheService.getScriptCache().put(_SES_PREFIX + token, rec, _SES_TTL_SEC); } catch (e) {}
-  try { PropertiesService.getScriptProperties().setProperty(_SES_PREFIX + token, rec); } catch (e2) {}
+  // V3.72 — عند الدخول يُكتب الرمز في الكاش فقط (سريع). النسخة الدائمة في خصائص السكربت تُكتب عند أول نداء بهذا الرمز
+  // (النبضة الموازية بعد الدخول بلحظات) — كتابة الخاصية كانت ~0.9 ث من زمن رد الدخول نفسه (قياس V3.71).
+  var t0 = Date.now(), rec = JSON.stringify({ u: String(username), f: String(fullName || username), r: t0, c: t0, p: 0 });
+  var cached = false;
+  try { CacheService.getScriptCache().put(_SES_PREFIX + token, rec, _SES_TTL_SEC); cached = true; } catch (e) {}
+  if (!cached) { try { PropertiesService.getScriptProperties().setProperty(_SES_PREFIX + token, rec); } catch (e2) {} } // الكاش تعذّر: نحفظها دائمة فوراً
   return token;
 }
 function _sessionResolve_(token) {
@@ -356,8 +359,10 @@ function _sessionResolve_(token) {
   if (!rec || !rec.u) return null;
   var now = Date.now();
   if (now - (Number(rec.r) || 0) > _SES_MAX_IDLE_MS) { _sessionKill_(token); return null; }
-  if (fromProp || now - rec.r > _SES_REFRESH_MS) { // تمديد دوري مع النشاط (نبضة الواجهة تكفي لإبقاء الجلسة حية)
-    rec.r = now; var s = JSON.stringify(rec);
+  // جلسة لم تُكتب نسختها الدائمة بعد لا يراها _killUserSessions_ (يعدّ الخصائص فقط) — فنفحص ختم الإنهاء الخاص بالمستخدم
+  if (rec.p === 0 && (Number(rec.c) || 0) <= _sessionKillStamp_(rec.u)) { _sessionKill_(token); return null; }
+  if (fromProp || rec.p === 0 || now - rec.r > _SES_REFRESH_MS) { // تمديد دوري مع النشاط + أول نداء بعد الدخول يكتب النسخة الدائمة
+    rec.r = now; rec.p = 1; var s = JSON.stringify(rec);
     try { CacheService.getScriptCache().put(key, s, _SES_TTL_SEC); } catch (e4) {}
     try { PropertiesService.getScriptProperties().setProperty(key, s); } catch (e5) {}
   }
@@ -368,8 +373,22 @@ function _sessionKill_(token) {
   try { CacheService.getScriptCache().remove(_SES_PREFIX + token); } catch (e) {}
   try { PropertiesService.getScriptProperties().deleteProperty(_SES_PREFIX + token); } catch (e2) {}
 }
+// V3.72 — ختم إنهاء لكل مستخدم: أي جلسة أُنشئت قبله ولم تُكتب نسختها الدائمة بعد (في الكاش فقط) تُرفض عند أول نداء
+var _SES_KILL_PREFIX = "SESKILL_";
+function _sessionKillKey_(username) { return _SES_KILL_PREFIX + String(username || "").toLowerCase().slice(0, 60); }
+function _sessionKillStamp_(username) {
+  var k = _sessionKillKey_(username), v = null;
+  try { v = CacheService.getScriptCache().get(k); } catch (e) {}
+  if (v == null) { try { v = PropertiesService.getScriptProperties().getProperty(k); } catch (e2) {} }
+  return Number(v) || 0;
+}
 // إنهاء كل جلسات مستخدم (تغيير/إعادة تعيين كلمة المرور، تعطيل، حذف، إعادة تسمية) عدا رمز يُستثنى اختيارياً
 function _killUserSessions_(username, exceptToken) {
+  try { // الختم أولاً: يغطي الجلسات التي ما زالت في الكاش فقط (الرمز المستثنى له نسخة دائمة دائماً لأنه هو صاحب النداء الحالي)
+    var stamp = String(Date.now()), kk = _sessionKillKey_(username);
+    try { PropertiesService.getScriptProperties().setProperty(kk, stamp); } catch (eS) {}
+    try { CacheService.getScriptCache().put(kk, stamp, _SES_TTL_SEC); } catch (eC) {}
+  } catch (e0) {}
   try {
     var props = PropertiesService.getScriptProperties(), all = props.getProperties(), ul = String(username || "").toLowerCase();
     Object.keys(all).forEach(function(k) {
@@ -388,6 +407,7 @@ function _sessionsPrune_() {
     props.setProperty("SES_LAST_PRUNE", String(now));
     var all = props.getProperties(), n = 0;
     Object.keys(all).forEach(function(k) {
+      if (k.indexOf(_SES_KILL_PREFIX) === 0) { if (now - (Number(all[k]) || 0) > _SES_MAX_IDLE_MS) { try { props.deleteProperty(k); } catch (eK) {} } return; } // أختام قديمة: لا جلسة كاش تعيش أكثر من 6 ساعات
       if (k.indexOf(_SES_PREFIX) !== 0 || k === "SES_LAST_PRUNE") return;
       var rec = null; try { rec = JSON.parse(all[k]); } catch (e) {}
       if (!rec || now - (Number(rec.r) || 0) > _SES_MAX_IDLE_MS) { _sessionKill_(k.slice(_SES_PREFIX.length)); n++; }
@@ -640,7 +660,7 @@ function loginUser(username, password, opts) {
     _lap_("loginUser:permsSession");
     if (opts && opts.boot) {
       try { out.boot = getAppBootstrap(storedUsername, fullName, { brandingVer: opts.brandingVer, lite: true }); } catch (eB) { _logError_(_fn, eB); }
-      _lap_("loginUser:boot");
+      _lap_("loginUser:bootTail"); // معظم زمن الإقلاع مسجَّل في عيّنات ~boot:* (ساعة المراحل مشتركة)
       if (out.boot) { try { out.home = _loginHomeData_(storedUsername, role, permissions, out.boot, opts); } catch (eH) { _logError_(_fn, eH); } }
       _lap_("loginUser:home");
     }
@@ -786,7 +806,8 @@ function _getUserRole_(username) {
 // V3.55 — لقطة الأدوار والصلاحيات: كل نداء خادم تقريباً يفحص الصلاحية، وكان يقرأ شيتي المستخدمين والصلاحيات كاملين
 // في كل نداء. الآن: نسخة في كاش السكريبت لمدة 60 ثانية + نسخة داخل التنفيذ، وتُمسح فور أي تعديل على الشيتين
 // (كل دوال الكتابة عليهما تستدعي _invalidateSheetCache_ للشيت، وهي تمسح اللقطة). لا تحوي كلمات مرور أو أملاح.
-var _AUTH_CACHE_KEY = "AUTH_SNAPSHOT_V2", _AUTH_CACHE_TTL_SEC = 60;
+// V3.72 — 5 دقائق (كانت 60 ث): كل كتابة على المستخدمين/الصلاحيات من البرنامج تُبطل اللقطة فوراً، فالمدة تخص التعديل اليدوي في الشيت فقط
+var _AUTH_CACHE_KEY = "AUTH_SNAPSHOT_V2", _AUTH_CACHE_TTL_SEC = 300;
 var __AUTH_SNAPSHOT = null;
 function _authSnapshot_() {
   if (__AUTH_SNAPSHOT) return __AUTH_SNAPSHOT;
@@ -4982,7 +5003,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.71";
+var APP_VERSION = "V3.72";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
