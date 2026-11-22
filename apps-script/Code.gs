@@ -527,6 +527,7 @@ function _apiTable_() {
     getActiveContractsForDropdown: { f: getActiveContractsForDropdown, u: 0 },
     getCollectionAccounts: { f: getCollectionAccounts, u: -1 },
     addCollectionAccount: { f: addCollectionAccount, u: 1 },
+    deleteCollectionAccount: { f: deleteCollectionAccount, u: 1, a: 1 },
     getPrefetchBundle: { f: getPrefetchBundle, u: 0 },
     getUsersScreenData: { f: getUsersScreenData, u: 0 },
     getBookingsAll: { f: getBookingsAll, u: 0 },
@@ -2092,6 +2093,34 @@ function addCollectionAccount(accountName, currentUser) { _apiGuard_();
   sheet.appendRow([newId,accountName,true]);
   logAudit("الحجوزات","إضافة جهة تحصيل",newId,"","","","إضافة جهة تحصيل: "+accountName,currentUser);
   return {id:newId,name:accountName};
+  } catch(e) { _logError_(_fn, e); throw e; }
+}
+
+// V3.74 — حذف جهة تحصيل (للمدير فقط). الجهات تُضاف يدوياً من زر ➕ بنموذج الحجز (أو تلقائياً عند الاستيراد الجماعي باسم غير موجود)،
+// ولم يكن هناك أي طريق لإزالة جهة أُضيفت بالخطأ. الحذف "ناعم": Is_Active=false فلا تظهر في أي قائمة، ويبقى اسمها مقروءاً في السجل.
+// مرفوض إن كان للجهة حجز غير محذوف (ولو ملغياً) أو دفعة مسجَّلة — حتى لا يبقى حجز أو مبلغ معلَّقاً على جهة غير موجودة.
+function deleteCollectionAccount(accountId, currentUser) { _apiGuard_();
+  var _fn="[deleteCollectionAccount]"; _logInfo_(_fn, "START | accountId:"+String(JSON.stringify(accountId)||"").slice(0, 80)+", currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
+  try {
+  if (!_isAdmin_(currentUser)) throw new Error("حذف جهة التحصيل متاح للمدير فقط.");
+  accountId=String(accountId||"").trim();
+  if (!accountId) throw new Error("لم تُحدَّد جهة التحصيل المطلوب حذفها.");
+  _invalidateSheetCache_("Collection_Accounts");
+  var data=_getSheetValues_("Collection_Accounts"), rowIdx=-1, name="";
+  for (var i=1; i<data.length; i++) { if (String(data[i][0]).trim()===accountId && data[i][2]!==false) { rowIdx=i; name=String(data[i][1]||accountId); break; } }
+  if (rowIdx<0) throw new Error("جهة التحصيل غير موجودة أو محذوفة مسبقاً.");
+  var bd=_getSheetValues_("Bookings_Master"), nBk=0, nCan=0;
+  for (var b=1; b<bd.length; b++) { if (bd[b][0] && bd[b][14]!==true && String(bd[b][3]).trim()===accountId) { nBk++; if (String(bd[b][4])==="ملغي") nCan++; } }
+  if (nBk) throw new Error("لا يمكن حذف «"+name+"»: مسجَّل عليها "+nBk+" حجز"+(nCan?" (منها "+nCan+" ملغي)":"")+". انقل هذه الحجوزات لجهة أخرى أو احذفها أولاً.");
+  var pd=_getSheetValues_("Account_Payments"), nPay=0;
+  for (var p=1; p<pd.length; p++) { if (pd[p][0] && pd[p][10]!==true && String(pd[p][1])==="collection" && String(pd[p][2]).trim()===accountId) nPay++; }
+  if (nPay) throw new Error("لا يمكن حذف «"+name+"»: مسجَّل باسمها "+nPay+" دفعة بشاشة الحسابات. احذف الدفعات أولاً إن كانت مسجَّلة بالخطأ.");
+  _getOrCreateSheet_("Collection_Accounts").getRange(rowIdx+1, 3).setValue(false);
+  _invalidateSheetCache_("Collection_Accounts");
+  _invalidateReferenceCache_(_REF_CACHE_KEY_ACCOUNTS);
+  _invalidateReferenceCache_(_REF_CACHE_KEY_COLLECTION_MAP);
+  logAudit("الحجوزات","حذف جهة تحصيل",accountId,"","","","حذف جهة تحصيل: "+name,currentUser);
+  return {success:true,id:accountId,name:name};
   } catch(e) { _logError_(_fn, e); throw e; }
 }
 
@@ -5018,7 +5047,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.73";
+var APP_VERSION = "V3.74";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");

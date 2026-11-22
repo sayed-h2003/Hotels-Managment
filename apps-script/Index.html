@@ -5830,6 +5830,8 @@ function openBookingModal(editId) {
     var accounts = boot.accounts || [];
     var selAcc=document.getElementById('bk_collection_account');
     selAcc.innerHTML=accounts.map(function(a){ return '<option value="'+a.id+'">'+escapeHtmlAttr(a.name)+'</option>'; }).join('');
+    var _delBtn=document.getElementById('bk_coll_del_btn'); // V3.74 — حذف جهة تحصيل: للمدير فقط (والخادم يتحقق أيضاً)
+    if (_delBtn) _delBtn.style.display = ((sessionUser.role||'').toLowerCase()==='admin') ? '' : 'none';
 
     var names = boot.clientNames || [];
     document.getElementById('clientNamesList').innerHTML=names.map(function(n){ return '<option value="'+escapeHtmlAttr(n)+'">'; }).join('');
@@ -5964,6 +5966,23 @@ function quickAddCollectionAccount() {
       showToast('تمت إضافة جهة التحصيل: '+acc.name,'success');
     }).withFailureHandler(function(e){showToast(e.message||e,'error');}).addCollectionAccount(name.trim(),sessionUser.username);
   });
+}
+
+// V3.74 — حذف جهة التحصيل المختارة بالنموذج (للمدير فقط). الخادم يرفض إن كان لها حجوزات أو دفعات ويذكر عددها.
+function deleteSelectedCollectionAccount() {
+  if ((sessionUser.role||'').toLowerCase()!=='admin') { showToast('حذف جهة التحصيل متاح للمدير فقط.','error'); return; }
+  var sel=document.getElementById('bk_collection_account'); if (!sel) return;
+  var id=sel.value, opt=sel.options[sel.selectedIndex], name=opt?opt.text:'';
+  if (!id) { showToast('اختر جهة التحصيل المطلوب حذفها أولاً.','error'); return; }
+  showConfirm('حذف جهة التحصيل «'+name+'»؟\nستختفي من كل القوائم. لن يتم الحذف إن كان مسجَّلاً عليها حجوزات أو دفعات.', function(){
+    google.script.run.withSuccessHandler(function(res){
+      for (var i=sel.options.length-1; i>=0; i--) { if (sel.options[i].value===id) sel.remove(i); }
+      if (_collAllAccounts) _collAllAccounts = _collAllAccounts.filter(function(a){ return String(a.id)!==String(id); });
+      try { _collRefreshFilters_(); } catch(e) {}
+      _ahpCollectionsLoaded = false; // قائمة "الجهة المسدِّدة" تُعاد تعبئتها عند فتحها التالي
+      showToast('تم حذف جهة التحصيل: '+((res&&res.name)||name),'success');
+    }).withFailureHandler(function(e){ showAppAlert(e.message||String(e)); }).deleteCollectionAccount(id, sessionUser.username);
+  }, null, 'حذف جهة تحصيل');
 }
 
 // يجمع بيانات نموذج الحجز، يتحقق من الحقول، ويرسلها للخادم - يتعامل مع سيناريو تجاوز السعة (يعرض تأكيداً للمستخدم عند اللزوم)
@@ -11190,7 +11209,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.73';
+var CLIENT_APP_VERSION = 'V3.74';
 var _BUILD_VERSION = CLIENT_APP_VERSION; // نسخة الكود المحمَّل في هذا التبويب (لا تتغير بعد التحميل)
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
@@ -11518,6 +11537,7 @@ function submitHotelPurge() {
         <div style="display:flex;gap:6px;">
           <select id="bk_collection_account" style="flex:1;"></select>
           <button type="button" class="dp-cal-btn" onclick="quickAddCollectionAccount()" title="إضافة جهة تحصيل جديدة">➕</button>
+          <button type="button" class="dp-cal-btn" id="bk_coll_del_btn" style="display:none;" onclick="deleteSelectedCollectionAccount()" title="حذف جهة التحصيل المختارة (للمدير فقط — إن لم يكن لها حجوزات أو دفعات)">🗑️</button>
         </div>
       </div>
       <div class="form-row">
