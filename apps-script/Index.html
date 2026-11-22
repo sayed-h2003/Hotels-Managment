@@ -473,6 +473,8 @@ body.m-view.m-av-days .avail-zoom, body.m-view.m-av-days #avail_panel_toggle, bo
 .mav-day.today .mav-date span, .mav-day.today.fri .mav-date span { color:#fff; }
 .mav-day.today .mav-date small { color:#cfdcd4; }
 .mav-day.today .mav-meta { font-weight:700; color:var(--clr-text); }
+.acc-nobk-note { font-size:7.5pt; font-weight:700; color:#b45309; margin-top:2px; white-space:normal; cursor:help; }
+body.m-view .acc-nobk-note { font-size:11.5px; }
 .mav-today-tag { display:inline-block; background:#c9a84c; color:#0f2419; font-weight:900; font-size:11.5px; border-radius:20px; padding:1px 10px; margin-inline-end:6px; }
 .mav-head { display:grid; grid-template-columns:64px 1fr auto; align-items:center; gap:10px; padding:10px 12px; cursor:pointer; }
 .mav-date { text-align:center; line-height:1.25; }
@@ -5336,6 +5338,32 @@ function _avPrefetchNeighbors_(hotel, year, month) {
   }, 800);
 }
 
+// V3.73 — قوائم فلتر "جهة التحصيل" (الحجوزات، نسك) تعرض فقط الجهات التي لها حجز غير محذوف.
+// المصدر بالترتيب: قائمة الحجوزات الموجودة بالمتصفح (الأحدث دائماً) ← علامة used من الخادم ← القائمة كاملة إن لم يتوفر أيٌّ منهما.
+var _collAllAccounts = null;
+function _collKnownBookingRows_() {
+  if (_bkAllMode === 'local' && _bkAll) return _bkAll;
+  try { var e = _cc.data[_ccKey_('getBookingsAll', [sessionUser.username])]; if (e && e.value && !e.value.tooLarge && e.value.rows) return e.value.rows; } catch (x) {}
+  return null;
+}
+function _collUsedNames_() {
+  var rows = _collKnownBookingRows_(), list = _collAllAccounts || [], seen = {}, out = [];
+  var add = function(n) { n = String(n == null ? '' : n).trim(); if (n && !seen[n]) { seen[n] = 1; out.push(n); } };
+  if (rows) rows.forEach(function(b) { add(b.collectionAccount); });
+  else if (list.length && list.some(function(a) { return typeof a.used === 'boolean'; })) list.forEach(function(a) { if (a.used) add(a.name); });
+  else list.forEach(function(a) { add(a.name); });
+  return out.sort(function(a, b) { return a.localeCompare(b, 'ar'); });
+}
+function _collFillFilter_(selId) {
+  var sel = document.getElementById(selId); if (!sel) return;
+  var cur = sel.value, names = _collUsedNames_();
+  if (cur && names.indexOf(cur) < 0) names.unshift(cur); // لا نُسقط اختياراً قائماً من تحت يد المستخدم
+  var sig = names.join('\u0001'); if (sel._collSig === sig) return; sel._collSig = sig;
+  sel.innerHTML = '<option value="">الكل</option>' + names.map(function(n){ return '<option value="'+escapeHtmlAttr(n)+'">'+escapeHtml(n)+'</option>'; }).join('');
+  if (cur) sel.value = cur;
+}
+function _collRefreshFilters_() { if (_collAllAccounts) { _collFillFilter_('bkf_coll'); _collFillFilter_('nusuk_filter_collection'); } }
+
 // v3.6 — تعبئة قوائم الفلاتر الفنادق وجهات التحصيل والشهور مرة واحدة فقط عند فتح الشاشة
 // المصدر: نداءات خادم شاملة مستقلة عن الترقيم — فتظهر كل الفنادق دائماً وليس فقط تلك بالصفحة الحالية
 var _bkFilterOptionsLoaded = false;
@@ -5352,14 +5380,10 @@ function _bkLoadFilterOptionsOnce() {
       + (names||[]).slice().sort().map(function(h){ return '<option value="'+escapeHtmlAttr(h)+'">'+escapeHtml(h)+'</option>'; }).join('');
     if (cur) hotelSel.value = cur; // نُعيد اختيار المستخدم بعد إعادة البناء
   }).withFailureHandler(function(){}).getDistinctHotelNames(sessionUser.username);
-  // (2) جهات التحصيل: كل الحسابات النشطة
+  // (2) جهات التحصيل — V3.73: فقط الجهات التي لها حجز فعلاً (جهة بلا أي حجز كانت تظهر في الفلتر بلا نتيجة)
   google.script.run.withSuccessHandler(function(list) {
-    var sel = document.getElementById('bkf_coll');
-    if (!sel) return;
-    var cur = sel.value;
-    sel.innerHTML = '<option value="">الكل</option>'
-      + (list||[]).map(function(a){ return '<option value="'+escapeHtmlAttr(a.name)+'">'+escapeHtml(a.name)+'</option>'; }).join('');
-    if (cur) sel.value = cur;
+    _collAllAccounts = list || [];
+    _collFillFilter_('bkf_coll');
   }).withFailureHandler(function(){}).getCollectionAccounts();
   // (3) الشهور — V3.54: فقط الشهور التي تغطيها فترات تعاقد فعلية (لكل الفنادق المسموحة، أو للفندق المختار فقط)
   // بدل نطاق ثابت ±3 سنوات حول اليوم. القيمة بصيغة YYYY-MM (كانت "2026-1" بلا صفر فلا تطابق شهور 1-9 بالخادم)
@@ -5414,6 +5438,7 @@ function _bkReloadData_() { _bkLoadCurrentPage(true); }
 // V3.59 — الكروت الإحصائية والطباعة والتصدير تعمل على كل النتائج المطابقة للفلاتر (وليس صفحة العرض فقط)،
 // والضغط على كارت يفلتر الجدول فعلاً (كانت دالة المطابقة معرّفة ولا تُستدعى)، ثم تُقصّ صفحة العرض بالحجم المختار.
 function _bkRenderLocal_() {
+  try { _collRefreshFilters_(); } catch (eCF) {}
   var all = _bkFilterAll_(_bkAll || [], _bkBuildServerFilters());
   var shown = _activeStatCard ? all.filter(_bkMatchesActiveCard) : all;
   var size = _pgSize_('bookings'), tp = Math.max(1, Math.ceil(shown.length / size));
@@ -9041,13 +9066,9 @@ function initNusukScreen() {
     .getDistinctHotelNames(sessionUser.username);
   // جلب جهات التحصيل مرة واحدة لملء الفلتر
   google.script.run.withSuccessHandler(function(list) {
-    var sel = document.getElementById('nusuk_filter_collection');
-    (list||[]).forEach(function(item){
-      var opt = document.createElement('option');
-      opt.value = item.name; opt.text = item.name;
-      sel.appendChild(opt);
-    });
-  }).getCollectionAccounts();
+    _collAllAccounts = list || [];
+    _collFillFilter_('nusuk_filter_collection'); // V3.73 — الجهات التي لها حجوزات فقط
+  }).withFailureHandler(function(){}).getCollectionAccounts();
 }
 
 // يتعامل مع تغيير الفندق - يحفظ الاختيار الحالي ويعيد تحميل الشبكة
@@ -10127,6 +10148,19 @@ function loadAccountsSummary() {
   });
 }
 
+// V3.73 — طرف بلا حجوزات سارية يظهر بالحسابات فقط لأن له دفعات مسجَّلة: سطر صغير تحت الاسم يشرح السبب وما يُفعل
+function _accNoBookingsNote_(r) {
+  if (_accPartyType === 'hotel' || (r.bookingsCount||0) > 0) return '';
+  var parts = [];
+  if (r.paymentsCount) parts.push(r.paymentsCount + ' دفعة مسجَّلة');
+  if (r.cancelledCount) parts.push(r.cancelledCount + ' حجز ملغي');
+  if (r.deletedCount) parts.push(r.deletedCount + ' حجز محذوف');
+  var hasRange = !!((document.getElementById('acc_date_from')||{}).value || (document.getElementById('acc_date_to')||{}).value || (document.getElementById('acc_hotel_filter')||{}).value);
+  var txt = 'بلا حجوزات سارية' + (hasRange ? ' ضمن الفلتر الحالي' : '') + (parts.length ? ' — ' + parts.join('، ') : '');
+  var tip = 'يظهر هنا لأن له دفعات مسجَّلة باسمه. افتح «كشف حساب» لمراجعتها: إن كانت مسجَّلة بالخطأ احذفها فيختفي من القائمة، وإن كانت صحيحة فرصيده دائن (له مبلغ مستحق الرد أو يُخصم من حجز قادم).';
+  return '<div class="acc-nobk-note" title="' + escapeHtmlAttr(tip) + '">⚠️ ' + escapeHtml(txt) + '</div>';
+}
+
 // يرسم كروت الإجماليات + جدول الملخص مع تطبيق فلتر البحث بالاسم
 function renderAccountsSummaryTable() {
   var tbody = document.getElementById('accountsTableBody');
@@ -10163,7 +10197,7 @@ function renderAccountsSummaryTable() {
     var balAbs = fmtSAR(Math.abs(r.balance));
     var balColor = r.balance>0.004 ? '#b91c1c' : (r.balance<-0.004 ? '#15803d' : '#475569');
     return '<tr>'
-      + '<td style="font-weight:800;">' + escapeHtml(r.partyName) + '</td>'
+      + '<td style="font-weight:800;">' + escapeHtml(r.partyName) + _accNoBookingsNote_(r) + '</td>'
       + '<td style="text-align:center;">' + (r.bookingsCount||0) + '</td>'
       + '<td style="text-align:center;font-weight:700;color:#b45309;">' + fmtSAR(r.totalDue) + '</td>'
       + '<td style="text-align:center;font-weight:700;color:#15803d;">' + fmtSAR(r.totalPaid) + '</td>'
@@ -11156,7 +11190,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.72';
+var CLIENT_APP_VERSION = 'V3.73';
 var _BUILD_VERSION = CLIENT_APP_VERSION; // نسخة الكود المحمَّل في هذا التبويب (لا تتغير بعد التحميل)
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {

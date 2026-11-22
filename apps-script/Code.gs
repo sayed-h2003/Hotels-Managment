@@ -662,6 +662,7 @@ function loginUser(username, password, opts) {
       try { out.boot = getAppBootstrap(storedUsername, fullName, { brandingVer: opts.brandingVer, lite: true }); } catch (eB) { _logError_(_fn, eB); }
       _lap_("loginUser:bootTail"); // معظم زمن الإقلاع مسجَّل في عيّنات ~boot:* (ساعة المراحل مشتركة)
       if (out.boot) { try { out.home = _loginHomeData_(storedUsername, role, permissions, out.boot, opts); } catch (eH) { _logError_(_fn, eH); } }
+      if (out.boot && out.boot.collectionAccounts) out.boot.collectionAccounts = _collMarkUsed_(out.boot.collectionAccounts, true); // V3.73 — بلا قراءة إضافية: فقط إن قُرئت الحجوزات للشاشة الرئيسية
       _lap_("loginUser:home");
     }
     return out;
@@ -2056,11 +2057,25 @@ function getDistinctClientNames() { _apiGuard_();
 function getCollectionAccounts() { _apiGuard_();
   var _fn="[getCollectionAccounts]"; _logInfo_(_fn, "START | "+"");
   try {
-  var data=_getSheetValues_("Collection_Accounts");
-  var out=[];
+  // V3.73 — used: للجهة حجز واحد على الأقل غير محذوف. قوائم الفلاتر تعرض المستخدَمة فقط (جهة أُضيفت ثم لم يبقَ لها حجز
+  // كانت تظهر في الفلاتر بلا أي نتيجة)؛ قائمة نموذج الحجز تبقى كاملة لاختيارها لحجز جديد.
+  return _collMarkUsed_(_collectionAccountsRaw_(), false);
+  } catch(e) { _logError_(_fn, e); throw e; }
+}
+
+function _collectionAccountsRaw_() {
+  var data=_getSheetValues_("Collection_Accounts"), out=[];
   for (var i=1; i<data.length; i++) { if(data[i][0]&&data[i][2]!==false) out.push({id:data[i][0],name:data[i][1]}); }
   return out;
-  } catch(e) { _logError_(_fn, e); throw e; }
+}
+// يضيف used لكل جهة من شيت الحجوزات. onlyIfLoaded: لا يقرأ الشيت لأجلها (مسار الإقلاع) — تُترك بلا علامة والمتصفح يشتقّها من قائمة الحجوزات عنده
+function _collMarkUsed_(list, onlyIfLoaded) {
+  try {
+    if (onlyIfLoaded && !__SHEET_VALUES_CACHE.hasOwnProperty("Bookings_Master")) return list;
+    var bd=_getSheetValues_("Bookings_Master"), used={};
+    for (var b=1; b<bd.length; b++) { if (bd[b][0] && bd[b][14]!==true && bd[b][3]) used[String(bd[b][3]).trim()]=true; }
+    return (list||[]).map(function(a){ return {id:a.id,name:a.name,used:!!used[String(a.id).trim()]}; });
+  } catch(e) { return list; }
 }
 
 // يُضيف جهة تحصيل جديدة سريعاً من داخل نموذج الحجز
@@ -3736,7 +3751,7 @@ function getDashboardData(currentUser) { _apiGuard_();
   var tz = _tz_();
   var today = _dateOnly_(new Date());
 
-  var contractsData = _getOrCreateSheet_("Contracts_Master").getDataRange().getValues();
+  var contractsData = _getSheetValues_("Contracts_Master");
   var hotels = {};
   for (var i=1; i<contractsData.length; i++) {
     var row = contractsData[i];
@@ -3751,7 +3766,7 @@ function getDashboardData(currentUser) { _apiGuard_();
     });
   }
 
-  var bookingsData = _getOrCreateSheet_("Bookings_Master").getDataRange().getValues();
+  var bookingsData = _getSheetValues_("Bookings_Master");
   var hotelMap = _buildContractHotelMap_();
   var collMap = _buildCollectionAccountMap_();
 
@@ -5003,7 +5018,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.72";
+var APP_VERSION = "V3.73";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -6042,10 +6057,10 @@ function _getDistinctHotelNamesCached_(currentUser) {
 }
 function _getCollectionAccountsCached_() {
   var cached = _getFromCache_(_REF_CACHE_KEY_ACCOUNTS);
-  if (cached) return cached;
-  var full = getCollectionAccounts();
+  if (cached) return _collMarkUsed_(cached, true);
+  var full = _collectionAccountsRaw_(); // الكاش بلا علامة used (تتغيّر مع كل حجز) وبلا قراءة شيت الحجوزات
   _putInCache_(_REF_CACHE_KEY_ACCOUNTS, full);
-  return full;
+  return _collMarkUsed_(full, true);
 }
 function _getDistinctClientNamesCached_() {
   var cached = _getFromCache_(_REF_CACHE_KEY_CLIENTS);
@@ -6686,6 +6701,17 @@ function _perfDiag_() {
     } catch (eM) {}
     // V3.62 — حجوزات تشغل ليلة "يوم تسليم" تعاقد (تاريخ نهايته) بلا تعاقد آخر يغطيها: كانت تُعدّ ضمن الطاقة قبل توحيد القاعدة
     try { d.bookingsOnHandoverNight = _bookingsOnHandoverNight_().length; } catch (eH) {}
+    // V3.73 — أطراف تظهر بالحسابات بلا حجوزات سارية (أعداد فقط، بلا أسماء): كم منها له دفعات، وكم سبق له حجز أُلغي/حُذف
+    try {
+      d.partiesWithoutBookings = {};
+      ["collection", "client"].forEach(function(pt) {
+        var ex = { cancelled: {}, deleted: {} }, due = _buildAccountsDueMap_(pt, null, "", null, null, ex), paid = _buildAccountsPaidMap_(pt, null, "", null, null);
+        var r = { n: 0, payments: 0, hadCancelled: 0, hadDeleted: 0, neverBooked: 0 };
+        Object.keys(paid).forEach(function(k) { if (due[k]) return; r.n++; r.payments += paid[k].count; if (ex.cancelled[k]) r.hadCancelled++; if (ex.deleted[k]) r.hadDeleted++; if (!ex.cancelled[k] && !ex.deleted[k]) r.neverBooked++; });
+        d.partiesWithoutBookings[pt] = r;
+      });
+      d.unusedCollectionAccounts = getCollectionAccounts().filter(function(a) { return !a.used; }).length;
+    } catch (eP) {}
     ["Perf", "PerfSlow", "PerfLog"].forEach(function(n) {
       var s = ss.getSheetByName(n);
       d[n] = s ? { lastRow: s.getLastRow(), maxRows: s.getMaxRows(), maxCols: s.getMaxColumns() } : null;
@@ -7409,18 +7435,25 @@ function _parseStatementDateBound_(iso, isEnd) {
 // partyType: "collection" → التجميع على جهة التحصيل (Account_ID)، "client" → التجميع على اسم العميل
 // hotelFilter (اختياري) — v3.23: يقصر الاحتساب على فندق واحد بعينه فقط
 // fromDate/toDate (اختياريان) — v3.33: يقصران الاحتساب على حجوزات دخولها ضمن فترة معيّنة (فترة مفتوحة الطرفين افتراضياً)
-function _buildAccountsDueMap_(partyType, allowed, hotelFilter, fromDate, toDate) {
+// extra (اختياري) — V3.73: يُملأ بعدد الحجوزات الملغية/المحذوفة لكل طرف (بلا فلتر الفترة) — لشرح سبب ظهور طرف "بلا حجوزات" بالشاشة
+function _buildAccountsDueMap_(partyType, allowed, hotelFilter, fromDate, toDate, extra) {
   var data = _getSheetValues_("Bookings_Master");
   var hotelMap = _buildContractHotelMap_();
   var collMap = _buildCollectionAccountMap_();
   var map = {}; // key → {name, totalDue, bookingsCount}
   for (var i=1; i<data.length; i++) {
     var row = data[i];
-    if (!row[0] || row[14]===true) continue;          // محذوف
-    if (String(row[4]) === "ملغي") continue;           // الحجوزات الملغية لا تدخل الحسابات
+    if (!row[0]) continue;
+    var _isDel = row[14]===true, _isCan = String(row[4]) === "ملغي";
+    if ((_isDel || _isCan) && !extra) continue;        // المحذوف والملغي لا يدخلان الحسابات
     var hn = hotelMap[row[1]] || "";
     if (allowed && !allowed[hn]) continue;       // تصفية الفنادق المسموح بها لغير المدير
     if (hotelFilter && hn !== hotelFilter) continue;   // فلتر الفندق المُختار بشاشة الحسابات
+    if (_isDel || _isCan) {
+      var _k = String((partyType === "collection" ? row[3] : row[2]) || "").trim();
+      if (_k) { var _b = _isDel ? extra.deleted : extra.cancelled; _b[_k] = (_b[_k] || 0) + 1; }
+      continue;
+    }
     if (fromDate || toDate) {
       var ciD = row[6] instanceof Date ? row[6] : new Date(row[6]);
       if (fromDate && ciD < fromDate) continue;
@@ -7462,8 +7495,9 @@ function _buildAccountsPaidMap_(partyType, allowed, hotelFilter, fromDate, toDat
       if (toDate && pdD > toDate) continue;
     }
     var key = String(row[2]||"").trim(); if (!key) continue;
-    if (!map[key]) map[key] = { name: String(row[3]||key), totalPaid: 0 };
+    if (!map[key]) map[key] = { name: String(row[3]||key), totalPaid: 0, count: 0 };
     map[key].totalPaid += parseFloat(row[4]) || 0;
+    map[key].count++;
   }
   return map;
 }
@@ -7543,7 +7577,8 @@ function getAccountsSummary(partyType, currentUser, hotelFilter, fromIso, toIso)
   partyType = (partyType === "client") ? "client" : "collection";
   hotelFilter = String(hotelFilter||"").trim();
   if (hotelFilter && allowed && !allowed[hotelFilter]) throw new Error("ليس لديك صلاحية الوصول لهذا الفندق.");
-  var dueMap = _buildAccountsDueMap_(partyType, allowed, hotelFilter, fromDate, toDate);
+  var extra = { cancelled: {}, deleted: {} };
+  var dueMap = _buildAccountsDueMap_(partyType, allowed, hotelFilter, fromDate, toDate, extra);
   var paidMap = _buildAccountsPaidMap_(partyType, allowed, hotelFilter, fromDate, toDate);
   // دمج المفاتيح من الجانبين (طرف له دفعات دون حجوزات يظهر أيضاً)
   var keys = {};
@@ -7553,14 +7588,17 @@ function getAccountsSummary(partyType, currentUser, hotelFilter, fromIso, toIso)
   Object.keys(keys).forEach(function(k) {
     var due = dueMap[k] ? dueMap[k].totalDue : 0;
     var paid = paidMap[k] ? paidMap[k].totalPaid : 0;
-    out.push({
+    var o = {
       partyKey: k,
       partyName: (dueMap[k] && dueMap[k].name) || (paidMap[k] && paidMap[k].name) || k,
       bookingsCount: dueMap[k] ? dueMap[k].bookingsCount : 0,
       totalDue: Math.round(due*100)/100,
       totalPaid: Math.round(paid*100)/100,
       balance: Math.round((due-paid)*100)/100
-    });
+    };
+    // V3.73 — طرف بلا حجوزات سارية يظهر لأن له دفعات مسجَّلة: نُرفق السبب ليُعرض بجواره (عدد الدفعات + ما أُلغي/حُذف من حجوزاته)
+    if (!o.bookingsCount) { o.paymentsCount = paidMap[k] ? paidMap[k].count : 0; o.cancelledCount = extra.cancelled[k] || 0; o.deletedCount = extra.deleted[k] || 0; }
+    out.push(o);
   });
   out.sort(function(a,b){ return String(a.partyName).localeCompare(String(b.partyName), 'ar'); });
   return out;
