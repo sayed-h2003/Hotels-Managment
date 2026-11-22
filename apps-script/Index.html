@@ -3656,10 +3656,28 @@ var APP_POLL_BG_HEARTBEAT_MS = 300000;// النبضة والتبويب في ال
 var APP_POLL_NOTIF_FORCE_MS = 300000; // جلب كامل إجباري للإشعارات كضمان (مثلاً بعد تعليم مقروء من تبويب آخر)
 var _appPollTimer = null, _appPollInFlight = false, _lastVisiblePollAt = 0, _lastHeartbeatAt = 0, _lastNotifFullAt = 0, _knownNotifVersion = null;
 
+// V3.76 — النبضة أهدأ وقت الخمول: بلا أي تفاعل من المستخدم لدقيقتين تصير كل دقيقة، ولعشر دقائق تصير كل دقيقتين
+// (كانت كل 30 ثانية طوال فتح التبويب — أكثر نداء متكرر بالنظام). أول تفاعل بعد خمول يفحص فوراً.
+var APP_POLL_IDLE1_AFTER_MS = 120000, APP_POLL_IDLE1_MS = 60000, APP_POLL_IDLE2_AFTER_MS = 600000, APP_POLL_IDLE2_MS = 120000;
+var _lastUserActAt = Date.now();
+function _pollGapMs_() {
+  var idle = Date.now() - _lastUserActAt;
+  return idle >= APP_POLL_IDLE2_AFTER_MS ? APP_POLL_IDLE2_MS : (idle >= APP_POLL_IDLE1_AFTER_MS ? APP_POLL_IDLE1_MS : APP_POLL_MS);
+}
+function _pollTick_() {
+  if (!document.hidden && Date.now() - _lastVisiblePollAt < _pollGapMs_() - 1500) return; // خامل: لم يحن موعد الفحص بعد
+  _pollAppState(false);
+}
+function _pollNoteActivity_() {
+  var now = Date.now(), wasIdle = (now - _lastUserActAt) >= APP_POLL_IDLE1_AFTER_MS;
+  _lastUserActAt = now;
+  if (wasIdle && _appPollTimer && !document.hidden && now - _lastVisiblePollAt >= APP_POLL_MS) _pollAppState(false); // عاد للعمل: فحص فوري
+}
 function startAppPolling() {
   stopAppPolling();
   _lastHeartbeatAt = Date.now(); _lastNotifFullAt = Date.now(); // النداء المجمّع عند الدخول جلب النبضة والإشعارات للتو
-  _appPollTimer = setInterval(function() { _pollAppState(false); }, APP_POLL_MS);
+  _lastUserActAt = Date.now();
+  _appPollTimer = setInterval(_pollTick_, APP_POLL_MS);
 }
 function stopAppPolling() {
   if (_appPollTimer) clearInterval(_appPollTimer);
@@ -4134,6 +4152,7 @@ function _startSessionTimer() {
 // أي نشاط فعلي من المستخدم (وليس فقط scroll التي قد تحدث تلقائياً من تحديثات الواجهة) يُعيد ضبط المؤقت
 // ولا يُعيد الضبط إن كانت نافذة التحذير ظاهرة بالفعل (يجب أن يضغط المستخدم "أنا لا زلت هنا" صراحةً حينها)
 function _onUserActivity() {
+  try { _pollNoteActivity_(); } catch (eA) {}
   if (document.getElementById('SessionWarning_Modal') && document.getElementById('SessionWarning_Modal').classList.contains('open')) return;
   _resetSessionTimer();
 }
@@ -5864,7 +5883,8 @@ function openBookingModal(editId) {
 
     if (editId) {
       var _b = _localEdit || boot.booking;
-      if (_b) { _bkFillFormForEdit(_b); if (_localEdit) _bkVerifyEditFresh_(editId, _localEdit); }
+      // V3.76 — اتفاقيات نسك تصل مع نداء النموذج نفسه (كانت نداءً ثانياً): من الرد مباشرة، أو من نداء التحقق عند الفتح من القائمة المحلية
+      if (_b) { _bkFillFormForEdit(_b, _localEdit ? undefined : (('nusuk' in boot) ? boot.nusuk : false)); if (_localEdit) _bkVerifyEditFresh_(editId, _localEdit); }
     }
   }).withFailureHandler(function(e){ showAppAlert(e.message||e); })
   .getBookingModalBootstrap(sessionUser.username, (editId && !_localEdit) ? editId : null); // تصفية حسب الفنادق المسموح بها لهذا المستخدم
@@ -5900,20 +5920,22 @@ var _BK_FORM_IDS = ['bk_contract_id','bk_client_name','bk_status','bk_collection
 function _bkFormSnapshot_() { return _BK_FORM_IDS.map(function(id) { var el = document.getElementById(id); return el ? String(el.value) : ''; }).join('\u0001'); }
 function _bkVerifyEditFresh_(editId, local) {
   var snap = _bkFormSnapshot_();
+  var _stillOpen = function() { return document.getElementById('Booking_Modal').classList.contains('open') && String(document.getElementById('bk_edit_id').value) === String(editId); };
   google.script.run.withSuccessHandler(function(boot) {
+    var _nus = (boot && ('nusuk' in boot)) ? boot.nusuk : false;
+    if (_stillOpen()) _bkShowAgreements_(editId, _nus);
     var fresh = boot && boot.booking;
     if (!fresh) return;
-    var modalOpen = document.getElementById('Booking_Modal').classList.contains('open');
-    if (!modalOpen || String(document.getElementById('bk_edit_id').value) !== String(editId)) return;
+    if (!_stillOpen()) return;
     var changed = _BK_EDIT_FIELDS.some(function(f) { return String(fresh[f] == null ? '' : fresh[f]) !== String(local[f] == null ? '' : local[f]); });
     if (!changed) return;
-    if (_bkFormSnapshot_() === snap) { _bkFillFormForEdit(fresh); showToast('تم تحديث بيانات الحجز (عُدّل من مستخدم آخر للتو).', 'info'); }
+    if (_bkFormSnapshot_() === snap) { _bkFillFormForEdit(fresh, _nus); showToast('تم تحديث بيانات الحجز (عُدّل من مستخدم آخر للتو).', 'info'); }
     else showToast('تنبيه: هذا الحجز عُدّل من مستخدم آخر للتو — راجع البيانات قبل الحفظ.', 'warning');
-  }).withFailureHandler(function() {}).getBookingModalBootstrap(sessionUser.username, editId);
+  }).withFailureHandler(function() { if (_stillOpen()) _bkShowAgreements_(editId, false); }).getBookingModalBootstrap(sessionUser.username, editId);
 }
 
 // يملأ نموذج التعديل ببيانات الحجز (تصل الآن ضمن النداء المجمّع؛ القوائم مملوءة مسبقاً فلا حاجة لأي انتظار)
-function _bkFillFormForEdit(b) {
+function _bkFillFormForEdit(b, nusuk) {
   document.getElementById('bk_contract_id').value=b.contractId;
   document.getElementById('bk_client_name').value=b.clientName;
   document.getElementById('bk_status').value=b.status;
@@ -5924,8 +5946,21 @@ function _bkFillFormForEdit(b) {
   document.getElementById('bk_notes').value=b.notes||'';
   _setDateFieldValue('bk_payment_date', b.paymentDateIso||'');
   _bkRecalc(); document.getElementById('Booking_Modal').classList.add('open');
-  // تحميل الاتفاقيات المرتبطة بهذا الحجز عرضها للاطلاع فقط داخل نموذج التعديل
-  _bkLoadAgreements(b.bookingId);
+  // الاتفاقيات المرتبطة بهذا الحجز تُعرض للاطلاع فقط داخل نموذج التعديل
+  _bkShowAgreements_(b.bookingId, nusuk);
+}
+
+// V3.76 — nusuk: undefined = ستصل مع نداء جارٍ (نعرض "جاري التحميل")، null = بلا صلاحية نسك (يُخفى القسم)،
+// false = الرد لا يحملها (نطلبها بالنداء القديم احتياطاً)، كائن = تُعرض مباشرة بلا أي نداء
+function _bkShowAgreements_(bookingId, nusuk) {
+  var section = document.getElementById('bk_nusuk_agreements_section');
+  var body    = document.getElementById('bk_nusuk_agreements_body');
+  if (!section || !body) return;
+  if (nusuk === null) { section.style.display = 'none'; body.innerHTML = ''; return; }
+  if (nusuk === false) { _bkLoadAgreements(bookingId); return; }
+  section.style.display = 'block';
+  if (nusuk === undefined) { body.innerHTML = '<div style="text-align:center;padding:10px;color:var(--clr-muted);font-size:8pt;">جاري التحميل...</div>'; return; }
+  _bkRenderAgreements_(nusuk);
 }
 
 // يجلب اتفاقيات نسك للحجز ويعرضها كجدول للاطلاع فقط داخل نموذج تعديل الحجز
@@ -5934,7 +5969,12 @@ function _bkLoadAgreements(bookingId) {
   var body    = document.getElementById('bk_nusuk_agreements_body');
   body.innerHTML = '<div style="text-align:center;padding:10px;color:var(--clr-muted);font-size:8pt;">جاري التحميل...</div>';
   section.style.display = 'block';
-  google.script.run.withSuccessHandler(function(res) {
+  google.script.run.withSuccessHandler(_bkRenderAgreements_).withFailureHandler(function() {
+    body.innerHTML = '<div style="color:var(--clr-muted);font-size:7.5pt;">تعذّر تحميل الاتفاقيات.</div>';
+  }).getNusukAgreementsForBooking(bookingId, sessionUser.username);
+}
+function _bkRenderAgreements_(res) {
+    var body = document.getElementById('bk_nusuk_agreements_body'); if (!body) return;
     var list = (res && res.agreements) || [];
     var total = (res && res.totalPersons) || 0;
     if (!list.length) {
@@ -5957,9 +5997,6 @@ function _bkLoadAgreements(bookingId) {
     });
     html += '</tbody></table></div>';
     body.innerHTML = html;
-  }).withFailureHandler(function() {
-    body.innerHTML = '<div style="color:var(--clr-muted);font-size:7.5pt;">تعذّر تحميل الاتفاقيات.</div>';
-  }).getNusukAgreementsForBooking(bookingId, sessionUser.username);
 }
 
 // يُغلق نافذة إضافة/تعديل الحجز
@@ -6117,17 +6154,16 @@ function openBookingViewModal(bookingId) {
   var _bvShown = null, _local = null;
   try { if (_bkAllMode === 'local' && _bkAll) for (var _i = 0; _i < _bkAll.length; _i++) if (String(_bkAll[_i].bookingId) === String(bookingId)) { _local = _bkAll[_i]; break; } } catch (eL) {}
   if (_local) {
-    try { _bvShown = _bvBuild(_local); document.getElementById('bookingViewBody').innerHTML = _bvShown; _appendNusukAgreementsToBookingView(bookingId); } catch (eB) { _bvShown = null; }
+    try { _bvShown = _bvBuild(_local); document.getElementById('bookingViewBody').innerHTML = _bvShown; } catch (eB) { _bvShown = null; } // V3.76 — اتفاقيات نسك تصل مع نداء التفاصيل نفسه
   }
   if (_bvShown == null) document.getElementById('bookingViewBody').innerHTML='<div style="text-align:center;padding:24px;color:var(--clr-muted);">جاري التحميل...</div>';
   document.getElementById('BookingView_Modal').classList.add('open');
   google.script.run.withSuccessHandler(function(b) {
     if (_bvCurrentBookingId !== bookingId || !b) return; // فُتح حجز آخر في الأثناء
     var html = _bvBuild(b);
-    if (html === _bvShown) return;
-    document.getElementById('bookingViewBody').innerHTML=html;
-    // نجلب اتفاقيات نسك المرتبطة بهذا الحجز (إن وُجدت) ونُلحقها كقسم إضافي بنهاية النموذج
-    _appendNusukAgreementsToBookingView(bookingId);
+    if (html !== _bvShown) { document.getElementById('bookingViewBody').innerHTML=html; _bvShown = html; }
+    // اتفاقيات نسك المرتبطة بهذا الحجز (إن وُجدت) تُلحق كقسم إضافي بنهاية النموذج — V3.76: من الرد نفسه بلا نداء ثانٍ
+    _appendNusukAgreementsToBookingView(bookingId, ('nusuk' in b) ? b.nusuk : undefined);
   }).withFailureHandler(function(e){
     if (_bvShown != null) return; // المعروض من القائمة المحلية يبقى
     document.getElementById('bookingViewBody').innerHTML='<div style="color:var(--clr-danger);padding:20px;text-align:center;">'+(e.message||e)+'</div>';
@@ -6135,10 +6171,11 @@ function openBookingViewModal(bookingId) {
 }
 
 // يجلب اتفاقيات نسك للحجز ويُلحقها بنهاية نموذج عرض الحجز إن كان له صلاحية نسك
-function _appendNusukAgreementsToBookingView(bookingId) {
+function _appendNusukAgreementsToBookingView(bookingId, given) {
+  if (given === null) return; // الخادم: بلا صلاحية نسك
   var perms = (sessionUser && sessionUser.permissions) || {};
   if (!perms.nusuk || !perms.nusuk.canView) return; // بلا صلاحية = لا نعرض القسم
-  google.script.run.withSuccessHandler(function(res) {
+  var _render = function(res) {
     var agreements = (res && res.agreements) || [];
     if (!agreements.length) return; // لا نعرض القسم لو لا توجد اتفاقيات (تفادي شغل بصري بلا فائدة)
     var body = document.getElementById('bookingViewBody');
@@ -6167,7 +6204,9 @@ function _appendNusukAgreementsToBookingView(bookingId) {
       + '<div style="font-size:7pt;color:var(--clr-muted);margin-top:4px;">💡 اضغط على أي اتفاقية لعرض تفاصيلها الكاملة.</div>'
       + '</div>';
     body.insertAdjacentHTML('beforeend', section);
-  }).withFailureHandler(function(){ /* تجاهل الأخطاء - لا نُفسد عرض الحجز إن فشل جلب الاتفاقيات */ })
+  };
+  if (given !== undefined) { _render(given); return; }
+  google.script.run.withSuccessHandler(_render).withFailureHandler(function(){ /* تجاهل الأخطاء - لا نُفسد عرض الحجز إن فشل جلب الاتفاقيات */ })
     .getNusukAgreementsForBooking(bookingId, sessionUser.username);
 }
 // دالة مساعدة صغيرة: تبني صفاً واحداً (تسمية + قيمة) داخل نافذة عرض الحجز
@@ -11235,7 +11274,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.75';
+var CLIENT_APP_VERSION = 'V3.76';
 var _BUILD_VERSION = CLIENT_APP_VERSION; // نسخة الكود المحمَّل في هذا التبويب (لا تتغير بعد التحميل)
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {

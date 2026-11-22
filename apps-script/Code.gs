@@ -634,10 +634,11 @@ function loginUser(username, password, opts) {
   var _fn="[loginUser]"; _logInfo_(_fn, "START | "+"username:"+String(JSON.stringify(username)||"").slice(0, 80)+", password:[hidden]");
   __TRUSTED_DEPTH++; // V3.63 — نقطة دخول موثوقة (تستدعي دوال عامة محروسة داخلياً)
   try {
-  if (_loginFails_(username) >= _LOGIN_MAX_FAILS) return { success: false, message: "محاولات دخول فاشلة كثيرة. حاول مرة أخرى بعد 10 دقائق." };
+  var _prevFails = _loginFails_(username);
+  if (_prevFails >= _LOGIN_MAX_FAILS) return { success: false, message: "محاولات دخول فاشلة كثيرة. حاول مرة أخرى بعد 10 دقائق." };
   var ss = _getSS_();
   var sheet = _getOrCreateSheet_("Users_Master");
-  var uRows = sheet.getDataRange().getValues();
+  var uRows = _getSheetValues_("Users_Master"); // V3.76 — القراءة المشتركة لكل تنفيذ: حزمة الإقلاع كانت تقرأ الشيت نفسه مرة ثانية
   for (var i = 1; i < uRows.length; i++) {
     if (String(uRows[i][0]).toLowerCase() !== String(username).toLowerCase()) continue;
     var stored = uRows[i][1];   // كلمة المرور المخزَّنة (مشفّرة أو نصّية قديمة)
@@ -647,14 +648,14 @@ function loginUser(username, password, opts) {
     var storedUsername = String(uRows[i][0]);
     if (!isActive) return { success: false, message: "هذا الحساب معطّل. تواصل مع مدير النظام." };
     // ترحيل شفاف للحساب القديم لصيغة مشفَّرة بعد أول دخول ناجح
-    if (!_pwIsHashed_(stored)) _pwMigrateIfNeeded_(sheet, i, password);
+    if (!_pwIsHashed_(stored)) { _pwMigrateIfNeeded_(sheet, i, password); _invalidateSheetCache_("Users_Master"); }
     // V3.64 — سطر "المتصلون" يُكتب من نبضة النداء الدوري الأول (ينطلق بالتوازي فور الدخول) بدل قراءة + حذف + إضافة هنا
     // (ثلاث عمليات شيت كانت تؤخّر رد الدخول الذي يحمل الآن الإقلاع وبيانات الشاشة الرئيسية)
     _lapStart_();
     logAudit("شاشة الدخول", "تسجيل دخول", "N/A", "", "", "", "تسجيل دخول ناجح", fullName);
     _lap_("loginUser:audit");
     var permissions = getUserPermissions(storedUsername, role);
-    _loginFailClear_(username);
+    if (_prevFails > 0) _loginFailClear_(username); // V3.76 — لا عملية كاش بلا داعٍ حين لا محاولات فاشلة سابقة
     var out = { success: true, username: storedUsername, fullName: fullName, role: role,
              permissions: permissions, screens: ALL_SCREENS, systemVersion: APP_VERSION,
              token: _sessionCreate_(storedUsername, fullName) }; // V3.63 — رمز الجلسة (يبقى في ذاكرة الصفحة فقط)
@@ -2374,6 +2375,7 @@ function getBookingFullDetails(bookingId, currentUser) { _apiGuard_();
         notes:row[15]||"", overCapacity:_isOverCap_(row[16]), overCapacityType:row[17]||""
       };
       if (canViewFinance) { obj.salePrice=row[9]; obj.bookingValue=row[10]; }
+      obj.nusuk = _nusukForBookingIfAllowed_(bookingId, currentUser); // V3.76 — كانت نداءً ثانياً من نافذة العرض
       return obj;
     }
   }
@@ -5053,7 +5055,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.75";
+var APP_VERSION = "V3.76";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -5514,12 +5516,14 @@ function _getBrandingVersion_() {
 function getBookingModalBootstrap(currentUser, editId) { _apiGuard_();
   var _fn="[getBookingModalBootstrap]"; _logInfo_(_fn, "START | "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80)+", "+"editId:"+String(JSON.stringify(editId)||"").slice(0, 80));
   try {
-  return {
+  var out = {
     contracts: getActiveContractsForDropdown(currentUser),
     accounts: _getCollectionAccountsCached_(),
     clientNames: _getDistinctClientNamesCached_(),
     booking: editId ? getBookingForEdit(editId) : null
   };
+  if (editId) out.nusuk = _nusukForBookingIfAllowed_(editId, currentUser); // V3.76 — كانت نداءً ثانياً من النموذج (~2.6 ث)
+  return out;
   } catch(e) { _logError_(_fn, e); throw e; }
 }
 
@@ -6767,21 +6771,28 @@ function _perfDiag_() {
 function _ensurePerfFlushTriggerThrottled_(force) {
   try {
     var cache = CacheService.getScriptCache();
-    if (!force && cache.get("PERF_TRIGGER_OK")) return "ok (cached)";
+    if (!force && cache.get("PERF_TRIGGER_OK30")) return "ok (cached)";
     var msg = _ensurePerfFlushTrigger_();
-    cache.put("PERF_TRIGGER_OK", "1", 21600);
+    cache.put("PERF_TRIGGER_OK30", "1", 21600);
     return msg;
   } catch(e) { return "error: " + e.message; }
 }
 
-// يُثبّت مشغّل التفريغ كل 10 دقائق مرة واحدة فقط إن لم يكن مثبّتاً
+// يُثبّت مشغّل التفريغ مرة واحدة فقط إن لم يكن مثبّتاً.
+// V3.76 — كل 30 دقيقة بدل 10: التفريغ كان ~5.3 ث × 139 مرة يومياً (معظم دقائق المشغّلات). نوافذ القياس تبقى 10 دقائق وتُحفظ
+// بالكاش ساعتين، والتفريغ يعوّض حتى 12 نافذة — فلا يضيع قياس. سحب التقرير يفرّغ فوراً دائماً. المشغّل القديم (10 دقائق)
+// يُستبدل مرة واحدة: الفاصل لا يُقرأ من كائن المشغّل، فنحفظه في خاصية PERF_TRIGGER_MIN.
+var _PERF_TRIGGER_MIN = 30;
 function _ensurePerfFlushTrigger_() {
-  var exists = false;
-  ScriptApp.getProjectTriggers().forEach(function(t) {
-    if (t.getHandlerFunction() === "_flushPerfBuckets_") exists = true;
-  });
-  if (!exists) ScriptApp.newTrigger("_flushPerfBuckets_").timeBased().everyMinutes(10).create();
-  return exists ? "المشغّل مثبّت مسبقاً" : "تم تثبيت مشغّل تفريغ إحصاءات الأداء كل 10 دقائق";
+  var props = PropertiesService.getScriptProperties();
+  var mine = ScriptApp.getProjectTriggers().filter(function(t) { return t.getHandlerFunction() === "_flushPerfBuckets_"; });
+  var upToDate = String(props.getProperty("PERF_TRIGGER_MIN") || "") === String(_PERF_TRIGGER_MIN);
+  if (mine.length === 1 && upToDate) return "المشغّل مثبّت مسبقاً";
+  var replaced = mine.length > 0;
+  mine.forEach(function(t) { try { ScriptApp.deleteTrigger(t); } catch (eD) {} });
+  ScriptApp.newTrigger("_flushPerfBuckets_").timeBased().everyMinutes(_PERF_TRIGGER_MIN).create();
+  props.setProperty("PERF_TRIGGER_MIN", String(_PERF_TRIGGER_MIN));
+  return (replaced ? "تم استبدال" : "تم تثبيت") + " مشغّل تفريغ إحصاءات الأداء كل " + _PERF_TRIGGER_MIN + " دقيقة";
 }
 
 /**
@@ -7073,6 +7084,17 @@ function getNusukAgreementsForBooking(bookingId, currentUser) { _apiGuard_();
   var _fn="[getNusukAgreementsForBooking]"; _logInfo_(_fn, "START | "+"bookingId:"+String(JSON.stringify(bookingId)||"").slice(0, 80)+", "+"currentUser:"+String(JSON.stringify(currentUser)||"").slice(0, 80));
   try {
   _requirePermission_(currentUser,"nusuk","canView");
+  return _nusukAgreementsForBooking_(bookingId);
+  } catch(e) { _logError_(_fn, e); throw e; }
+}
+// V3.76 — تُرفق مع نداء فتح الحجز نفسه (نموذج التعديل ونافذة العرض) بدل نداء ثانٍ مستقل: null إن لم يملك المستخدم صلاحية نسك
+function _nusukForBookingIfAllowed_(bookingId, currentUser) {
+  try { _requirePermission_(currentUser,"nusuk","canView"); } catch (e) { return null; }
+  try { return _nusukAgreementsForBooking_(bookingId); } catch (e2) { return { agreements: [], totalPersons: 0 }; }
+}
+function _nusukAgreementsForBooking_(bookingId) {
+  var _fn="[_nusukAgreementsForBooking_]";
+  try {
   var data=_getSheetValues_("Nusuk_Agreements");
   var tz=_tz_();
   var out=[], totalPersons=0;
