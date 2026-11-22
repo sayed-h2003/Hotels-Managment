@@ -1077,10 +1077,16 @@ function _saveUserPreference_(username, prefKey, prefValue) {
   try {
   var sheet = _getOrCreateSheet_("User_Preferences");
   var data = sheet.getDataRange().getValues();
+  // V3.75 — صف واحد لكل (مستخدم، مفتاح): يُحدَّث أول صف مطابق وتُحذف أي صفوف مكررة له. كانت المكررات (من كتابات متزامنة قديمة
+  // قبل القفل المركزي أو من دمج اسم مستخدم) تجعل الحفظ يعدّل الصف الأول بينما حزمة الإقلاع تقرأ الأخير ⇒ التفضيل "لا يُحفظ".
+  var first=-1, dups=[];
   for (var i=1; i<data.length; i++) {
-    if (data[i][0]===username && data[i][1]===prefKey) { sheet.getRange(i+1,3).setValue(prefValue); return {success:true}; }
+    if (data[i][0]===username && data[i][1]===prefKey) { if (first<0) first=i; else dups.push(i); }
   }
-  sheet.appendRow([username, prefKey, prefValue]); return {success:true};
+  if (first<0) { sheet.appendRow([username, prefKey, prefValue]); return {success:true}; }
+  sheet.getRange(first+1,3).setValue(prefValue);
+  for (var d=dups.length-1; d>=0; d--) { try { sheet.deleteRow(dups[d]+1); } catch(eD) {} }
+  return {success:true};
   } catch(e) { _logError_(_fn, e); throw e; }
   finally { _invalidateSheetCache_("User_Preferences"); } // v3.53 — أي قراءة لاحقة بنفس التنفيذ ترى القيمة الجديدة
 }
@@ -1104,7 +1110,7 @@ function _getUserPrefsMap_(username) {
   var out = {};
   var data = _getSheetValues_("User_Preferences");
   for (var i=1; i<data.length; i++) {
-    if (data[i][0]===username && data[i][1] && data[i][1]!=="allowed_hotels") {
+    if (data[i][0]===username && data[i][1] && data[i][1]!=="allowed_hotels" && !Object.prototype.hasOwnProperty.call(out, data[i][1])) { // V3.75 — أول صف يفوز (مثل getUserPreference والحفظ)
       var v = data[i][2];
       out[data[i][1]] = (v instanceof Date) ? v.toISOString() : v;
     }
@@ -5047,7 +5053,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.74";
+var APP_VERSION = "V3.75";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -6730,6 +6736,8 @@ function _perfDiag_() {
     } catch (eM) {}
     // V3.62 — حجوزات تشغل ليلة "يوم تسليم" تعاقد (تاريخ نهايته) بلا تعاقد آخر يغطيها: كانت تُعدّ ضمن الطاقة قبل توحيد القاعدة
     try { d.bookingsOnHandoverNight = _bookingsOnHandoverNight_().length; } catch (eH) {}
+    // V3.75 — صفوف تفضيلات مكررة لنفس (مستخدم، مفتاح): كانت تجعل التفضيل المحفوظ لا يظهر بعد الدخول
+    try { var up = _getSheetValues_("User_Preferences"), seenP = {}, dupP = 0; for (var ui = 1; ui < up.length; ui++) { var kk = up[ui][0] + "\u0001" + up[ui][1]; if (seenP[kk]) dupP++; else seenP[kk] = 1; } d.duplicatePrefRows = dupP; } catch (eU) {}
     // V3.73 — أطراف تظهر بالحسابات بلا حجوزات سارية (أعداد فقط، بلا أسماء): كم منها له دفعات، وكم سبق له حجز أُلغي/حُذف
     try {
       d.partiesWithoutBookings = {};

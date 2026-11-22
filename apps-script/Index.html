@@ -2064,6 +2064,7 @@ function _pgChangeSize(key, n) {
   n = parseInt(n, 10); if (PG_SIZES.indexOf(n) === -1) return;
   _pgLoadSizes_()[key] = n;
   try { localStorage.setItem('ha_pg_sizes', JSON.stringify(_pgSizes)); } catch (e) {}
+  try { google.script.run.withFailureHandler(function(){}).saveUserPreference(sessionUser.username, 'page_sizes', JSON.stringify(_pgSizes)); } catch (e2) {} // V3.75 — يُحفظ للمستخدم على الخادم أيضاً
   var h = _pgHandlers[key]; if (h && h.size) h.size(n);
 }
 // state: {page,totalPages,total,pageSize}
@@ -3944,7 +3945,7 @@ function _applyAppBootstrap() {
   var _bootApply = function(boot) {
     boot = boot || {};
     try {
-      if (boot.prefs) { _cc.prefs = boot.prefs; _cc.prefsAuth = true; _ccPersistPrefs_(); }
+      if (boot.prefs) { _cc.prefs = boot.prefs; _cc.prefsAuth = true; _ccPersistPrefs_(); try { _applyUiPrefs_(boot.prefs); } catch (eUP) {} } // تطبيق التفضيلات لا يُفشل بقية الإقلاع أبداً
       var u = sessionUser.username;
       if (boot.hotelNames) _ccStore_('getDistinctHotelNames', [u], boot.hotelNames);
       if (boot.collectionAccounts) _ccStore_('getCollectionAccounts', [], boot.collectionAccounts);
@@ -5073,7 +5074,32 @@ var _bkColumnsPrefLoaded = false;
 // v3.1 — تحميل الحجوزات بالترقيم على الخادم
 var _bkPage = 1; // V3.59 — حجم الصفحة من اختيار المستخدم: _pgSize_('bookings')
 var _bkSortBy = (function() { try { var v = localStorage.getItem('ha_bk_sort'); if (/^(createdDesc|checkInAsc|checkInDesc|bookingIdDesc|bookingIdAsc)$/.test(v || '')) return v; } catch (e) {} return 'createdDesc'; })();
-function _bkSetSort(v) { _bkSortBy = v; try { localStorage.setItem('ha_bk_sort', v); } catch (e) {} _bkPage = 1; _bkLoadCurrentPage(); }
+var _BK_SORT_RE = /^(createdDesc|checkInAsc|checkInDesc|bookingIdDesc|bookingIdAsc)$/;
+// V3.75 — يُحفظ على الخادم كتفضيل للمستخدم (كان على الجهاز فقط: يضيع في متصفحات تمسح تخزين الصفحات المضمَّنة، ولا ينتقل بين الأجهزة)
+function _bkSetSort(v) {
+  if (!_BK_SORT_RE.test(v || '')) return;
+  _bkSortBy = v; try { localStorage.setItem('ha_bk_sort', v); } catch (e) {}
+  try { google.script.run.withFailureHandler(function(){}).saveUserPreference(sessionUser.username, 'bookings_sort_key', v); } catch (e2) {}
+  _bkPage = 1; _bkLoadCurrentPage();
+}
+// يطبّق تفضيلات العرض المحفوظة على الخادم فور وصول حزمة الإقلاع — قبل أول رسم للشاشة الرئيسية
+function _applyUiPrefs_(prefs) {
+  prefs = prefs || {};
+  try {
+    var bs = String(prefs.bookings_sort_key || '');
+    if (_BK_SORT_RE.test(bs)) { _bkSortBy = bs; try { localStorage.setItem('ha_bk_sort', bs); } catch (e) {} }
+    var sel = document.getElementById('bkf_sort'); if (sel) sel.value = _bkSortBy;
+  } catch (e1) {}
+  try {
+    var as = prefs.availability_sort_key, key = (as === 'bookingId' || as === 'createdAt') ? as : 'checkIn'; // الافتراضي: تاريخ الدخول
+    window._availSortKey = key;
+    ['bookingId', 'checkIn', 'createdAt'].forEach(function(k) { var b = document.getElementById('avail_sort_' + k); if (b) b.classList.toggle('active', k === key); });
+  } catch (e2) {}
+  try {
+    var ps = prefs.page_sizes; if (typeof ps === 'string' && ps) ps = JSON.parse(ps);
+    if (ps && typeof ps === 'object') { var cur = _pgLoadSizes_(); Object.keys(ps).forEach(function(k) { var n = parseInt(ps[k], 10); if (PG_SIZES.indexOf(n) > -1) cur[k] = n; }); try { localStorage.setItem('ha_pg_sizes', JSON.stringify(cur)); } catch (e) {} }
+  } catch (e3) {}
+}
 // v3.16 — فلترا "بدون سعر بيع" و"نشط بتاريخ معيّن" — لا واجهة دائمة لهما، يُفعَّلان فقط عبر القفز من البيان اليومي
 // (راجع dsOpenNoPriceBookings) لعرض الحجوزات الناقصة سعر البيع في يوم بعينه، مع شارة قابلة للإلغاء بشريط الفلاتر
 var _bkFilterNoPrice = false;
@@ -11209,7 +11235,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.74';
+var CLIENT_APP_VERSION = 'V3.75';
 var _BUILD_VERSION = CLIENT_APP_VERSION; // نسخة الكود المحمَّل في هذا التبويب (لا تتغير بعد التحميل)
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
