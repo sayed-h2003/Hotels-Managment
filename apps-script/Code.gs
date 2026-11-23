@@ -1690,8 +1690,25 @@ function getContractPayments(contractId, currentUser) { _apiGuard_();
   var contractsData=_getOrCreateSheet_("Contracts_Master").getDataRange().getValues();
   var contractValue=0;
   for (var j=1; j<contractsData.length; j++) { if (String(contractsData[j][0])===String(contractId)) { contractValue=parseFloat(contractsData[j][8])||0; break; } }
+  // V3.77 — كل دفعات السداد الفعلية للتعاقد (عبر كل أقساطه) مرتبة بتاريخ الدفع، مع إجمالي المسدد والمتبقي من قيمة التعاقد بعد كل دفعة
+  var receipts=[];
+  try {
+    var dueOf={}; payments.forEach(function(p){ dueOf[String(p.paymentId)]=p.dueDate; });
+    var rData=_getSheetValues_("Contract_Payment_Receipts");
+    for (var r=1; r<rData.length; r++) {
+      var rr=rData[r];
+      if (!rr[0]||rr[9]===true||!Object.prototype.hasOwnProperty.call(dueOf, String(rr[1]))) continue;
+      var pd=rr[4] instanceof Date?rr[4]:new Date(rr[4]);
+      receipts.push({ receiptId:rr[0], paymentId:rr[1], amount:Math.round((parseFloat(rr[3])||0)*100)/100,
+        _t:isNaN(pd.getTime())?0:pd.getTime(), payDate:isNaN(pd.getTime())?"":_fmtDate_(pd,tz,"dd/MM/yyyy"),
+        statement:rr[5]||"", notes:rr[6]||"", installmentDue:dueOf[String(rr[1])]||"", linkedAccountPaymentId:rr[10]||"" });
+    }
+    receipts.sort(function(a,b){ return (a._t-b._t) || String(a.receiptId).localeCompare(String(b.receiptId), undefined, {numeric:true}); });
+    var base = contractValue>0 ? contractValue : totalScheduled, cum=0;
+    receipts.forEach(function(x){ cum+=x.amount; x.cumPaid=Math.round(cum*100)/100; x.remainingAfter=Math.round((base-cum)*100)/100; delete x._t; });
+  } catch(eR) { receipts=[]; }
   return {
-    payments:payments, contractValue:contractValue,
+    payments:payments, receipts:receipts, contractValue:contractValue,
     totalScheduled:Math.round(totalScheduled*100)/100, totalPaid:Math.round(totalPaid*100)/100,
     totalRemaining:Math.round((totalScheduled-totalPaid)*100)/100,
     unscheduledAmount:Math.round((contractValue-totalScheduled)*100)/100
@@ -5055,7 +5072,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.76";
+var APP_VERSION = "V3.77";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -7698,9 +7715,14 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
       if (toDate && sd > toDate) continue;
       var val = parseFloat(crow[8]) || 0;
       totalDueH += val;
+      // V3.77 — مفتاح ترتيب التعاقد = الأقدم من (تاريخ تسجيله، بداية فترته)، ويُقدَّم لاحقاً قبل أول دفعة له إن سبقتهما:
+      // الالتزام ينشأ بتسجيل التعاقد لا ببداية الإقامة، فكان التعاقد يظهر بعد دفعاته والرصيد التراكمي "دائناً" بلا معنى.
+      var cAt = crow[10] instanceof Date ? crow[10] : (crow[10] ? new Date(crow[10]) : null);
+      var cKey = isNaN(sd.getTime()) ? 0 : sd.getTime();
+      if (cAt && !isNaN(cAt.getTime()) && cAt.getTime() < cKey) cKey = cAt.getTime();
       rowsH.push({
         kind: "contract", refId: crow[0], contractId: crow[0],
-        sortKey: isNaN(sd.getTime()) ? 0 : sd.getTime(),
+        sortKey: cKey,
         date: isNaN(sd.getTime()) ? "" : _fmtDate_(sd, tz, "dd/MM/yyyy"),
         description: "تعاقد #" + crow[0] + " — " + (crow[6]||0) + " غرفة × " + (crow[7]||0) + " ر.س/ليلة"
           + " (" + (isNaN(sd.getTime())?"":_fmtDate_(sd,tz,"dd/MM/yyyy")) + " ← " + (isNaN(ed.getTime())?"":_fmtDate_(ed,tz,"dd/MM/yyyy")) + ")",
@@ -7731,9 +7753,16 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
       });
     }
 
-    rowsH.sort(function(a,b){ return (a.sortKey - b.sortKey) || (a.kind==="contract" ? -1 : 1); });
+    // التعاقد يسبق دائماً أول دفعة له (حتى لو سُجّلت الدفعة بتاريخ أقدم من تسجيل التعاقد)؛ والدفعات بترتيب تواريخها
+    var firstPay = {};
+    rowsH.forEach(function(r){ if (r.kind==="receipt" && r.sortKey && (!firstPay[r.contractId] || r.sortKey < firstPay[r.contractId])) firstPay[r.contractId] = r.sortKey; });
+    rowsH.forEach(function(r){ if (r.kind==="contract" && firstPay[r.contractId] && firstPay[r.contractId] < r.sortKey) r.sortKey = firstPay[r.contractId]; });
+    rowsH.sort(function(a,b){ return (a.sortKey - b.sortKey) || ((a.kind==="contract" ? 0 : 1) - (b.kind==="contract" ? 0 : 1)) || String(a.refId).localeCompare(String(b.refId), undefined, {numeric:true}); });
     var runningH = 0;
-    rowsH.forEach(function(r){ runningH += r.debit - r.credit; r.runningBalance = Math.round(runningH*100)/100; });
+    rowsH.forEach(function(r){
+      runningH += r.debit - r.credit; r.runningBalance = Math.round(runningH*100)/100;
+      if (r.kind==="contract" && r.sortKey) r.date = _fmtDate_(new Date(r.sortKey), tz, "dd/MM/yyyy"); // التاريخ المعروض = تاريخ إدراج الالتزام (فترة التعاقد مذكورة في البيان)
+    });
 
     return {
       partyType: "hotel", partyKey: partyKey, partyName: partyKey, hotelFilter: "",

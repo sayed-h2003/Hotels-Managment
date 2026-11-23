@@ -473,6 +473,8 @@ body.m-view.m-av-days .avail-zoom, body.m-view.m-av-days #avail_panel_toggle, bo
 .mav-day.today .mav-date span, .mav-day.today.fri .mav-date span { color:#fff; }
 .mav-day.today .mav-date small { color:#cfdcd4; }
 .mav-day.today .mav-meta { font-weight:700; color:var(--clr-text); }
+.df-bad { outline:2px solid var(--clr-danger) !important; background:#fef2f2 !important; }
+.df-cal-mini { background:none; border:none; cursor:pointer; font-size:12px; padding:3px 4px; line-height:1; }
 .acc-nobk-note { font-size:7.5pt; font-weight:700; color:#b45309; margin-top:2px; white-space:normal; cursor:help; }
 body.m-view .acc-nobk-note { font-size:11.5px; }
 .mav-today-tag { display:inline-block; background:#c9a84c; color:#0f2419; font-weight:900; font-size:11.5px; border-radius:20px; padding:1px 10px; margin-inline-end:6px; }
@@ -3732,6 +3734,7 @@ function loadContractPayments() {
   tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:14px;color:var(--clr-muted);">جاري التحميل...</td></tr>';
   google.script.run.withSuccessHandler(function(data) {
     renderCpSummary(data);
+    try { renderCpReceiptsLedger(data); } catch (eL) {}
     if (!data.payments.length) {
       tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:14px;color:var(--clr-muted);">لا توجد أقساط مسجّلة بعد.</td></tr>';
       return;
@@ -3773,6 +3776,31 @@ function renderCpSummary(data) {
     box.innerHTML += '<div style="grid-column:1/-1;font-size:7.5pt;color:#b45309;background:#fff8e6;padding:6px 8px;border-radius:var(--radius-sm);margin-top:4px;">'
       + '⚠️ '+(data.unscheduledAmount>0?'يوجد مبلغ '+data.unscheduledAmount.toLocaleString('en-US')+' من قيمة التعاقد لم يُجدوَل له قسط بعد.':'إجمالي الأقساط المجدولة يتجاوز قيمة التعاقد بمقدار '+Math.abs(data.unscheduledAmount).toLocaleString('en-US')+'.')+'</div>';
   }
+}
+
+// V3.77 — كشف السداد الفعلي للتعاقد: كل دفعاته (عبر كل الأقساط) مرتبة بتاريخ الدفع، ومعها إجمالي المسدد والمتبقي من قيمة التعاقد
+// بعد كل دفعة — فيُعرف من أي سطر كم بقي للفندق حتى تلك الدفعة
+function renderCpReceiptsLedger(data) {
+  var host = document.getElementById('cpReceiptsLedger'); if (!host) return;
+  var list = (data && data.receipts) || [];
+  var base = (data && (data.contractValue > 0 ? data.contractValue : data.totalScheduled)) || 0;
+  var n = function(v) { return Number(v || 0).toLocaleString('en-US'); };
+  var head = '<div style="font-size:8.5pt;font-weight:800;color:var(--clr-primary-dark);margin-bottom:6px;">📒 كشف السداد الفعلي (مرتب بتاريخ الدفع)</div>';
+  if (!list.length) { host.innerHTML = head + '<div style="font-size:8pt;color:var(--clr-muted);background:var(--clr-bg);border-radius:var(--radius-sm);padding:8px;text-align:center;">لا توجد دفعات سداد مسجَّلة على هذا التعاقد بعد.</div>'; return; }
+  host.innerHTML = head + '<div style="overflow-x:auto;"><table class="data-table" style="width:100%;"><thead><tr>'
+    + '<th>تاريخ الدفع</th><th>المبلغ</th><th>البيان</th><th>قسط استحقاق</th><th>إجمالي المسدد</th><th>المتبقي من التعاقد</th></tr></thead><tbody>'
+    + '<tr style="background:var(--clr-bg);"><td colspan="5" style="font-weight:800;">قيمة التعاقد</td><td style="text-align:center;font-weight:900;color:#b45309;">' + n(base) + '</td></tr>'
+    + list.map(function(r) {
+        var remColor = r.remainingAfter > 0.004 ? '#b91c1c' : (r.remainingAfter < -0.004 ? '#15803d' : '#475569');
+        return '<tr class="cp-ledger-row" style="background:#f0fdf4;">'
+          + '<td style="white-space:nowrap;">' + escapeHtml(r.payDate || '') + '</td>'
+          + '<td style="text-align:center;font-weight:700;color:#15803d;">' + n(r.amount) + '</td>'
+          + '<td>' + escapeHtml(r.statement || r.notes || '') + (r.linkedAccountPaymentId ? ' <span style="font-size:6.8pt;color:#1d4ed8;font-weight:700;">🔗 مزدوجة</span>' : '') + '</td>'
+          + '<td style="text-align:center;white-space:nowrap;">' + escapeHtml(r.installmentDue || '') + '</td>'
+          + '<td style="text-align:center;font-weight:700;">' + n(r.cumPaid) + '</td>'
+          + '<td style="text-align:center;font-weight:900;color:' + remColor + ';">' + n(Math.abs(r.remainingAfter)) + (r.remainingAfter < -0.004 ? ' زيادة' : '') + '</td></tr>';
+      }).join('')
+    + '</tbody></table></div>';
 }
 
 function resetCpForm() {
@@ -4999,6 +5027,95 @@ function showAppAlert(msg) {
   var bad = /لم يتم|لم تتم|لا يمكن|تعذّر|تعذر|فشل|خطأ|غير مصرح|غير صحيح|غير موجود|مرفوض|يجب|يرجى/.test(msg);
   showToast(msg, (!bad && (msg.indexOf('تم') > -1 || msg.indexOf('نجاح') > -1)) ? 'success' : 'error');
 }
+
+// ══════════════════════════════════════════════════════
+// V3.77 — ترتيب النوافذ: آخر نافذة تُفتح تظهر فوق ما قبلها دائماً. كانت كل النوافذ بنفس المستوى فيفوز المتأخر في ترتيب
+// الصفحة: نافذة التأكيد/الإدخال (معرَّفة قبل كشف الحساب ودفعات التعاقد) كانت تُفتح "خلف" النافذة التي استدعتها.
+// ══════════════════════════════════════════════════════
+var _MODAL_Z_BASE = 2000, _MODAL_Z_FIXED = { SessionWarning_Modal: 1 };
+function _modalRestack_(el) {
+  if (!el || _MODAL_Z_FIXED[el.id]) return;
+  if (el.classList.contains('open')) {
+    if (el._zStacked) return;
+    var top = _MODAL_Z_BASE;
+    document.querySelectorAll('.modal-overlay.open').forEach(function(m) { if (m !== el && !_MODAL_Z_FIXED[m.id]) top = Math.max(top, parseInt(m.style.zIndex, 10) || _MODAL_Z_BASE); });
+    if (el._zOrig === undefined) el._zOrig = el.style.zIndex || '';
+    el.style.zIndex = String(Math.min(top + 2, 4900)); el._zStacked = true; // دائماً تحت منتقي التاريخ (5000) وتحذير الجلسة (9999)
+  } else if (el._zStacked) { el.style.zIndex = el._zOrig || ''; el._zStacked = false; }
+}
+function _modalStackInit_() {
+  if (window._modalStackObs || typeof MutationObserver === 'undefined') return;
+  window._modalStackObs = new MutationObserver(function(muts) {
+    muts.forEach(function(m) { var t = m.target; if (t && t.classList && t.classList.contains('modal-overlay')) _modalRestack_(t); });
+  });
+  window._modalStackObs.observe(document.body, { attributes: true, attributeFilter: ['class'], subtree: true });
+  document.querySelectorAll('.modal-overlay.open').forEach(_modalRestack_);
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _modalStackInit_); else _modalStackInit_();
+
+// ══════════════════════════════════════════════════════
+// V3.77 — حقول التاريخ: كتابة حرة + إكمال تلقائي + التقويم. كل حقل تاريخ كان "للاختيار فقط" صار يقبل الكتابة:
+// أرقام فقط تكفي (0503 ⇒ 05/03)، والسنة تُكمَّل تلقائياً عند الخروج من الحقل أو Enter (5/3 ⇒ 05/03/السنة الحالية، و5/3/27 ⇒ 2027)،
+// وزر 📅 بجواره يفتح التقويم. القيمة تُكتب في الحقل المخفي نفسه وبنفس حدث change الذي يطلقه التقويم — فلا يتغير أي منطق آخر.
+// ══════════════════════════════════════════════════════
+function _dfFormatTyping_(v) {
+  var c = String(v || '').replace(/[٠-٩]/g, function(d) { return String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)); }).replace(/[.\-\s]/g, '/').replace(/[^0-9\/]/g, '').replace(/\/{2,}/g, '/');
+  var p = c.split('/');
+  if (p.length === 1 && p[0].length > 2) { c = p[0].slice(0, 2) + '/' + p[0].slice(2); p = c.split('/'); }
+  if (p.length === 2 && p[1].length > 2) { c = p[0] + '/' + p[1].slice(0, 2) + '/' + p[1].slice(2); p = c.split('/'); }
+  p[0] = (p[0] || '').slice(0, 2); if (p.length > 1) p[1] = (p[1] || '').slice(0, 2); if (p.length > 2) p[2] = (p[2] || '').slice(0, 4);
+  return p.slice(0, 3).join('/').slice(0, 10);
+}
+// يعيد ISO (yyyy-mm-dd) لتاريخ مكتوب كامل أو جزئي، '' للفارغ، null لغير الصحيح
+function _dfParse_(v) {
+  v = _dfFormatTyping_(v).replace(/\/$/, ''); if (!v) return '';
+  var p = v.split('/'); if (p.length < 2 || !p[0] || !p[1]) return null;
+  var d = parseInt(p[0], 10), m = parseInt(p[1], 10), ys = p[2] || '', y;
+  if (!ys) y = new Date().getFullYear(); else if (ys.length <= 2) y = 2000 + parseInt(ys, 10); else if (ys.length === 4) y = parseInt(ys, 10); else return null;
+  if (!(d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 2000 && y <= 2100)) return null;
+  var dt = new Date(y, m - 1, d); if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return null; // 31/02 مثلاً
+  return y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+}
+function _dfIsoToDmy_(iso) { var p = String(iso || '').split('-'); return p.length === 3 ? (p[2] + '/' + p[1] + '/' + p[0]) : ''; }
+function _dfCommit_(disp, final) {
+  var hidden = document.getElementById(disp.id.replace(/_disp$/, '')); if (!hidden) return;
+  var iso = _dfParse_(disp.value);
+  if (iso === null) {
+    if (!final) return; // ما زال يكتب
+    disp.value = _dfIsoToDmy_(hidden.value); disp.classList.add('df-bad'); setTimeout(function() { disp.classList.remove('df-bad'); }, 1600);
+    showToast('تاريخ غير صحيح — اكتبه بصيغة يوم/شهر/سنة (مثال: 05/03 أو 05/03/2027)', 'error'); return;
+  }
+  if (final || iso) disp.value = _dfIsoToDmy_(iso);
+  if (hidden.value !== iso) { hidden.value = iso; hidden.dispatchEvent(new Event('change', { bubbles: true })); }
+}
+function _dfOnInput_(e) {
+  var disp = e.target, f = _dfFormatTyping_(disp.value);
+  if (disp.value !== f) disp.value = f;
+  if (f.length === 10) _dfCommit_(disp, false); // تاريخ كامل: يُعتمد فوراً دون انتظار مغادرة الحقل
+}
+function _dfEnhance_(disp) {
+  if (!disp || disp._dfDone || !/_disp$/.test(disp.id || '')) return;
+  var fieldId = disp.id.replace(/_disp$/, ''), hidden = document.getElementById(fieldId);
+  if (!hidden) return;
+  disp._dfDone = true;
+  disp.readOnly = false; disp.removeAttribute('readonly'); disp.removeAttribute('onclick'); disp.onclick = null;
+  disp.setAttribute('inputmode', 'numeric'); disp.setAttribute('maxlength', '10'); disp.setAttribute('autocomplete', 'off');
+  disp.style.cursor = 'text'; if (!disp.title) disp.title = 'اكتب التاريخ (يوم/شهر) والسنة تُكمَّل تلقائياً، أو اختر من التقويم 📅';
+  disp.addEventListener('input', _dfOnInput_);
+  disp.addEventListener('blur', function() { _dfCommit_(disp, true); });
+  disp.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); _dfCommit_(disp, true); try { closeDatePicker(); } catch (x) {} } });
+  disp.addEventListener('focus', function() { try { disp.select(); } catch (x) {} });
+  // زر التقويم: إن لم يكن بجوار الحقل زر يفتح التقويم نضيف واحداً
+  var wrap = disp.parentNode, has = false;
+  if (wrap) Array.prototype.forEach.call(wrap.querySelectorAll('button'), function(b) { if ((b.getAttribute('onclick') || '').indexOf("openDatePicker('" + fieldId + "')") > -1) has = true; });
+  if (wrap && !has) {
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'df-cal-mini'; btn.title = 'اختيار من التقويم'; btn.textContent = '📅';
+    btn.addEventListener('click', function(ev) { ev.stopPropagation(); openDatePicker(fieldId); });
+    if (hidden.parentNode === wrap && hidden.nextSibling) wrap.insertBefore(btn, hidden.nextSibling); else wrap.insertBefore(btn, disp.nextSibling);
+  }
+}
+function _dfEnhanceAll_() { try { Array.prototype.forEach.call(document.querySelectorAll('input[readonly][id$="_disp"]'), _dfEnhance_); } catch (e) {} }
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _dfEnhanceAll_); else _dfEnhanceAll_();
 
 // ══════════════════════════════════════════════════════
 // نظام Toast للإشعارات (بديل alert/confirm/prompt)
@@ -6653,11 +6770,13 @@ function highlightRequiredFields(ids){
   ids.forEach(function(id){
     var el=document.getElementById(id); if(!el) return;
     el.classList.add('field-invalid');
+    var _dd=(el.type==='hidden')?document.getElementById(id+'_disp'):null; // V3.77 — حقل تاريخ: الإطار الأحمر على الحقل الظاهر
+    if(_dd){ _dd.classList.add('field-invalid'); if(!_dd._reqBound){ _dd._reqBound=true; var _clr=function(){_dd.classList.remove('field-invalid');}; _dd.addEventListener('input',_clr); el.addEventListener('change',_clr); } }
     if(!el._reqBound){ el._reqBound=true; el.addEventListener('input',function(){el.classList.remove('field-invalid');}); el.addEventListener('change',function(){el.classList.remove('field-invalid');}); }
   });
 }
 // يُزيل تمييز الحقول الناقصة (الإطار الأحمر) من نموذج معيّن
-function clearRequiredHighlights(ids){ ids.forEach(function(id){ var el=document.getElementById(id); if(el) el.classList.remove('field-invalid'); }); }
+function clearRequiredHighlights(ids){ ids.forEach(function(id){ var el=document.getElementById(id); if(el) el.classList.remove('field-invalid'); var d=document.getElementById(id+'_disp'); if(d) d.classList.remove('field-invalid'); }); }
 
 // ═══════════════════════════════════════════════════════════════
 // شاشة التوافر
@@ -9511,8 +9630,8 @@ function openNusukAgreementModal(preload) {
   // تفريغ الحقول
   document.getElementById('na_agreement_number').value = preload ? preload.agreementNumber : '';
   document.getElementById('na_persons_count').value = preload ? preload.personsCount : '';
-  document.getElementById('na_check_in').value = preload ? preload.checkInIso : '';
-  document.getElementById('na_check_out').value = preload ? preload.checkOutIso : '';
+  _setDateFieldValue('na_check_in', preload ? preload.checkInIso : ''); // V3.77 — حقل تاريخ موحّد (كتابة حرة + تقويم) بدل حقل المتصفح
+  _setDateFieldValue('na_check_out', preload ? preload.checkOutIso : '');
   document.getElementById('na_booking_info').innerHTML = '<div style="color:var(--clr-muted);font-size:7.5pt;padding:8px;">اختر رقم الحجز لعرض بياناته...</div>';
   document.getElementById('na_previous_agreements').innerHTML = '';
   _nusukModalSelectedBooking = null;
@@ -9565,8 +9684,8 @@ function onNusukBookingSelect() {
   // ملء التواريخ من الحجز إن كانت فارغة أو غير مطابقة (لا نطمس ما أدخله المستخدم في التعديل)
   var isEdit = !!document.getElementById('na_edit_id').value;
   if (!isEdit) {
-    document.getElementById('na_check_in').value = b.checkInIso;
-    document.getElementById('na_check_out').value = b.checkOutIso;
+    _setDateFieldValue('na_check_in', b.checkInIso);
+    _setDateFieldValue('na_check_out', b.checkOutIso);
   }
 
   // ملخص الحجز
@@ -11274,7 +11393,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.76';
+var CLIENT_APP_VERSION = 'V3.77';
 var _BUILD_VERSION = CLIENT_APP_VERSION; // نسخة الكود المحمَّل في هذا التبويب (لا تتغير بعد التحميل)
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
@@ -11518,11 +11637,19 @@ function submitHotelPurge() {
       <div class="form-row">
         <div class="form-group">
           <label>تاريخ الدخول *</label>
-          <input type="date" id="na_check_in">
+          <div class="custom-date-field">
+            <input type="text" id="na_check_in_disp" placeholder="يوم/شهر/سنة" readonly onclick="openDatePicker('na_check_in')">
+            <input type="hidden" id="na_check_in">
+            <button type="button" class="dp-cal-btn" onclick="openDatePicker('na_check_in')">📅</button>
+          </div>
         </div>
         <div class="form-group">
           <label>تاريخ الخروج *</label>
-          <input type="date" id="na_check_out">
+          <div class="custom-date-field">
+            <input type="text" id="na_check_out_disp" placeholder="يوم/شهر/سنة" readonly onclick="openDatePicker('na_check_out')">
+            <input type="hidden" id="na_check_out">
+            <button type="button" class="dp-cal-btn" onclick="openDatePicker('na_check_out')">📅</button>
+          </div>
         </div>
       </div>
       <small style="color:var(--clr-muted);font-size:7pt;display:block;margin-top:-4px;">
@@ -12176,6 +12303,8 @@ function submitHotelPurge() {
           <tbody id="cpTableBody"></tbody>
         </table>
       </div>
+      <!-- V3.77 — كشف السداد الفعلي للتعاقد: كل الدفعات مرتبة بالتاريخ مع المتبقي بعد كل دفعة -->
+      <div id="cpReceiptsLedger" style="margin-top:14px;"></div>
     </div>
     <div class="modal-footer">
       <button class="btn-secondary" onclick="document.getElementById('ContractPayments_Modal').classList.remove('open')">إغلاق</button>
