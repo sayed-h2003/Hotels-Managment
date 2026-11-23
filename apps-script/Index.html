@@ -493,6 +493,7 @@ body.m-view.m-av-days .avail-zoom, body.m-view.m-av-days #avail_panel_toggle, bo
 .hs-badge { display:inline-block; border-radius:12px; padding:1px 8px; font-size:7.2pt; font-weight:800; white-space:nowrap; }
 .hs-badge.paid { background:#dcfce7; color:#166534; } .hs-badge.over { background:#fee2e2; color:#991b1b; } .hs-badge.part { background:#fef3c7; color:#92400e; } .hs-badge.up { background:#e0e7ff; color:#3730a3; }
 .hs-sub { display:block; font-size:6.8pt; color:var(--clr-muted); font-weight:600; margin-top:1px; }
+.hs-auto { display:inline-block; font-size:6.8pt; font-weight:800; color:#3730a3; background:#e0e7ff; border-radius:10px; padding:0 6px; margin-inline-start:3px; cursor:help; }
 .acc-sched-note { font-size:7.3pt; font-weight:700; color:#1d4ed8; margin-top:2px; }
 .acc-sched-note.od { color:#b91c1c; }
 body.m-view .hs-cards { grid-template-columns:repeat(2,1fr); }
@@ -3820,7 +3821,7 @@ function renderCpReceiptsLedger(data) {
           + '<td style="white-space:nowrap;">' + escapeHtml(r.payDate || '') + '</td>'
           + '<td style="text-align:center;font-weight:700;color:#15803d;">' + n(r.amount) + '</td>'
           + '<td>' + escapeHtml(r.statement || r.notes || '') + (r.linkedAccountPaymentId ? ' <span style="font-size:6.8pt;color:#1d4ed8;font-weight:700;">🔗 مزدوجة</span>' : '') + '</td>'
-          + '<td style="text-align:center;white-space:nowrap;">' + escapeHtml(r.installmentDue || '') + '</td>'
+          + '<td style="text-align:center;white-space:nowrap;">' + (r.installmentDue ? escapeHtml(r.installmentDue) : '<span style="color:var(--clr-muted);">بلا قسط</span>') + '</td>'
           + '<td style="text-align:center;font-weight:700;">' + n(r.cumPaid) + '</td>'
           + '<td style="text-align:center;font-weight:900;color:' + remColor + ';">' + n(Math.abs(r.remainingAfter)) + (r.remainingAfter < -0.004 ? ' زيادة' : '') + '</td></tr>';
       }).join('')
@@ -10543,6 +10544,8 @@ function renderHotelSchedule() {
   if (d.nextDue) html += '<div style="font-size:8pt;font-weight:800;color:#1d4ed8;margin-bottom:4px;">📌 أقرب استحقاق قادم: ' + n(d.nextDue.amount) + ' ر.س في ' + escapeHtml(d.nextDue.date) + '</div>';
   html += '<div class="hs-note">💡 كل ما سُدِّد للفندق يُخصم من أقساط كل تعاقداته <b>بالأقدمية</b> (الأقدم استحقاقاً أولاً) بصرف النظر عن القسط المسجَّلة عليه الدفعة. «المتبقي التراكمي» = ما يجب سداده لتغطية كل الأقساط حتى هذا الاستحقاق. ما لم يُجدوَل من قيمة أي تعاقد يظهر كبند بتاريخ بدايته.</div>';
   (d.warnings || []).forEach(function(w) { html += '<div class="hs-note" style="background:#fef2f2;border-color:#fecaca;color:#991b1b;">⚠️ ' + escapeHtml(w) + '</div>'; });
+  var _autoN = d.items.filter(function(it) { return it.autoCreated; }).length; // V3.79
+  if (_autoN) html += '<div class="hs-note" style="background:#eef2ff;border-color:#c7d2fe;color:#3730a3;">⚙️ ' + _autoN + ' قسط أنشأها النظام قديماً من دفعات مسجَّلة بلا قسط (مثل الدفعات المزدوجة) — غالباً ليست مستحقات حقيقية وتزيد المطلوب للفندق. احذفها بـ 🗑 ودفعاتها تبقى سداداً للفندق.</div>';
 
   // جدول الأقساط
   html += '<div class="hs-sec-title"><span>📅 الأقساط بترتيب الاستحقاق</span><label style="font-size:7.6pt;font-weight:700;color:var(--clr-text-sub);display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="hs_hide_paid"' + (_hsHidePaid ? ' checked' : '') + ' onchange="_hsHidePaid=this.checked;renderHotelSchedule()"> إخفاء المسدد بالكامل</label></div>';
@@ -10555,7 +10558,7 @@ function renderHotelSchedule() {
     rows.forEach(function(it) {
       if (!todayShown && it.future) { todayShown = true; html += '<tr class="hs-today"><td colspan="9">— اليوم ' + escapeHtml(d.today) + ' —</td></tr>'; }
       var cls = it.status === 'paid' ? 'hs-paid' : (it.overdue ? 'hs-over' : (it.status === 'partial' ? 'hs-part' : ''));
-      var what = it.kind === 'unscheduled' ? '<i style="color:#92400e;">باقي قيمة التعاقد (غير مجدول)</i>' : ('قسط #' + escapeHtml(it.paymentId) + (it.notes ? '<span class="hs-sub">' + escapeHtml(it.notes) + '</span>' : ''));
+      var what = it.kind === 'unscheduled' ? '<i style="color:#92400e;">باقي قيم تعاقدات الفندق (غير مجدول)</i>' : ('قسط #' + escapeHtml(it.paymentId) + (it.autoCreated ? ' <span class="hs-auto" title="أنشأه النظام قديماً عند تسجيل دفعة بلا قسط — غالباً ليس مستحقاً حقيقياً. احذفه ودفعته تبقى سداداً للفندق.">⚙️ أُنشئ من دفعة</span>' : '') + (it.notes ? '<span class="hs-sub">' + escapeHtml(it.notes) + '</span>' : ''));
       var acts = '';
       if (canEdit) {
         if (it.kind === 'installment') acts = '<button class="btn-secondary" style="font-size:7pt;padding:2px 7px;" title="تعديل القسط" onclick="hsEditInstallment(\'' + escapeHtmlAttr(it.paymentId) + '\')">✏️</button> '
@@ -10592,7 +10595,7 @@ function renderHotelSchedule() {
         + '<td style="white-space:nowrap;font-weight:700;">' + escapeHtml(r.payDate) + '</td>'
         + '<td style="text-align:center;font-weight:800;color:#15803d;">' + n(r.amount) + '</td>'
         + '<td>' + escapeHtml(r.statement || r.notes || '—') + (r.linkedAccountPaymentId ? ' <span style="font-size:6.8pt;color:#1d4ed8;font-weight:700;">🔗 مزدوجة</span>' : '') + '</td>'
-        + '<td style="white-space:nowrap;">تعاقد #' + escapeHtml(r.contractId) + '<span class="hs-sub">' + (r.orphan ? '⚠️ قسط #' + escapeHtml(r.paymentId) + ' محذوف — انقلها لقسط قائم' : ('قسط #' + escapeHtml(r.paymentId) + (r.installmentDue ? ' — استحقاق ' + escapeHtml(r.installmentDue) : ''))) + '</span></td>'
+        + '<td style="white-space:nowrap;">تعاقد #' + escapeHtml(r.contractId) + '<span class="hs-sub">' + (r.unassigned ? 'على حساب الفندق — بلا قسط (يُخصم بالأقدمية)' : (r.orphan ? '⚠️ قسط #' + escapeHtml(r.paymentId) + ' محذوف' : ('قسط #' + escapeHtml(r.paymentId) + (r.installmentDue ? ' — استحقاق ' + escapeHtml(r.installmentDue) : '')))) + '</span></td>'
         + '<td style="text-align:center;white-space:nowrap;">' + acts + '</td></tr>';
     });
     html += '</tbody></table></div>';
@@ -10647,7 +10650,7 @@ function hsDeleteInstallment(pid) {
   var linked = ((_hsData && _hsData.receipts) || []).filter(function(r) { return String(r.paymentId) === String(pid); });
   var sum = 0; linked.forEach(function(r) { sum += r.amount; });
   var msg = 'حذف القسط #' + pid + ' (' + fmtSAR(it.amount) + ' ر.س — استحقاق ' + it.dueDate + ') من ' + it.contractLabel + '؟'
-    + (linked.length ? '\n\n⚠️ مسجَّل عليه ' + linked.length + ' دفعة مسددة بإجمالي ' + fmtSAR(sum) + ' ر.س وستُحذف معه. إن كانت هذه الدفعات صحيحة فانقلها لقسط آخر أولاً (زر ✏️ في جدول الدفعات).' : '');
+    + (linked.length ? '\n\nمسجَّل عليه ' + linked.length + ' دفعة مسددة بإجمالي ' + fmtSAR(sum) + ' ر.س — لن تُحذف: تبقى دفعات للفندق بلا قسط وتُخصم بالأقدمية.' : '');
   showConfirm(msg, function() {
     google.script.run.withSuccessHandler(function() {
       showToast('تم حذف القسط.', 'success'); invalidateScreenCache('Accounts_Screen'); loadAccountStatement(); loadAccountsSummary();
@@ -10702,6 +10705,50 @@ function _accSchedNote_(r) {
   return '';
 }
 
+// V3.79 — ربط/استعادة دفعة جهة أو عميل كسداد لفندق
+var _lhApId = null;
+function _asAfterLink_(msg) { showToast(msg, 'success'); invalidateScreenCache('Accounts_Screen'); loadAccountStatement(); loadAccountsSummary(); }
+function asRestoreDual(apId) {
+  google.script.run.withSuccessHandler(function(res) {
+    if (res && res.restored) _asAfterLink_('أُعيدت الدفعة سداداً لفندق ' + (res.hotelName || '') + '.');
+    else _asAfterLink_('تم ربط الدفعة بالفندق.');
+  }).withFailureHandler(function(e) {
+    var m = e.message || String(e);
+    if (/اختر التعاقد/.test(m)) { asOpenLinkHotel(apId); return; }
+    showToast(m, 'error');
+  }).linkAccountPaymentToHotel(apId, '', sessionUser.username);
+}
+function asRestoreAllDual() {
+  if (!_asCurrent) return;
+  showConfirm('إعادة كل الدفعات المزدوجة لهذا الحساب التي حُذف سدادها من حساب الفندق؟\nستظهر في حساب كل فندق كدفعة سداد بمبلغها وتاريخها وبيانها (بلا قسط — تُخصم بالأقدمية).', function() {
+    google.script.run.withSuccessHandler(function(res) {
+      var msg = 'أُعيدت ' + (res.restored || 0) + ' دفعة (' + fmtSAR(res.total || 0) + ' ر.س)' + ((res.hotels || []).length ? ' لحساب: ' + res.hotels.join('، ') : '') + '.';
+      if (res.skipped) msg += ' تعذّرت ' + res.skipped + ' (تعاقدها محذوف) — اربطها يدوياً بزر ↩️.';
+      _asAfterLink_(msg);
+    }).withFailureHandler(function(e) { showToast(e.message || String(e), 'error'); })
+      .restorePartyDualPayments(_asCurrent.partyType, _asCurrent.partyKey, sessionUser.username);
+  }, null, '↩️ إعادة الدفعات المزدوجة');
+}
+function asOpenLinkHotel(apId) {
+  var r = null; ((_asStatementData && _asStatementData.rows) || []).forEach(function(x) { if (x.kind === 'payment' && String(x.refId) === String(apId)) r = x; });
+  _lhApId = apId;
+  document.getElementById('lhInfo').innerText = 'دفعة #' + apId + (r ? ' — ' + fmtSAR(r.amount) + ' ر.س — ' + (r.date || '') + (r.notes ? ' — ' + r.notes : '') : '');
+  document.getElementById('lhError').innerText = '';
+  var sel = document.getElementById('lh_contract'); sel.innerHTML = '<option value="">جاري التحميل...</option>';
+  document.getElementById('LinkHotel_Modal').classList.add('open');
+  google.script.run.withSuccessHandler(function(list) {
+    sel.innerHTML = '<option value="">— اختر الفندق —</option>' + (list || []).map(function(c) { return '<option value="' + escapeHtmlAttr(c.contractId) + '"' + (r && r.hotelName && c.hotelName === r.hotelName ? ' selected' : '') + '>' + escapeHtml(c.label) + '</option>'; }).join('');
+  }).withFailureHandler(function() { sel.innerHTML = '<option value="">تعذّر التحميل</option>'; }).getActiveContractsForDropdown(sessionUser.username);
+}
+function asLinkHotelSubmit() {
+  var cid = document.getElementById('lh_contract').value, err = document.getElementById('lhError'); err.innerText = '';
+  if (!cid) { err.innerText = 'اختر الفندق.'; return; }
+  google.script.run.withSuccessHandler(function(res) {
+    document.getElementById('LinkHotel_Modal').classList.remove('open');
+    _asAfterLink_('رُبطت الدفعة سداداً لفندق ' + ((res && res.hotelName) || '') + '.');
+  }).withFailureHandler(function(e) { err.innerText = e.message || String(e); }).linkAccountPaymentToHotel(_lhApId, cid, sessionUser.username);
+}
+
 // يرسم ملخص وحركات كشف الحساب داخل النافذة
 function renderAccountStatement() {
   var d = _asStatementData; if (!d) return;
@@ -10727,9 +10774,20 @@ function renderAccountStatement() {
     return;
   }
   // v3.33/v3.34 — أُضيف نوعا صف جديدان لكشف حساب الفنادق: "contract" (مدين — تعاقد) و"receipt" (دائن — سداد فعلي، قابل للتعديل/الحذف)
+  var _canLink = !isHotelTab && _accCan('canEdit') && _bkCanViewFinance(); // V3.79
+  var _lost = d.rows.filter(function(r) { return r.kind === 'payment' && (r.hotelSide === 'deleted' || r.hotelSide === 'missing'); });
+  var _lostBox = document.getElementById('asLostDualBox');
+  if (_lostBox) {
+    var _lostSum = 0; _lost.forEach(function(r) { _lostSum += r.amount || 0; });
+    _lostBox.style.display = _lost.length ? '' : 'none';
+    _lostBox.innerHTML = _lost.length ? ('⚠️ ' + _lost.length + ' دفعة مزدوجة (' + fmtSAR(_lostSum) + ' ر.س) حُذف سدادها من حساب الفندق — كانت تظهر هناك كقسط تعاقد وحُذف القسط.'
+      + (_canLink ? ' <button type="button" class="btn-primary-dark" style="font-size:7.5pt;padding:4px 10px;margin-inline-start:6px;" onclick="asRestoreAllDual()">↩️ إعادتها كلها دفعات سداد للفندق</button>' : '')) : '';
+  }
   tbody.innerHTML = d.rows.map(function(r) {
     var actions = '';
     if (r.kind === 'payment') {
+      if (_canLink && (r.hotelSide === 'deleted' || r.hotelSide === 'missing')) actions += '<button class="btn-secondary" style="font-size:7pt;padding:2px 7px;color:#1d4ed8;" title="إعادتها دفعة سداد للفندق" onclick="asRestoreDual(\'' + escapeHtmlAttr(r.refId) + '\')">↩️</button> ';
+      else if (_canLink && !r.linkedHotelReceiptId) actions += '<button class="btn-secondary" style="font-size:7pt;padding:2px 7px;color:#1d4ed8;" title="سُدّدت مباشرة لفندق؟ اربطها به كدفعة مزدوجة" onclick="asOpenLinkHotel(\'' + escapeHtmlAttr(r.refId) + '\')">🔗</button> ';
       if (canEdit)   actions += '<button class="btn-secondary" style="font-size:7pt;padding:2px 7px;" title="تعديل الدفعة" onclick="editAsPayment(\'' + escapeHtmlAttr(r.refId) + '\')">✏️</button> ';
       if (canDelete) actions += '<button class="btn-secondary" style="font-size:7pt;padding:2px 7px;color:var(--clr-danger);" title="حذف الدفعة" onclick="deleteAsPayment(\'' + escapeHtmlAttr(r.refId) + '\')">🗑</button>';
     } else if (r.kind === 'booking') {
@@ -10743,7 +10801,7 @@ function renderAccountStatement() {
     var rowBg = (r.kind === 'payment' || r.kind === 'receipt') ? '#f0fdf4' : '#fff';
     return '<tr style="background:' + rowBg + ';">'
       + '<td style="white-space:nowrap;">' + escapeHtml(r.date||'') + '</td>'
-      + '<td>' + escapeHtml(r.description||'') + '</td>'
+      + '<td>' + escapeHtml(r.description||'') + (r.kind === 'payment' && (r.hotelSide === 'deleted' || r.hotelSide === 'missing') ? ' <span class="hs-badge over" title="سداد الفندق المقابل محذوف">⚠️ غير ظاهرة في حساب الفندق</span>' : '') + '</td>'
       + '<td style="text-align:center;color:#b45309;font-weight:700;">' + (r.debit ? fmtSAR(r.debit) : '—') + '</td>'
       + '<td style="text-align:center;color:#15803d;font-weight:700;">' + (r.credit ? fmtSAR(r.credit) : '—') + '</td>'
       + '<td style="text-align:center;font-weight:800;color:' + (r.runningBalance>0.004?'#b91c1c':(r.runningBalance<-0.004?'#15803d':'#475569')) + ';">' + fmtSAR(r.runningBalance) + '</td>'
@@ -10825,7 +10883,7 @@ function toggleDualPaymentFields() {
 function loadDualInstallments() {
   var contractId = document.getElementById('as_dual_contract').value;
   var sel = document.getElementById('as_dual_installment');
-  sel.innerHTML = '<option value="">— إنشاء قسط جديد تلقائياً بقيمة الدفعة —</option>';
+  sel.innerHTML = '<option value="">— بدون قسط محدد (يُخصم بالأقدمية) —</option>';
   if (!contractId) return;
   google.script.run.withSuccessHandler(function(data) {
     var open = (data.payments||[]).filter(function(p){ return p.status !== 'تم السداد'; });
@@ -10849,7 +10907,7 @@ function resetAhpPaymentForm() {
   document.getElementById('ahp_statement').value = '';
   document.getElementById('ahp_notes').value = '';
   document.getElementById('ahp_collection').value = '';
-  document.getElementById('ahp_installment').innerHTML = '<option value="">— إنشاء قسط جديد تلقائياً بقيمة الدفعة —</option>';
+  document.getElementById('ahp_installment').innerHTML = '<option value="">— بدون قسط محدد (يُخصم بالأقدمية) —</option>';
   var now = new Date();
   var iso = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
   document.getElementById('ahp_pay_date').value = iso;
@@ -10911,14 +10969,15 @@ function _ahpFillEditInstallments_() {
   });
   if (_ahpEditOrig && String(cid) === _ahpEditOrig.contractId && _ahpEditOrig.paymentId && !items.some(function(it) { return it.paymentId === _ahpEditOrig.paymentId; }))
     opts.unshift('<option value="' + escapeHtmlAttr(_ahpEditOrig.paymentId) + '">قسط #' + escapeHtml(_ahpEditOrig.paymentId) + ' (الحالي — محذوف)</option>');
-  iSel.innerHTML = opts.length ? opts.join('') : '<option value="">لا أقساط لهذا التعاقد — أضف قسطاً من جدول الاستحقاقات أولاً</option>';
+  opts.unshift('<option value="">— بلا قسط محدد (يُخصم بالأقدمية)' + ((_ahpEditOrig && !_ahpEditOrig.paymentId && String(cid) === _ahpEditOrig.contractId) ? ' (الحالي)' : '') + ' —</option>'); // V3.79
+  iSel.innerHTML = opts.join('');
   if (_ahpEditOrig && String(cid) === _ahpEditOrig.contractId) iSel.value = _ahpEditOrig.paymentId;
 }
 function loadAhpInstallments() {
   if (document.getElementById('ahp_edit_id').value) { _ahpFillEditInstallments_(); return; } // V3.78 — وضع التعديل
   var contractId = document.getElementById('ahp_contract').value;
   var sel = document.getElementById('ahp_installment');
-  sel.innerHTML = '<option value="">— إنشاء قسط جديد تلقائياً بقيمة الدفعة —</option>';
+  sel.innerHTML = '<option value="">— بدون قسط محدد (يُخصم بالأقدمية) —</option>';
   if (!contractId) return;
   google.script.run.withSuccessHandler(function(data) {
     var open = (data.payments||[]).filter(function(p){ return p.status !== 'تم السداد'; });
@@ -11008,11 +11067,11 @@ function saveAhpPaymentSubmit() {
   if (editId) {
     var _req = {editId:editId, amount:amount, payDate:payDate, statement:statement, notes:notes};
     var _newPid = document.getElementById('ahp_installment').value || '';
+    var _newCid = document.getElementById('ahp_contract').value || '';
     if (_ahpEditOrig && String(_ahpEditOrig.receiptId) === String(editId) && document.getElementById('ahp_contract_row').style.display !== 'none') {
-      if (!_newPid) { errEl.innerText = 'اختر القسط المسجَّلة عليه الدفعة.'; return; }
-      if (_newPid !== _ahpEditOrig.paymentId) _req.paymentId = _newPid; // V3.78 — نقل لقسط آخر
+      if (_newPid !== _ahpEditOrig.paymentId || (_newCid && _newCid !== _ahpEditOrig.contractId)) { _req.move = true; _req.paymentId = _newPid; _req.contractId = _newCid || _ahpEditOrig.contractId; } // V3.79 — نقل لقسط آخر أو لحساب التعاقد بلا قسط
     }
-    google.script.run.withSuccessHandler(afterSave(_req.paymentId ? 'تم تعديل الدفعة ونقلها للقسط #' + _req.paymentId + '.' : 'تم تعديل الدفعة بنجاح.')).withFailureHandler(onErr)
+    google.script.run.withSuccessHandler(afterSave(_req.move ? ('تم تعديل الدفعة ونقلها ' + (_req.paymentId ? 'للقسط #' + _req.paymentId : 'لحساب التعاقد #' + _req.contractId + ' بلا قسط') + '.') : 'تم تعديل الدفعة بنجاح.')).withFailureHandler(onErr)
       .editContractPaymentReceipt(_req, sessionUser.username);
     return;
   }
@@ -11682,7 +11741,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.78';
+var CLIENT_APP_VERSION = 'V3.79';
 var _BUILD_VERSION = CLIENT_APP_VERSION; // نسخة الكود المحمَّل في هذا التبويب (لا تتغير بعد التحميل)
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
@@ -12636,6 +12695,7 @@ function submitHotelPurge() {
         <div id="asSchedBox"></div>
       </div>
       <div id="asSummaryBox" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;"></div>
+      <div id="asLostDualBox" class="hs-note" style="display:none;background:#fef2f2;border-color:#fecaca;color:#991b1b;font-weight:700;"></div>
 
       <!-- نموذج إضافة/تعديل دفعة مسدَّدة -->
       <div id="asPaymentFormBox" style="background:var(--clr-bg);border-radius:var(--radius-md);padding:10px 12px;margin-bottom:14px;">
@@ -12654,7 +12714,7 @@ function submitHotelPurge() {
             </div>
             <div class="form-group" style="flex:1;">
               <label>القسط المطلوب تسديده</label>
-              <select id="as_dual_installment"><option value="">— إنشاء قسط جديد تلقائياً بقيمة الدفعة —</option></select>
+              <select id="as_dual_installment"><option value="">— بدون قسط محدد (يُخصم بالأقدمية) —</option></select>
             </div>
           </div>
           <div class="form-group"><label>بيان (اختياري)</label><input type="text" id="as_dual_statement" placeholder="مثال: سدَّدها العميل كاش بالفندق مباشرة"></div>
@@ -12709,7 +12769,7 @@ function submitHotelPurge() {
           </div>
           <div class="form-group" style="flex:1;">
             <label>القسط المطلوب تسديده</label>
-            <select id="ahp_installment"><option value="">— إنشاء قسط جديد تلقائياً بقيمة الدفعة —</option></select>
+            <select id="ahp_installment"><option value="">— بدون قسط محدد (يُخصم بالأقدمية) —</option></select>
           </div>
         </div>
         <div class="form-row">
@@ -12757,6 +12817,23 @@ function submitHotelPurge() {
     <div class="modal-footer">
       <button class="btn-secondary" onclick="document.getElementById('AccountStatement_Modal').classList.remove('open')">إغلاق</button>
       <button class="btn-primary-dark" id="asPrintBtn" onclick="(_asTab==='schedule' ? printHotelSchedule : printAccountStatement)()">🖨️ طباعة كشف الحساب</button>
+    </div>
+  </div>
+</div>
+
+<!-- V3.79 — ربط دفعة عميل/جهة تحصيل بفندق (دفعة مزدوجة) -->
+<div id="LinkHotel_Modal" class="modal-overlay">
+  <div class="modal-box" style="max-width:460px;">
+    <div class="modal-header"><span>🔗 ربط الدفعة بفندق (دفعة مزدوجة)</span><button class="modal-close-btn" onclick="document.getElementById('LinkHotel_Modal').classList.remove('open')">×</button></div>
+    <div class="modal-body">
+      <div id="lhInfo" style="font-size:8.2pt;font-weight:700;margin-bottom:8px;"></div>
+      <div class="form-group"><label>الفندق المسدَّد له *</label><select id="lh_contract"><option value="">جاري التحميل...</option></select></div>
+      <p style="font-size:7.4pt;color:var(--clr-muted);margin:4px 0 0;">تظهر الدفعة في حساب الفندق كدفعة سداد بنفس مبلغها وتاريخها وبيانها (بلا قسط — تُخصم من أقساطه بالأقدمية)، وتبقى هنا كما هي.</p>
+      <div class="modal-error" id="lhError"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="document.getElementById('LinkHotel_Modal').classList.remove('open')">إلغاء</button>
+      <button class="btn-primary-dark" id="lh_save_btn" onclick="asLinkHotelSubmit()">🔗 ربط</button>
     </div>
   </div>
 </div>

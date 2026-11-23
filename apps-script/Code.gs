@@ -523,6 +523,8 @@ function _apiTable_() {
     editContractPaymentReceipt: { f: editContractPaymentReceipt, u: 1 },
     deleteContractPaymentReceipt: { f: deleteContractPaymentReceipt, u: 1 },
     saveDualPayment: { f: saveDualPayment, u: 1 },
+    linkAccountPaymentToHotel: { f: linkAccountPaymentToHotel, u: 2 },
+    restorePartyDualPayments: { f: restorePartyDualPayments, u: 2 },
     checkDuePaymentsAndNotify: { f: checkDuePaymentsAndNotify, u: 0 },
     getActiveContractsForDropdown: { f: getActiveContractsForDropdown, u: 0 },
     getCollectionAccounts: { f: getCollectionAccounts, u: -1 },
@@ -1641,6 +1643,7 @@ function _buildContractReceiptsSumMap_() {
 // دالة مساعدة داخلية: تُعيد احتساب Paid_Amount/Paid_Date لقسط واحد من مجموع دفعات السداد الفعلية المرتبطة به
 // وتكتبهما على صف القسط بشيت Contract_Payments — تُستدعى بعد أي إضافة/تعديل/حذف سداد فعلي لضمان بقاء القسط متزامناً
 function _recalcContractPaymentPaidAmount_(paymentId) {
+  if (!String(paymentId || "").trim()) return; // V3.79 — دفعة بلا قسط: لا قسط يُعاد حسابه (وكان الفراغ قد يطابق صفاً فارغاً)
   _invalidateSheetCache_("Contract_Payment_Receipts");
   var sumMap = _buildContractReceiptsSumMap_();
   var info = sumMap[String(paymentId)] || { totalPaid: 0, lastDate: null };
@@ -1695,10 +1698,12 @@ function getContractPayments(contractId, currentUser) { _apiGuard_();
   var receipts=[];
   try {
     var dueOf={}; payments.forEach(function(p){ dueOf[String(p.paymentId)]=p.dueDate; });
-    var rData=_getSheetValues_("Contract_Payment_Receipts");
+    var rData=_getSheetValues_("Contract_Payment_Receipts"), unalloc=0;
     for (var r=1; r<rData.length; r++) {
       var rr=rData[r];
-      if (!rr[0]||rr[9]===true||!Object.prototype.hasOwnProperty.call(dueOf, String(rr[1]))) continue;
+      if (!rr[0]||rr[9]===true) continue;
+      var onInst = Object.prototype.hasOwnProperty.call(dueOf, String(rr[1]));
+      if (!onInst) { if (String(rr[2])!==String(contractId)) continue; unalloc += parseFloat(rr[3])||0; } // V3.79 — دفعة على حساب التعاقد بلا قسط
       var pd=rr[4] instanceof Date?rr[4]:new Date(rr[4]);
       receipts.push({ receiptId:rr[0], paymentId:rr[1], amount:Math.round((parseFloat(rr[3])||0)*100)/100,
         _t:isNaN(pd.getTime())?0:pd.getTime(), payDate:isNaN(pd.getTime())?"":_fmtDate_(pd,tz,"dd/MM/yyyy"),
@@ -1707,6 +1712,7 @@ function getContractPayments(contractId, currentUser) { _apiGuard_();
     receipts.sort(function(a,b){ return (a._t-b._t) || String(a.receiptId).localeCompare(String(b.receiptId), undefined, {numeric:true}); });
     var base = contractValue>0 ? contractValue : totalScheduled, cum=0;
     receipts.forEach(function(x){ cum+=x.amount; x.cumPaid=Math.round(cum*100)/100; x.remainingAfter=Math.round((base-cum)*100)/100; delete x._t; });
+    if (unalloc>0.005) { totalPaid += unalloc; } // تُحسب ضمن المسدد للتعاقد (الحالة لكل قسط تبقى من دفعاته المسجَّلة عليه)
   } catch(eR) { receipts=[]; }
   return {
     payments:payments, receipts:receipts, contractValue:contractValue,
@@ -1762,14 +1768,15 @@ function deleteContractPayment(paymentId, currentUser) { _apiGuard_();
   for (var i=1; i<data.length; i++) {
     if (String(data[i][0])===String(paymentId)) {
       sheet.getRange(i+1,10).setValue(true);
-      // حذف منطقي لكل دفعات السداد الفعلية المرتبطة بهذا القسط (لا تبقى يتيمة بالسجل)
+      // V3.79 — دفعات السداد المسجَّلة على القسط لا تُحذف معه: تبقى دفعات فعلية للفندق "بلا قسط" (تُخصم بالأقدمية).
+      // كان الحذف يمسحها معه — فحذف قسط أُنشئ تلقائياً من دفعة مزدوجة كان يُسقط الدفعة من حساب الفندق.
       var rSheet=_getOrCreateSheet_("Contract_Payment_Receipts");
-      var rData=rSheet.getDataRange().getValues();
+      var rData=rSheet.getDataRange().getValues(), kept=0;
       for (var k=1; k<rData.length; k++) {
-        if (String(rData[k][1])===String(paymentId) && rData[k][9]!==true) rSheet.getRange(k+1,10).setValue(true);
+        if (String(rData[k][1])===String(paymentId) && rData[k][9]!==true) { rSheet.getRange(k+1,2).setValue(""); kept++; }
       }
       _invalidateSheetCache_("Contract_Payment_Receipts");
-      logAudit("التعاقدات","حذف قسط سداد",data[i][1],"","","","تم حذف قسط سداد بقيمة "+data[i][2],currentUser);
+      logAudit("التعاقدات","حذف قسط سداد",data[i][1],"","","","تم حذف قسط سداد بقيمة "+data[i][2]+(kept?(" — "+kept+" دفعة مسجَّلة عليه بقيت دفعات للفندق بلا قسط"):""),currentUser);
       return {success:true};
     }
   }
@@ -1801,25 +1808,26 @@ function recordContractPaymentReceipt(p, currentUser) { _apiGuard_();
   if (amount<=0) throw new Error("قيمة الدفعة يجب أن تكون أكبر من صفر.");
   if (isNaN(payDate.getTime())) throw new Error("تاريخ الدفعة غير صحيح.");
 
-  if (!paymentId) {
-    // لا يوجد قسط مُختار — يُنشأ قسط جديد تلقائياً بنفس قيمة الدفعة وتاريخها على التعاقد المُمرَّر، ويُسدَّد فوراً بالكامل
-    var newInstallment = saveContractPayment({contractId:contractIdInput, amount:amount, dueDate:payDate, notes: statement||"قسط أُنشئ تلقائياً عند تسجيل سداد مباشر"}, currentUser);
-    paymentId = newInstallment.paymentId;
-  }
-
-  var sheet=_getOrCreateSheet_("Contract_Payments");
-  var data=sheet.getDataRange().getValues();
+  // V3.79 — بلا قسط مُختار: تُسجَّل الدفعة على حساب الفندق (التعاقد) بلا قسط، وتُخصم بالأقدمية في جدول الاستحقاقات.
+  // كان يُنشأ قسط جديد بقيمة الدفعة نفسها فيُضاف للمستحق مبلغ وهمي (ويُخفي الدفعة كأنها "قسط تعاقد").
   var contractId = "";
-  for (var i=1; i<data.length; i++) {
-    if (String(data[i][0])===paymentId && data[i][9]!==true) { contractId = data[i][1]; break; }
+  if (paymentId) {
+    var sheet=_getOrCreateSheet_("Contract_Payments");
+    var data=sheet.getDataRange().getValues();
+    for (var i=1; i<data.length; i++) {
+      if (String(data[i][0])===paymentId && data[i][9]!==true) { contractId = data[i][1]; break; }
+    }
+    if (!contractId) throw new Error("لم يتم العثور على القسط.");
+  } else {
+    if (!_liveContractHotel_(contractIdInput)) throw new Error("لم يتم العثور على التعاقد (أو أنه محذوف).");
+    contractId = contractIdInput;
   }
-  if (!contractId) throw new Error("لم يتم العثور على القسط.");
   var rSheet=_getOrCreateSheet_("Contract_Payment_Receipts");
   var receiptId=_getNextSequentialId_("RCT-",4);
   rSheet.appendRow([receiptId, paymentId, contractId, amount, payDate, statement, notes, currentUser, new Date(), false, linkedAccountPaymentId]);
   _recalcContractPaymentPaidAmount_(paymentId);
   logAudit("التعاقدات","تسجيل سداد",contractId,"","","",
-    "تم تسجيل سداد بقيمة "+amount.toLocaleString('en-US')+" ر.س على القسط #"+paymentId
+    "تم تسجيل سداد بقيمة "+amount.toLocaleString('en-US')+" ر.س "+(paymentId?("على القسط #"+paymentId):("على حساب التعاقد #"+contractId+" (بلا قسط — يُخصم بالأقدمية)"))
     +(statement?" — "+statement:"")+" بتاريخ "+_fmtDate_(payDate,_tz_(),"dd/MM/yyyy")
     +(linkedAccountPaymentId?" (🔗 دفعة مزدوجة — مرتبطة بدفعة عميل #"+linkedAccountPaymentId+")":""),
     currentUser);
@@ -1868,6 +1876,7 @@ function editContractPaymentReceipt(p, currentUser) { _apiGuard_();
   var statement=String(p.statement||"").trim();
   var notes=String(p.notes||"").trim();
   var newPid=String(p.paymentId||"").trim(); // V3.78 — اختياري: نقل الدفعة لقسط آخر (من تعاقدات الفندق نفسه)
+  var doMove = !!p.move || !!newPid, newCidIn = String(p.contractId||"").trim(); // V3.79 — move + paymentId فارغ = بلا قسط على التعاقد contractId
   if (!editId) throw new Error("لم يتم تحديد الدفعة.");
   if (amount<=0) throw new Error("قيمة الدفعة يجب أن تكون أكبر من صفر.");
   if (isNaN(payDate.getTime())) throw new Error("تاريخ الدفعة غير صحيح.");
@@ -1876,10 +1885,14 @@ function editContractPaymentReceipt(p, currentUser) { _apiGuard_();
   for (var i=1; i<data.length; i++) {
     if (String(data[i][0])===editId && data[i][9]!==true) {
       var paymentId=data[i][1], contractId=data[i][2], movedTo=null;
-      if (newPid && newPid!==String(paymentId)) {
-        var cpData=_getOrCreateSheet_("Contract_Payments").getDataRange().getValues(), newCid=null;
+      var newCid=null;
+      if (doMove && newPid) {
+        var cpData=_getOrCreateSheet_("Contract_Payments").getDataRange().getValues();
         for (var q=1; q<cpData.length; q++) { if (String(cpData[q][0])===newPid && cpData[q][9]!==true) { newCid=String(cpData[q][1]); break; } }
         if (!newCid) throw new Error("القسط المطلوب النقل إليه غير موجود أو محذوف.");
+      } else if (doMove) { newCid = newCidIn || String(contractId); }
+      if (doMove && (newPid!==String(paymentId||"") || newCid!==String(contractId))) {
+        if (!_liveContractHotel_(newCid)) throw new Error("لم يتم العثور على التعاقد (أو أنه محذوف).");
         var hMap=_buildContractHotelMap_();
         if (String(hMap[newCid]||"")!==String(hMap[contractId]||"")) throw new Error("لا يمكن نقل الدفعة إلى تعاقد فندق آخر.");
         var allowedH=_getUserAllowedHotels_(currentUser);
@@ -1891,9 +1904,9 @@ function editContractPaymentReceipt(p, currentUser) { _apiGuard_();
       _recalcContractPaymentPaidAmount_(paymentId);
       if (movedTo) {
         _recalcContractPaymentPaidAmount_(movedTo.paymentId);
-        logAudit("التعاقدات","نقل سداد",movedTo.contractId,"","","","نُقلت دفعة السداد #"+editId+" من القسط #"+paymentId+" (تعاقد #"+contractId+") إلى القسط #"+movedTo.paymentId+" (تعاقد #"+movedTo.contractId+")",currentUser);
+        logAudit("التعاقدات","نقل سداد",movedTo.contractId,"","","","نُقلت دفعة السداد #"+editId+" من "+(paymentId?("القسط #"+paymentId):"بلا قسط")+" (تعاقد #"+contractId+") إلى "+(movedTo.paymentId?("القسط #"+movedTo.paymentId):"بلا قسط")+" (تعاقد #"+movedTo.contractId+")",currentUser);
       }
-      logAudit("التعاقدات","تعديل سداد",(movedTo?movedTo.contractId:contractId),"","","","تم تعديل دفعة سداد #"+editId+" على القسط #"+(movedTo?movedTo.paymentId:paymentId)+" — القيمة الآن: "+amount.toLocaleString('en-US')+" ر.س",currentUser);
+      logAudit("التعاقدات","تعديل سداد",(movedTo?movedTo.contractId:contractId),"","","","تم تعديل دفعة سداد #"+editId+" على "+((movedTo?movedTo.paymentId:paymentId)?("القسط #"+(movedTo?movedTo.paymentId:paymentId)):"حساب التعاقد بلا قسط")+" — القيمة الآن: "+amount.toLocaleString('en-US')+" ر.س",currentUser);
       return {success:true};
     }
   }
@@ -1992,10 +2005,110 @@ function saveDualPayment(p, currentUser) { _apiGuard_();
 
   logAudit("الحسابات","دفعة مزدوجة",apId,"","","",
     "تسجيل دفعة مزدوجة بقيمة "+amount.toLocaleString('en-US')+" ر.س — سدَّدها "+(partyType==="collection"?"جهة التحصيل":"العميل")+" "+partyName
-    +" مباشرة لفندق "+hotelName+" (قسط #"+receipt.paymentId+", سداد #"+receipt.receiptId+")"+(statement?" — "+statement:""),
+    +" مباشرة لفندق "+hotelName+" ("+(receipt.paymentId?("قسط #"+receipt.paymentId+", "):"بلا قسط، ")+"سداد #"+receipt.receiptId+")"+(statement?" — "+statement:""),
     currentUser);
 
   return {success:true, accountPaymentId:apId, contractPaymentId:receipt.paymentId, receiptId:receipt.receiptId, hotelName:hotelName};
+  });
+  } catch(e) { _logError_(_fn, e); throw e; }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// V3.79 — ربط/استعادة دفعة عميل أو جهة تحصيل كسداد لفندق (دفعة مزدوجة)
+// • دفعة مزدوجة سُجّلت قديماً فأنشأ النظام لها قسطاً بقيمتها، ثم حُذف القسط فحُذف معه سداد الفندق: تُستعاد كسداد للفندق
+//   (بلا قسط — يُخصم بالأقدمية) بنفس مبلغها وتاريخها وبيانها.
+// • دفعة عادية سُدّدت فعلاً لفندق: تُربط به (يُنشأ سداد الفندق المقابل بلا قسط ويُربط الطرفان).
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// اسم فندق تعاقد قائم (غير محذوف) أو null — خريطة الفنادق المرجعية تشمل التعاقدات المحذوفة أيضاً
+function _liveContractHotel_(cid) {
+  var cd=_getSheetValues_("Contracts_Master");
+  for (var i=1; i<cd.length; i++) { if (String(cd[i][0])===String(cid)) return cd[i][12]===true ? null : String(cd[i][1]||""); }
+  return null;
+}
+function _dualPartyLabel_(ap) { return (String(ap[1])==="client" ? "العميل " : "جهة التحصيل ") + String(ap[3]||ap[2]||""); }
+// يستعيد سداد فندق محذوفاً مرتبطاً بدفعة طرف. يعيد {receiptId, contractId, hotel} أو null إن لم يكن ممكناً
+function _restoreLinkedHotelReceipt_(apRow, currentUser) {
+  var rid = String(apRow[12]||"").trim(); if (!rid) return null;
+  var rSheet=_getOrCreateSheet_("Contract_Payment_Receipts"), rData=rSheet.getDataRange().getValues();
+  for (var k=1; k<rData.length; k++) {
+    if (String(rData[k][0])!==rid) continue;
+    if (rData[k][9]!==true) return { receiptId: rid, contractId: String(rData[k][2]), already: true };
+    var cid=String(rData[k][2]), hotel=_liveContractHotel_(cid), hMap={}; hMap[cid]=hotel;
+    if (!hotel) return null; // تعاقده محذوف: يُربط يدوياً بتعاقد قائم
+    var allowed=_getUserAllowedHotels_(currentUser); if (allowed && !allowed[hotel]) return null;
+    var pid=String(rData[k][1]||""), alive=false;
+    if (pid) { var cp=_getSheetValues_("Contract_Payments"); for (var q=1; q<cp.length; q++) { if (String(cp[q][0])===pid && cp[q][9]!==true) { alive=true; break; } } }
+    rSheet.getRange(k+1,10).setValue(false);
+    if (!alive) rSheet.getRange(k+1,2).setValue(""); else _recalcContractPaymentPaidAmount_(pid);
+    _invalidateSheetCache_("Contract_Payment_Receipts");
+    logAudit("التعاقدات","استعادة سداد",cid,"","","","استُعيدت دفعة السداد #"+rid+" للفندق "+hMap[cid]+" ("+(alive?"على القسط #"+pid:"بلا قسط — يُخصم بالأقدمية")+") — دفعة مزدوجة من "+_dualPartyLabel_(apRow)+" #"+apRow[0],currentUser);
+    return { receiptId: rid, contractId: cid, hotel: hMap[cid] };
+  }
+  return null;
+}
+function linkAccountPaymentToHotel(accountPaymentId, contractId, currentUser) { _apiGuard_();
+  var _fn="[linkAccountPaymentToHotel]"; _logInfo_(_fn, "START | ap:"+String(JSON.stringify(accountPaymentId)||"").slice(0,60));
+  try {
+  return _withLock_(function() {
+  _requirePermission_(currentUser, "accounts", "canEdit");
+  _requireFinancePermission_(currentUser);
+  accountPaymentId=String(accountPaymentId||"").trim(); contractId=String(contractId||"").trim();
+  var apSheet=_getOrCreateSheet_("Account_Payments"); _invalidateSheetCache_("Account_Payments");
+  var ap=apSheet.getDataRange().getValues(), row=-1;
+  for (var i=1; i<ap.length; i++) { if (String(ap[i][0])===accountPaymentId && ap[i][10]!==true) { row=i; break; } }
+  if (row<0) throw new Error("لم يتم العثور على الدفعة.");
+  var a=ap[row];
+  // 1) مرتبطة بسداد فندق: موجود ⇒ لا شيء، محذوف ⇒ استعادة
+  if (String(a[12]||"").trim()) {
+    var res=_restoreLinkedHotelReceipt_(a, currentUser);
+    if (res && res.already) throw new Error("هذه الدفعة مرتبطة بالفعل بسداد الفندق #"+res.receiptId+".");
+    if (res) {
+      if (!String(a[11]||"").trim()) apSheet.getRange(row+1,12).setValue(res.hotel);
+      _invalidateSheetCache_("Account_Payments");
+      return { success:true, restored:true, receiptId:res.receiptId, hotelName:res.hotel };
+    }
+    if (!contractId) throw new Error("تعذّرت استعادة سداد الفندق المرتبط (تعاقده محذوف) — اختر التعاقد لربطها من جديد.");
+  }
+  // 2) إنشاء سداد الفندق المقابل (بلا قسط) وربط الطرفين
+  if (!contractId) throw new Error("اختر تعاقد الفندق المسدَّد له.");
+  var hotel=_liveContractHotel_(contractId);
+  if (!hotel) throw new Error("لم يتم العثور على التعاقد (أو أنه محذوف).");
+  var allowed=_getUserAllowedHotels_(currentUser);
+  if (allowed && !allowed[hotel]) throw new Error("ليس لديك صلاحية الوصول لهذا الفندق.");
+  var amount=parseFloat(a[4])||0; if (!(amount>0)) throw new Error("قيمة الدفعة غير صحيحة.");
+  var payDate=a[5] instanceof Date?a[5]:new Date(a[5]); if (isNaN(payDate.getTime())) throw new Error("تاريخ الدفعة غير صحيح.");
+  var statement=String(a[7]||"").trim() || ("دفعة مزدوجة من "+_dualPartyLabel_(a));
+  var rSheet=_getOrCreateSheet_("Contract_Payment_Receipts"), rid=_getNextSequentialId_("RCT-",4);
+  rSheet.appendRow([rid, "", contractId, amount, payDate, statement, "دفعة مزدوجة من "+_dualPartyLabel_(a), currentUser, new Date(), false, accountPaymentId]);
+  _invalidateSheetCache_("Contract_Payment_Receipts");
+  apSheet.getRange(row+1,7).setValue("دفعة مزدوجة");
+  apSheet.getRange(row+1,12).setValue(hotel);
+  apSheet.getRange(row+1,13).setValue(rid);
+  _invalidateSheetCache_("Account_Payments");
+  logAudit("الحسابات","ربط دفعة بفندق",accountPaymentId,"","","","رُبطت دفعة "+_dualPartyLabel_(a)+" #"+accountPaymentId+" بقيمة "+amount.toLocaleString('en-US')+" ر.س كسداد لفندق "+hotel+" (سداد #"+rid+"، تعاقد #"+contractId+"، بلا قسط — يُخصم بالأقدمية)",currentUser);
+  return { success:true, linked:true, receiptId:rid, hotelName:hotel };
+  });
+  } catch(e) { _logError_(_fn, e); throw e; }
+}
+// استعادة كل دفعات طرف المزدوجة التي حُذف سداد الفندق المقابل لها (بنقرة واحدة من كشف حسابه)
+function restorePartyDualPayments(partyType, partyKey, currentUser) { _apiGuard_();
+  var _fn="[restorePartyDualPayments]"; _logInfo_(_fn, "START");
+  try {
+  return _withLock_(function() {
+  _requirePermission_(currentUser, "accounts", "canEdit");
+  _requireFinancePermission_(currentUser);
+  partyType = (partyType==="client") ? "client" : "collection"; partyKey=String(partyKey||"").trim();
+  var apSheet=_getOrCreateSheet_("Account_Payments"); _invalidateSheetCache_("Account_Payments");
+  var ap=apSheet.getDataRange().getValues(), restored=0, skipped=0, total=0, hotels={};
+  for (var i=1; i<ap.length; i++) {
+    var a=ap[i]; if (!a[0] || a[10]===true || String(a[1])!==partyType || String(a[2]||"").trim()!==partyKey || !String(a[12]||"").trim()) continue;
+    var res=_restoreLinkedHotelReceipt_(a, currentUser);
+    if (res && res.already) continue;
+    if (res) { restored++; total+=parseFloat(a[4])||0; hotels[res.hotel]=1; if (!String(a[11]||"").trim()) apSheet.getRange(i+1,12).setValue(res.hotel); }
+    else skipped++;
+  }
+  _invalidateSheetCache_("Account_Payments");
+  return { success:true, restored:restored, skipped:skipped, total:Math.round(total*100)/100, hotels:Object.keys(hotels) };
   });
   } catch(e) { _logError_(_fn, e); throw e; }
 }
@@ -2017,11 +2130,15 @@ function checkDuePaymentsAndNotify(currentUser, force) { _apiGuard_();
   var weekFromNow=new Date(today.getFullYear(),today.getMonth(),today.getDate()+7);
   var tz=_tz_();
   var count=0;
+  var fifoRem=null;
+  try { var sAll=_hotelSchedulesFifo_(null, null); fifoRem={}; Object.keys(sAll).forEach(function(h){ sAll[h].items.forEach(function(it){ if (it.paymentId) fifoRem[it.paymentId]=it.remaining; }); }); } catch(eF) { fifoRem=null; }
   for (var i=1; i<paymentsData.length; i++) {
     var row=paymentsData[i];
     if (!row[0]||row[9]===true) continue;
     var amount=parseFloat(row[2])||0, paidAmount=parseFloat(row[4])||0;
-    if (paidAmount>=amount) continue; // مسدد بالكامل - لا حاجة لتنبيه
+    // V3.79 — المسدد حسب الخصم بالأقدمية على مستوى الفندق (كما في جدول الاستحقاقات)؛ يرجع للقيمة المسجَّلة على القسط عند تعذّره
+    if (fifoRem && Object.prototype.hasOwnProperty.call(fifoRem, String(row[0]))) paidAmount = amount - fifoRem[String(row[0])];
+    if (paidAmount>=amount-0.005) continue; // مسدد بالكامل - لا حاجة لتنبيه
     var dueDate=_dateOnly_(row[3] instanceof Date?row[3]:new Date(row[3]));
     if (dueDate>weekFromNow) continue; // لم يحن وقت التنبيه بعد (أكثر من أسبوع متبقٍ)
     var contractId=row[1], hotelName=contractHotelMap[contractId]||"", party=contractPartyMap[contractId]||"";
@@ -5089,7 +5206,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.78";
+var APP_VERSION = "V3.79";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -6774,6 +6891,14 @@ function _perfDiag_() {
     } catch (eM) {}
     // V3.62 — حجوزات تشغل ليلة "يوم تسليم" تعاقد (تاريخ نهايته) بلا تعاقد آخر يغطيها: كانت تُعدّ ضمن الطاقة قبل توحيد القاعدة
     try { d.bookingsOnHandoverNight = _bookingsOnHandoverNight_().length; } catch (eH) {}
+    // V3.79 — دفعات مزدوجة فقد جانب الفندق فيها (حُذف سدادها مع قسطها)، أقساط أنشأها النظام من دفعات، ودفعات فنادق بلا قسط
+    try {
+      var apD = _getSheetValues_("Account_Payments"), rcD2 = _getSheetValues_("Contract_Payment_Receipts"), cpD = _getSheetValues_("Contract_Payments"), rdel = {}, nLost = 0, nAuto = 0, nUn = 0;
+      for (var rq = 1; rq < rcD2.length; rq++) { if (rcD2[rq][0]) { rdel[String(rcD2[rq][0])] = rcD2[rq][9] === true; if (rcD2[rq][9] !== true && !String(rcD2[rq][1] || "")) nUn++; } }
+      for (var aq = 1; aq < apD.length; aq++) { var lk = String(apD[aq][12] || ""); if (apD[aq][0] && apD[aq][10] !== true && lk && rdel[lk] !== false) nLost++; }
+      for (var cq = 1; cq < cpD.length; cq++) { if (cpD[cq][0] && cpD[cq][9] !== true && /^(قسط أُنشئ تلقائياً|دفعة مزدوجة من)/.test(String(cpD[cq][6] || ""))) nAuto++; }
+      d.dualPaymentsMissingHotelSide = nLost; d.autoCreatedInstallments = nAuto; d.unassignedHotelReceipts = nUn;
+    } catch (eDL) {}
     // V3.75 — صفوف تفضيلات مكررة لنفس (مستخدم، مفتاح): كانت تجعل التفضيل المحفوظ لا يظهر بعد الدخول
     try { var up = _getSheetValues_("User_Preferences"), seenP = {}, dupP = 0; for (var ui = 1; ui < up.length; ui++) { var kk = up[ui][0] + "\u0001" + up[ui][1]; if (seenP[kk]) dupP++; else seenP[kk] = 1; } d.duplicatePrefRows = dupP; } catch (eU) {}
     // V3.73 — أطراف تظهر بالحسابات بلا حجوزات سارية (أعداد فقط، بلا أسماء): كم منها له دفعات، وكم سبق له حجز أُلغي/حُذف
@@ -7726,7 +7851,7 @@ function _hotelSchedulesFifo_(allowed, onlyHotel) {
     if (onlyHotel && hn !== onlyHotel) continue;
     if (allowed && !allowed[hn]) continue;
     var sd = toD(c[3]), ed = toD(c[4]);
-    contracts[String(c[0])] = { id: String(c[0]), hotel: hn, startT: sd ? sd.getTime() : 0, endT: ed ? ed.getTime() : 0, value: parseFloat(c[8]) || 0, scheduled: 0, type: String(c[14] || "") };
+    contracts[String(c[0])] = { id: String(c[0]), hotel: hn, startT: sd ? sd.getTime() : 0, endT: ed ? ed.getTime() : 0, value: parseFloat(c[8]) || 0, scheduled: 0, type: String(c[14] || ""), parent: String(c[15] || "").trim() };
     if (!hotels[hn]) hotels[hn] = { items: [], receipts: [], warnings: [] };
   }
   for (var j = 1; j < pData.length; j++) {
@@ -7735,12 +7860,23 @@ function _hotelSchedulesFifo_(allowed, onlyHotel) {
     var amt = parseFloat(p[2]) || 0; if (!(amt > 0)) continue;
     var dd = toD(p[3]);
     ct.scheduled += amt;
-    hotels[ct.hotel].items.push({ kind: "installment", paymentId: String(p[0]), contractId: ct.id, amount: r2(amt), dueT: dd ? dd.getTime() : ct.startT, notes: String(p[6] || "") });
+    var pNotes = String(p[6] || "");
+    hotels[ct.hotel].items.push({ kind: "installment", paymentId: String(p[0]), contractId: ct.id, amount: r2(amt), dueT: dd ? dd.getTime() : ct.startT, notes: pNotes,
+      autoCreated: /^(قسط أُنشئ تلقائياً|دفعة مزدوجة من)/.test(pNotes) }); // V3.79 — أقساط أنشأها النظام قديماً من دفعات (ليست مستحقات فعلية)
   }
-  Object.keys(contracts).forEach(function(id) {
-    var ct = contracts[id], rest = r2(ct.value - ct.scheduled);
-    if (rest > 0.005) hotels[ct.hotel].items.push({ kind: "unscheduled", paymentId: "", contractId: id, amount: rest, dueT: ct.startT, notes: "" });
-    else if (rest < -0.005) hotels[ct.hotel].warnings.push("أقساط التعاقد #" + id + " تزيد عن قيمته بـ " + Math.abs(rest).toLocaleString("en-US") + " ر.س — الجدول يعتمد الأقساط المسجّلة.");
+  // V3.79 — ما لم يُجدوَل يُحسب على مستوى الفندق لا كل تعاقد وحده: التعاقد الإضافي (أو أي تعاقد) قد تُسجَّل أقساطه ضمن أقساط
+  // التعاقد الأساسي (توزيع تكلفة واحدة على فترتين)، فكان يظهر كامل قيمته "غير مجدول" مع أنه مغطّى. الزيادة في أقساط تعاقد تغطي
+  // نقص غيره لنفس الفندق (الأقدم بداية أولاً)، ولا يظهر "غير مجدول" إلا ما يزيد به إجمالي قيم التعاقدات عن إجمالي الأقساط.
+  Object.keys(hotels).forEach(function(hn) {
+    var ids = Object.keys(contracts).filter(function(id) { return contracts[id].hotel === hn; })
+      .sort(function(a, b) { return (contracts[a].startT - contracts[b].startT) || idCmp(a, b); });
+    var surplus = 0, short = [];
+    ids.forEach(function(id) { var ct = contracts[id], rest = r2(ct.value - ct.scheduled); if (rest < -0.005) surplus = r2(surplus - rest); else if (rest > 0.005) short.push({ id: id, rest: rest }); });
+    short.forEach(function(x) {
+      var cover = Math.min(surplus, x.rest); surplus = r2(surplus - cover); var left = r2(x.rest - cover);
+      if (left > 0.005) hotels[hn].items.push({ kind: "unscheduled", paymentId: "", contractId: x.id, amount: left, dueT: contracts[x.id].startT, notes: "" });
+    });
+    if (surplus > 0.005) hotels[hn].warnings.push("إجمالي الأقساط المسجّلة يزيد عن إجمالي قيم تعاقدات الفندق بـ " + surplus.toLocaleString("en-US") + " ر.س — راجع الأقساط (خاصة ما أُنشئ تلقائياً من دفعات ⚙️).");
   });
   for (var k = 1; k < rData.length; k++) {
     var r = rData[k]; if (!r[0] || r[9] === true) continue;
@@ -7782,7 +7918,7 @@ function _hotelSchedulesFifo_(allowed, onlyHotel) {
         dueDate: fmt(it.dueT), dueIso: it.dueT ? _fmtDate_(new Date(it.dueT), tz, "yyyy-MM-dd") : "", future: it.dueT >= todayT,
         amount: it.amount, allocated: alloc, remaining: remaining, status: status, overdue: !!overdue,
         overdueDays: overdue ? Math.round((todayT - it.dueT) / 86400000) : 0,
-        settledOn: fmt(settledT), lateDays: lateDays,
+        settledOn: fmt(settledT), lateDays: lateDays, autoCreated: !!it.autoCreated,
         outstandingThrough: r2(Math.max(0, cumDue - totalPaid)), notes: it.notes
       };
     });
@@ -7792,7 +7928,7 @@ function _hotelSchedulesFifo_(allowed, onlyHotel) {
       var inst = dueByPid[x.paymentId];
       return { receiptId: x.id, amount: r2(x.amount), payDate: fmt(x.t), payDateIso: x.t ? _fmtDate_(new Date(x.t), tz, "yyyy-MM-dd") : "",
         statement: x.statement, notes: x.notes, createdBy: x.createdBy, linkedAccountPaymentId: x.linked,
-        contractId: x.contractId, paymentId: x.paymentId, installmentDue: inst ? fmt(inst.dueT) : "", orphan: !inst };
+        contractId: x.contractId, paymentId: x.paymentId, installmentDue: inst ? fmt(inst.dueT) : "", orphan: !!x.paymentId && !inst, unassigned: !x.paymentId };
     });
     var contractsOut = Object.keys(contracts).filter(function(id) { return contracts[id].hotel === hn; })
       .sort(function(a, b) { return (contracts[a].startT - contracts[b].startT) || idCmp(a, b); })
@@ -7965,6 +8101,8 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
 
   // 2) الدفعات المسدَّدة (دائن) — تُستبعد عند فلتر فندق محدَّد أي دفعة عامة أو مخصَّصة لفندق آخر
   var pData = _getSheetValues_("Account_Payments");
+  var rcState = {}; // V3.79 — حالة سداد الفندق المقابل لكل دفعة مزدوجة: ok / deleted
+  try { var rcD = _getSheetValues_("Contract_Payment_Receipts"); for (var rz=1; rz<rcD.length; rz++) { if (rcD[rz][0]) rcState[String(rcD[rz][0])] = rcD[rz][9]===true ? "deleted" : "ok"; } } catch (eRc) {}
   for (var j=1; j<pData.length; j++) {
     var p = pData[j];
     if (!p[0] || p[10]===true) continue;
@@ -7988,6 +8126,7 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
       amount: Math.round(amt*100)/100,
       paymentDateIso: isNaN(pd2.getTime()) ? "" : _fmtDate_(pd2, tz, "yyyy-MM-dd"),
       linkedHotelReceiptId: linkedReceiptId,
+      hotelSide: linkedReceiptId ? (rcState[linkedReceiptId] || "missing") : "", // V3.79
       debit: 0,
       credit: Math.round(amt*100)/100
     });
