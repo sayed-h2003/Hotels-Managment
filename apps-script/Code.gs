@@ -619,6 +619,7 @@ function _apiTable_() {
     getNusukAgreementDetails: { f: getNusukAgreementDetails, u: 1 },
     getNusukGridData: { f: getNusukGridData, u: 4 },
     getAccountsSummary: { f: getAccountsSummary, u: 1 },
+    getHotelPaymentSchedule: { f: getHotelPaymentSchedule, u: 1 },
     getAccountStatement: { f: getAccountStatement, u: 2 },
     saveAccountPayment: { f: saveAccountPayment, u: 1 },
     deleteAccountPayment: { f: deleteAccountPayment, u: 1 }
@@ -1866,6 +1867,7 @@ function editContractPaymentReceipt(p, currentUser) { _apiGuard_();
   var payDate=new Date(p.payDate);
   var statement=String(p.statement||"").trim();
   var notes=String(p.notes||"").trim();
+  var newPid=String(p.paymentId||"").trim(); // V3.78 — اختياري: نقل الدفعة لقسط آخر (من تعاقدات الفندق نفسه)
   if (!editId) throw new Error("لم يتم تحديد الدفعة.");
   if (amount<=0) throw new Error("قيمة الدفعة يجب أن تكون أكبر من صفر.");
   if (isNaN(payDate.getTime())) throw new Error("تاريخ الدفعة غير صحيح.");
@@ -1873,10 +1875,25 @@ function editContractPaymentReceipt(p, currentUser) { _apiGuard_();
   var data=sheet.getDataRange().getValues();
   for (var i=1; i<data.length; i++) {
     if (String(data[i][0])===editId && data[i][9]!==true) {
-      var paymentId=data[i][1], contractId=data[i][2];
+      var paymentId=data[i][1], contractId=data[i][2], movedTo=null;
+      if (newPid && newPid!==String(paymentId)) {
+        var cpData=_getOrCreateSheet_("Contract_Payments").getDataRange().getValues(), newCid=null;
+        for (var q=1; q<cpData.length; q++) { if (String(cpData[q][0])===newPid && cpData[q][9]!==true) { newCid=String(cpData[q][1]); break; } }
+        if (!newCid) throw new Error("القسط المطلوب النقل إليه غير موجود أو محذوف.");
+        var hMap=_buildContractHotelMap_();
+        if (String(hMap[newCid]||"")!==String(hMap[contractId]||"")) throw new Error("لا يمكن نقل الدفعة إلى تعاقد فندق آخر.");
+        var allowedH=_getUserAllowedHotels_(currentUser);
+        if (allowedH && !allowedH[hMap[newCid]]) throw new Error("ليس لديك صلاحية الوصول لهذا الفندق.");
+        sheet.getRange(i+1,2,1,2).setValues([[newPid,newCid]]);
+        movedTo={paymentId:newPid, contractId:newCid};
+      }
       sheet.getRange(i+1,4,1,4).setValues([[amount,payDate,statement,notes]]);
       _recalcContractPaymentPaidAmount_(paymentId);
-      logAudit("التعاقدات","تعديل سداد",contractId,"","","","تم تعديل دفعة سداد #"+editId+" على القسط #"+paymentId+" — القيمة الآن: "+amount.toLocaleString('en-US')+" ر.س",currentUser);
+      if (movedTo) {
+        _recalcContractPaymentPaidAmount_(movedTo.paymentId);
+        logAudit("التعاقدات","نقل سداد",movedTo.contractId,"","","","نُقلت دفعة السداد #"+editId+" من القسط #"+paymentId+" (تعاقد #"+contractId+") إلى القسط #"+movedTo.paymentId+" (تعاقد #"+movedTo.contractId+")",currentUser);
+      }
+      logAudit("التعاقدات","تعديل سداد",(movedTo?movedTo.contractId:contractId),"","","","تم تعديل دفعة سداد #"+editId+" على القسط #"+(movedTo?movedTo.paymentId:paymentId)+" — القيمة الآن: "+amount.toLocaleString('en-US')+" ر.س",currentUser);
       return {success:true};
     }
   }
@@ -5072,7 +5089,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.77";
+var APP_VERSION = "V3.78";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -7646,6 +7663,13 @@ function getAccountsSummary(partyType, currentUser, hotelFilter, fromIso, toIso)
         balance: Math.round((due-paid)*100)/100
       });
     });
+    // V3.78 — المتأخر حتى اليوم وأقرب استحقاق لكل فندق (خصم بالأقدمية). بلا فلتر فترة فقط: الحساب يحتاج كل التاريخ
+    if (!fromDate && !toDate) {
+      try {
+        var sch = _hotelSchedulesFifo_(allowed, null);
+        outH.forEach(function(o) { var s = sch[o.partyKey]; if (s) o.sched = { overdue: s.overdue, overdueCount: s.overdueCount, oldestOverdue: s.oldestOverdue, next30: s.next30, nextDue: s.nextDue }; });
+      } catch (eS) { _logError_("[getAccountsSummary→sched]", eS); }
+    }
     outH.sort(function(a,b){ return String(a.partyName).localeCompare(String(b.partyName), 'ar'); });
     return outH;
   }
@@ -7678,6 +7702,127 @@ function getAccountsSummary(partyType, currentUser, hotelFilter, fromIso, toIso)
   });
   out.sort(function(a,b){ return String(a.partyName).localeCompare(String(b.partyName), 'ar'); });
   return out;
+  } catch(e) { _logError_(_fn, e); throw e; }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════
+// V3.78 — جدول استحقاقات الفندق (خصم بالأقدمية — FIFO) على مستوى كل تعاقداته معاً
+// كل أقساط تعاقدات الفندق (+ ما لم يُجدوَل من قيمة كل تعاقد كبند بتاريخ بدايته) مرتبة بتاريخ الاستحقاق، ويُخصم إجمالي ما سُدِّد
+// فعلاً للفندق منها بالترتيب (الأقدم أولاً) بصرف النظر عن القسط الذي سُجّلت عليه الدفعة. فيظهر لكل قسط: المخصوم منه، المتبقي عليه،
+// حالته (مسدد بالكامل/جزئياً/متأخر/قادم)، تاريخ اكتمال سداده، والمتبقي التراكمي حتى استحقاقه.
+// لا فلتر فترة: الخصم بالأقدمية يحتاج كل التاريخ. التعاقدات المحذوفة ودفعاتها مستبعدة (كما في كشف الحساب).
+// ══════════════════════════════════════════════════════════════════════════════════════════════════
+function _hotelSchedulesFifo_(allowed, onlyHotel) {
+  var tz = _tz_(), today = _dateOnly_(new Date()), todayT = today.getTime(), in30 = todayT + 30 * 86400000;
+  var cData = _getSheetValues_("Contracts_Master"), pData = _getSheetValues_("Contract_Payments"), rData = _getSheetValues_("Contract_Payment_Receipts");
+  var toD = function(v) { var d = v instanceof Date ? v : (v ? new Date(v) : null); return (d && !isNaN(d.getTime())) ? _dateOnly_(d) : null; };
+  var fmt = function(t) { return t ? _fmtDate_(new Date(t), tz, "dd/MM/yyyy") : ""; };
+  var r2 = function(x) { return Math.round(x * 100) / 100; };
+  var idCmp = function(a, b) { return String(a).localeCompare(String(b), undefined, { numeric: true }); };
+  var contracts = {}, hotels = {};
+  for (var i = 1; i < cData.length; i++) {
+    var c = cData[i]; if (!c[0] || c[12] === true) continue;
+    var hn = String(c[1] || "").trim(); if (!hn) continue;
+    if (onlyHotel && hn !== onlyHotel) continue;
+    if (allowed && !allowed[hn]) continue;
+    var sd = toD(c[3]), ed = toD(c[4]);
+    contracts[String(c[0])] = { id: String(c[0]), hotel: hn, startT: sd ? sd.getTime() : 0, endT: ed ? ed.getTime() : 0, value: parseFloat(c[8]) || 0, scheduled: 0, type: String(c[14] || "") };
+    if (!hotels[hn]) hotels[hn] = { items: [], receipts: [], warnings: [] };
+  }
+  for (var j = 1; j < pData.length; j++) {
+    var p = pData[j]; if (!p[0] || p[9] === true) continue;
+    var ct = contracts[String(p[1])]; if (!ct) continue;
+    var amt = parseFloat(p[2]) || 0; if (!(amt > 0)) continue;
+    var dd = toD(p[3]);
+    ct.scheduled += amt;
+    hotels[ct.hotel].items.push({ kind: "installment", paymentId: String(p[0]), contractId: ct.id, amount: r2(amt), dueT: dd ? dd.getTime() : ct.startT, notes: String(p[6] || "") });
+  }
+  Object.keys(contracts).forEach(function(id) {
+    var ct = contracts[id], rest = r2(ct.value - ct.scheduled);
+    if (rest > 0.005) hotels[ct.hotel].items.push({ kind: "unscheduled", paymentId: "", contractId: id, amount: rest, dueT: ct.startT, notes: "" });
+    else if (rest < -0.005) hotels[ct.hotel].warnings.push("أقساط التعاقد #" + id + " تزيد عن قيمته بـ " + Math.abs(rest).toLocaleString("en-US") + " ر.س — الجدول يعتمد الأقساط المسجّلة.");
+  });
+  for (var k = 1; k < rData.length; k++) {
+    var r = rData[k]; if (!r[0] || r[9] === true) continue;
+    var rc = contracts[String(r[2])]; if (!rc) continue;
+    var pd = toD(r[4]);
+    hotels[rc.hotel].receipts.push({ amount: parseFloat(r[3]) || 0, t: pd ? pd.getTime() : 0, id: String(r[0]), paymentId: String(r[1] || ""), contractId: rc.id,
+      statement: String(r[5] || ""), notes: String(r[6] || ""), createdBy: String(r[7] || ""), linked: String(r[10] || "") });
+  }
+  var out = {};
+  Object.keys(hotels).forEach(function(hn) {
+    var H = hotels[hn];
+    H.items.sort(function(a, b) {
+      return (a.dueT - b.dueT) || ((contracts[a.contractId].startT) - (contracts[b.contractId].startT)) || idCmp(a.contractId, b.contractId)
+        || ((a.kind === "unscheduled" ? 1 : 0) - (b.kind === "unscheduled" ? 1 : 0)) || idCmp(a.paymentId, b.paymentId);
+    });
+    H.receipts.sort(function(a, b) { return (a.t - b.t) || idCmp(a.id, b.id); });
+    var totalPaid = 0; H.receipts.forEach(function(x) { totalPaid += x.amount; }); totalPaid = r2(totalPaid);
+    var pool = totalPaid, cumDue = 0, ri = 0, cumPaid = 0;
+    var tot = { totalDue: 0, overdue: 0, next30: 0, paidCount: 0, partialCount: 0, openCount: 0, overdueCount: 0 }, nextDue = null, oldestOverdue = null;
+    var items = H.items.map(function(it, idx) {
+      var ct = contracts[it.contractId];
+      cumDue = r2(cumDue + it.amount); tot.totalDue = r2(tot.totalDue + it.amount);
+      var alloc = r2(Math.min(Math.max(pool, 0), it.amount)); pool = r2(pool - alloc);
+      var remaining = r2(it.amount - alloc);
+      // تاريخ اكتمال سداده = تاريخ الدفعة التي بلغ عندها إجمالي المسدد تراكمياً إجمالي المستحق حتى هذا القسط
+      var settledT = 0;
+      if (remaining <= 0.005) { while (ri < H.receipts.length && cumPaid < cumDue - 0.005) { cumPaid = r2(cumPaid + H.receipts[ri].amount); ri++; } if (cumPaid >= cumDue - 0.005 && ri > 0) settledT = H.receipts[ri - 1].t; }
+      var status = remaining <= 0.005 ? "paid" : (alloc > 0.005 ? "partial" : "unpaid");
+      var overdue = remaining > 0.005 && it.dueT && it.dueT < todayT;
+      if (status === "paid") tot.paidCount++; else { tot.openCount++; if (status === "partial") tot.partialCount++; }
+      if (overdue) { tot.overdue = r2(tot.overdue + remaining); tot.overdueCount++; if (!oldestOverdue) oldestOverdue = it.dueT; }
+      if (remaining > 0.005 && it.dueT >= todayT && it.dueT < in30) tot.next30 = r2(tot.next30 + remaining);
+      if (remaining > 0.005 && it.dueT >= todayT && !nextDue) nextDue = { date: fmt(it.dueT), amount: remaining };
+      var lateDays = (it.kind === "installment" && settledT && it.dueT && settledT > it.dueT) ? Math.round((settledT - it.dueT) / 86400000) : 0; // غير المجدول بلا موعد فعلي: لا "تأخير"
+      return {
+        n: idx + 1, kind: it.kind, paymentId: it.paymentId, contractId: it.contractId,
+        contractLabel: "تعاقد #" + it.contractId + (ct.type && ct.type !== "رئيسي" ? " (" + ct.type + ")" : ""),
+        contractPeriod: fmt(ct.startT) + " ← " + fmt(ct.endT),
+        dueDate: fmt(it.dueT), dueIso: it.dueT ? _fmtDate_(new Date(it.dueT), tz, "yyyy-MM-dd") : "", future: it.dueT >= todayT,
+        amount: it.amount, allocated: alloc, remaining: remaining, status: status, overdue: !!overdue,
+        overdueDays: overdue ? Math.round((todayT - it.dueT) / 86400000) : 0,
+        settledOn: fmt(settledT), lateDays: lateDays,
+        outstandingThrough: r2(Math.max(0, cumDue - totalPaid)), notes: it.notes
+      };
+    });
+    // V3.78 — كل دفعات الفندق المسددة (للتعديل/النقل/الحذف من مستوى الفندق ككل) + تعاقداته (لقائمة النقل)
+    var dueByPid = {}; H.items.forEach(function(it) { if (it.paymentId) dueByPid[it.paymentId] = it; });
+    var receiptsOut = H.receipts.map(function(x) {
+      var inst = dueByPid[x.paymentId];
+      return { receiptId: x.id, amount: r2(x.amount), payDate: fmt(x.t), payDateIso: x.t ? _fmtDate_(new Date(x.t), tz, "yyyy-MM-dd") : "",
+        statement: x.statement, notes: x.notes, createdBy: x.createdBy, linkedAccountPaymentId: x.linked,
+        contractId: x.contractId, paymentId: x.paymentId, installmentDue: inst ? fmt(inst.dueT) : "", orphan: !inst };
+    });
+    var contractsOut = Object.keys(contracts).filter(function(id) { return contracts[id].hotel === hn; })
+      .sort(function(a, b) { return (contracts[a].startT - contracts[b].startT) || idCmp(a, b); })
+      .map(function(id) { var ct = contracts[id]; return { contractId: id, label: "تعاقد #" + id + " (" + fmt(ct.startT) + " ← " + fmt(ct.endT) + ")", value: r2(ct.value), scheduled: r2(ct.scheduled) }; });
+    out[hn] = {
+      hotel: hn, items: items, receipts: receiptsOut, contracts: contractsOut, warnings: H.warnings, today: fmt(todayT),
+      contractsCount: Object.keys(contracts).filter(function(id) { return contracts[id].hotel === hn; }).length,
+      receiptsCount: H.receipts.length,
+      totalDue: tot.totalDue, totalPaid: totalPaid, balance: r2(tot.totalDue - totalPaid), credit: r2(Math.max(0, totalPaid - tot.totalDue)),
+      overdue: tot.overdue, overdueCount: tot.overdueCount, oldestOverdue: fmt(oldestOverdue), next30: tot.next30, nextDue: nextDue,
+      paidCount: tot.paidCount, partialCount: tot.partialCount, openCount: tot.openCount,
+      paidPct: tot.totalDue > 0 ? Math.min(100, Math.round(totalPaid / tot.totalDue * 1000) / 10) : 0
+    };
+  });
+  return out;
+}
+
+// تناديها الواجهة: جدول استحقاقات فندق واحد (يتطلب صلاحية الحسابات + الجانب المالي + الفندق ضمن المسموح)
+function getHotelPaymentSchedule(hotelName, currentUser) { _apiGuard_();
+  var _fn="[getHotelPaymentSchedule]"; _logInfo_(_fn, "START | hotelName:"+String(JSON.stringify(hotelName)||"").slice(0, 80));
+  try {
+  hotelName = String(hotelName || "").trim();
+  if (!hotelName) throw new Error("لم يُحدَّد الفندق.");
+  _requirePermission_(currentUser, "accounts", "canView");
+  _requireFinancePermission_(currentUser);
+  var allowed = _getUserAllowedHotels_(currentUser);
+  if (allowed && !allowed[hotelName]) throw new Error("ليس لديك صلاحية الوصول لهذا الفندق.");
+  var m = _hotelSchedulesFifo_(allowed, hotelName);
+  return m[hotelName] || { hotel: hotelName, items: [], receipts: [], contracts: [], warnings: [], today: _fmtDate_(new Date(), _tz_(), "dd/MM/yyyy"), contractsCount: 0, receiptsCount: 0,
+    totalDue: 0, totalPaid: 0, balance: 0, credit: 0, overdue: 0, overdueCount: 0, oldestOverdue: "", next30: 0, nextDue: null, paidCount: 0, partialCount: 0, openCount: 0, paidPct: 0 };
   } catch(e) { _logError_(_fn, e); throw e; }
 }
 
@@ -7741,7 +7886,7 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
       var linkedAp = String(rrow[10]||"").trim();
       totalPaidH += amt;
       rowsH.push({
-        kind: "receipt", refId: rrow[0], contractId: rrow[2],
+        kind: "receipt", refId: rrow[0], contractId: rrow[2], paymentId: String(rrow[1] || ""),
         sortKey: isNaN(pd.getTime()) ? 0 : pd.getTime(),
         date: isNaN(pd.getTime()) ? "" : _fmtDate_(pd, tz, "dd/MM/yyyy"),
         payDateIso: isNaN(pd.getTime()) ? "" : _fmtDate_(pd, tz, "yyyy-MM-dd"),
