@@ -85,6 +85,10 @@ const SHEET_SCHEMAS = {
   "Account_Payments":    ["Payment_ID", "Party_Type", "Party_Key", "Party_Name", "Amount", "Payment_Date",
                            "Method", "Notes", "Created_By", "Created_At", "Is_Deleted", "Hotel_Name",
                            "Linked_Hotel_Receipt_ID"],
+  // V3.80 — مرفقات الدفعات (صور/PDF إيصالات السداد): Kind = account (دفعة عميل/جهة) أو receipt (سداد فندق)
+  // الملف نفسه خاص على Drive (بلا رابط عام) ويُعرض عبر البرنامج فقط؛ في الدفعة المزدوجة يظهر المرفق عند الطرفين معاً
+  "Payment_Attachments": ["Attachment_ID", "Kind", "Ref_ID", "File_ID", "File_Name", "Mime_Type", "Size",
+                           "Uploaded_By", "Uploaded_At", "Is_Deleted"],
   // v3.44 — قياس أداء الخادم (يجمع قياس الخادم نفسه + قياس رحلة المتصفح الكاملة معاً):
   // تجميع كل 10 دقائق (عدد/مجموع المدة/أقصى/فشل) لكل دالة، يُفرَّغ من الكاش عبر مشغّل زمني
   "Perf":     ["Day", "Hour", "Function", "Count", "Sum_Duration_Ms", "Max_Ms", "Fails", "Version"],
@@ -523,6 +527,10 @@ function _apiTable_() {
     editContractPaymentReceipt: { f: editContractPaymentReceipt, u: 1 },
     deleteContractPaymentReceipt: { f: deleteContractPaymentReceipt, u: 1 },
     saveDualPayment: { f: saveDualPayment, u: 1 },
+    uploadPaymentAttachment: { f: uploadPaymentAttachment, u: 5 },
+    listPaymentAttachments: { f: listPaymentAttachments, u: 2 },
+    getPaymentAttachmentData: { f: getPaymentAttachmentData, u: 1 },
+    deletePaymentAttachment: { f: deletePaymentAttachment, u: 1 },
     linkAccountPaymentToHotel: { f: linkAccountPaymentToHotel, u: 2 },
     restorePartyDualPayments: { f: restorePartyDualPayments, u: 2 },
     checkDuePaymentsAndNotify: { f: checkDuePaymentsAndNotify, u: 0 },
@@ -2019,6 +2027,138 @@ function saveDualPayment(p, currentUser) { _apiGuard_();
 //   (بلا قسط — يُخصم بالأقدمية) بنفس مبلغها وتاريخها وبيانها.
 // • دفعة عادية سُدّدت فعلاً لفندق: تُربط به (يُنشأ سداد الفندق المقابل بلا قسط ويُربط الطرفان).
 // ══════════════════════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// V3.80 — مرفقات الدفعات (إيصالات السداد)
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+var _ATT_SHEET = "Payment_Attachments", _ATT_MAX_BYTES = 8 * 1024 * 1024, _ATT_MAX_PER_PAYMENT = 12;
+var _ATT_MIME_RE = /^(image\/(jpeg|png|webp|gif|heic|heif)|application\/pdf)$/;
+function _ensureReceiptsFolder_() {
+  var props = PropertiesService.getScriptProperties(), root = _ensureAppRootFolder_(), id = props.getProperty("RECEIPTS_FOLDER_ID");
+  if (id) { try { var f = DriveApp.getFolderById(id); if (f.getName() !== "إيصالات السداد") f.setName("إيصالات السداد"); return f; } catch (e) {} }
+  var nf = root.createFolder("إيصالات السداد");
+  props.setProperty("RECEIPTS_FOLDER_ID", nf.getId());
+  return nf;
+}
+// عدد المرفقات لكل (نوع:رقم) — بلا إنشاء الشيت إن لم يوجد بعد
+function _attCountMap_() {
+  var m = {};
+  try {
+    if (!_getSS_().getSheetByName(_ATT_SHEET)) return m;
+    var d = _getSheetValues_(_ATT_SHEET);
+    for (var i = 1; i < d.length; i++) { if (d[i][0] && d[i][9] !== true) { var k = String(d[i][1]) + ":" + String(d[i][2]); m[k] = (m[k] || 0) + 1; } }
+  } catch (e) {}
+  return m;
+}
+function _attCount_(m, kind, ref, linkedKind, linkedRef) {
+  return (m[kind + ":" + String(ref || "")] || 0) + (linkedRef ? (m[linkedKind + ":" + String(linkedRef)] || 0) : 0);
+}
+// يحدد الدفعة صاحبة المرفقات وطرفها المرتبط (الدفعة المزدوجة) وفندقها
+function _attRef_(kind, refId) {
+  kind = (kind === "receipt") ? "receipt" : "account"; refId = String(refId || "").trim();
+  if (!refId) throw new Error("لم تُحدَّد الدفعة.");
+  if (kind === "account") {
+    var a = _getSheetValues_("Account_Payments");
+    for (var i = 1; i < a.length; i++) if (String(a[i][0]) === refId && a[i][10] !== true)
+      return { kind: kind, refId: refId, linkedKind: "receipt", linkedRef: String(a[i][12] || ""), hotel: String(a[i][11] || ""), amount: parseFloat(a[i][4]) || 0 };
+  } else {
+    var r = _getSheetValues_("Contract_Payment_Receipts");
+    for (var j = 1; j < r.length; j++) if (String(r[j][0]) === refId && r[j][9] !== true)
+      return { kind: kind, refId: refId, linkedKind: "account", linkedRef: String(r[j][10] || ""), hotel: String(_buildContractHotelMap_()[r[j][2]] || ""), amount: parseFloat(r[j][3]) || 0 };
+  }
+  throw new Error("لم يتم العثور على الدفعة (أو أنها محذوفة).");
+}
+function _attPerm_(currentUser, ref, write) {
+  if (ref.kind === "account") {
+    if (write) { try { _requirePermission_(currentUser, "accounts", "canEdit"); } catch (e) { _requirePermission_(currentUser, "accounts", "canAdd"); } }
+    else _requirePermission_(currentUser, "accounts", "canView");
+  } else { _requirePermission_(currentUser, "accounts", "canView"); _requireFinancePermission_(currentUser); }
+  var allowed = _getUserAllowedHotels_(currentUser);
+  if (allowed && ref.hotel && !allowed[ref.hotel]) throw new Error("ليس لديك صلاحية الوصول لهذا الفندق.");
+}
+function _attRowObj_(row, ref) {
+  var tz = _tz_(), at = row[8] instanceof Date ? row[8] : new Date(row[8]);
+  return { attachmentId: String(row[0]), kind: String(row[1]), refId: String(row[2]), name: String(row[4] || ""), mime: String(row[5] || ""), size: Number(row[6]) || 0,
+    uploadedBy: String(row[7] || ""), uploadedAt: isNaN(at.getTime()) ? "" : _fmtDate_(at, tz, "dd/MM/yyyy HH:mm"),
+    linked: !!ref && !(String(row[1]) === ref.kind && String(row[2]) === ref.refId) };
+}
+// تناديها الواجهة: رفع مرفق لدفعة (base64). الصور تُضغط في المتصفح قبل الرفع
+function uploadPaymentAttachment(kind, refId, fileName, mimeType, base64Data, currentUser) { _apiGuard_();
+  var _fn = "[uploadPaymentAttachment]"; _logInfo_(_fn, "START | " + kind + ":" + String(refId || "").slice(0, 30));
+  try {
+  var ref = _attRef_(kind, refId);
+  _attPerm_(currentUser, ref, true);
+  mimeType = String(mimeType || "").toLowerCase().trim();
+  if (!_ATT_MIME_RE.test(mimeType)) throw new Error("نوع الملف غير مدعوم — صورة (JPG/PNG/WEBP/HEIC) أو PDF فقط.");
+  var bytes = Utilities.base64Decode(String(base64Data || ""));
+  if (!bytes || !bytes.length) throw new Error("الملف فارغ.");
+  if (bytes.length > _ATT_MAX_BYTES) throw new Error("حجم الملف أكبر من 8 ميجابايت.");
+  var counts = _attCountMap_();
+  if (_attCount_(counts, ref.kind, ref.refId, ref.linkedKind, ref.linkedRef) >= _ATT_MAX_PER_PAYMENT) throw new Error("الحد الأقصى " + _ATT_MAX_PER_PAYMENT + " مرفقاً للدفعة الواحدة.");
+  var clean = String(fileName || "إيصال").replace(/[\\\/:*?"<>|\u0000-\u001f]/g, "_").slice(0, 80) || "إيصال";
+  var stamp = _fmtDate_(new Date(), _tz_(), "yyyyMMdd-HHmmss");
+  var blob = Utilities.newBlob(bytes, mimeType, ref.kind + "_" + ref.refId + "_" + stamp + "_" + clean);
+  var file = _ensureReceiptsFolder_().createFile(blob); // خاص: لا مشاركة ولا رابط عام
+  var id = _getNextSequentialId_("ATT-", 5), sheet = _getOrCreateSheet_(_ATT_SHEET);
+  sheet.appendRow([id, ref.kind, ref.refId, file.getId(), clean, mimeType, bytes.length, currentUser, new Date(), false]);
+  _invalidateSheetCache_(_ATT_SHEET);
+  logAudit("الحسابات", "إرفاق إيصال", ref.refId, "", "", "", "إرفاق " + (mimeType === "application/pdf" ? "ملف PDF" : "صورة") + " «" + clean + "» بدفعة " + (ref.kind === "account" ? "عميل/جهة" : "فندق") + " #" + ref.refId + (ref.linkedRef ? " (دفعة مزدوجة — يظهر عند الطرفين)" : ""), currentUser);
+  return { success: true, attachmentId: id, name: clean };
+  } catch (e) { _logError_(_fn, e); throw e; }
+}
+// تناديها الواجهة: مرفقات دفعة (ومرفقات طرفها المرتبط في الدفعة المزدوجة)
+function listPaymentAttachments(kind, refId, currentUser) { _apiGuard_();
+  var _fn = "[listPaymentAttachments]";
+  try {
+  var ref = _attRef_(kind, refId);
+  _attPerm_(currentUser, ref, false);
+  var out = [];
+  if (!_getSS_().getSheetByName(_ATT_SHEET)) return { items: out, linkedRef: ref.linkedRef };
+  var d = _getSheetValues_(_ATT_SHEET);
+  for (var i = 1; i < d.length; i++) {
+    var r = d[i]; if (!r[0] || r[9] === true) continue;
+    var mine = String(r[1]) === ref.kind && String(r[2]) === ref.refId, other = ref.linkedRef && String(r[1]) === ref.linkedKind && String(r[2]) === ref.linkedRef;
+    if (mine || other) out.push(_attRowObj_(r, ref));
+  }
+  return { items: out, linkedRef: ref.linkedRef };
+  } catch (e) { _logError_(_fn, e); throw e; }
+}
+function _attFind_(attachmentId) {
+  var d = _getSheetValues_(_ATT_SHEET);
+  for (var i = 1; i < d.length; i++) if (String(d[i][0]) === String(attachmentId) && d[i][9] !== true) return { row: i, data: d[i] };
+  throw new Error("لم يتم العثور على المرفق.");
+}
+// صلاحية الوصول لمرفق: عبر دفعته أو طرفها المرتبط (من يرى أحد الطرفين يرى المرفق)
+function _attPermFor_(att, currentUser, write) {
+  var ref = _attRef_(att[1], att[2]), err = null;
+  try { _attPerm_(currentUser, ref, write); return ref; } catch (e) { err = e; }
+  if (ref.linkedRef) { try { var lref = _attRef_(ref.linkedKind, ref.linkedRef); _attPerm_(currentUser, lref, write); return lref; } catch (e2) {} }
+  throw err;
+}
+// تناديها الواجهة: محتوى مرفق (base64) لعرضه داخل البرنامج
+function getPaymentAttachmentData(attachmentId, currentUser) { _apiGuard_();
+  var _fn = "[getPaymentAttachmentData]";
+  try {
+  var f = _attFind_(attachmentId);
+  _attPermFor_(f.data, currentUser, false);
+  var blob = DriveApp.getFileById(String(f.data[3])).getBlob();
+  return { attachmentId: String(f.data[0]), name: String(f.data[4] || ""), mime: String(f.data[5] || blob.getContentType() || ""), data: Utilities.base64Encode(blob.getBytes()) };
+  } catch (e) { _logError_(_fn, e); throw e; }
+}
+// تناديها الواجهة: حذف مرفق (الملف يُنقل لسلة Drive)
+function deletePaymentAttachment(attachmentId, currentUser) { _apiGuard_();
+  var _fn = "[deletePaymentAttachment]";
+  try {
+  _invalidateSheetCache_(_ATT_SHEET);
+  var f = _attFind_(attachmentId);
+  _attPermFor_(f.data, currentUser, true);
+  _getOrCreateSheet_(_ATT_SHEET).getRange(f.row + 1, 10).setValue(true);
+  _invalidateSheetCache_(_ATT_SHEET);
+  try { DriveApp.getFileById(String(f.data[3])).setTrashed(true); } catch (eT) {}
+  logAudit("الحسابات", "حذف مرفق", String(f.data[2]), "", "", "", "حذف مرفق «" + String(f.data[4] || "") + "» من دفعة #" + String(f.data[2]), currentUser);
+  return { success: true };
+  } catch (e) { _logError_(_fn, e); throw e; }
+}
+
 // اسم فندق تعاقد قائم (غير محذوف) أو null — خريطة الفنادق المرجعية تشمل التعاقدات المحذوفة أيضاً
 function _liveContractHotel_(cid) {
   var cd=_getSheetValues_("Contracts_Master");
@@ -5206,7 +5346,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.79";
+var APP_VERSION = "V3.80";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -6023,6 +6163,13 @@ var SYSTEM_FOLDERS = [
     description: "يحتوي على ملفات PDF المؤقتة المُنشأة عند مشاركة/طباعة التقارير. تُحذف الملفات الأقدم من ساعة تلقائياً.",
     propKey: "TEMP_REPORTS_FOLDER_ID",
     ensureFn: function() { return _ensureTempReportsFolder_(); }
+  },
+  {
+    key: "receipts",
+    label: "مجلد إيصالات السداد",
+    description: "صور وملفات PDF لإيصالات الدفعات المرفقة من شاشة الحسابات. الملفات خاصة (بلا رابط عام) وتُعرض عبر البرنامج فقط.",
+    propKey: "RECEIPTS_FOLDER_ID",
+    ensureFn: function() { return _ensureReceiptsFolder_(); }
   }
 ];
 
@@ -6898,6 +7045,7 @@ function _perfDiag_() {
       for (var aq = 1; aq < apD.length; aq++) { var lk = String(apD[aq][12] || ""); if (apD[aq][0] && apD[aq][10] !== true && lk && rdel[lk] !== false) nLost++; }
       for (var cq = 1; cq < cpD.length; cq++) { if (cpD[cq][0] && cpD[cq][9] !== true && /^(قسط أُنشئ تلقائياً|دفعة مزدوجة من)/.test(String(cpD[cq][6] || ""))) nAuto++; }
       d.dualPaymentsMissingHotelSide = nLost; d.autoCreatedInstallments = nAuto; d.unassignedHotelReceipts = nUn;
+      var am = _attCountMap_(), na = 0; Object.keys(am).forEach(function(k) { na += am[k]; }); d.paymentAttachments = na; // V3.80
     } catch (eDL) {}
     // V3.75 — صفوف تفضيلات مكررة لنفس (مستخدم، مفتاح): كانت تجعل التفضيل المحفوظ لا يظهر بعد الدخول
     try { var up = _getSheetValues_("User_Preferences"), seenP = {}, dupP = 0; for (var ui = 1; ui < up.length; ui++) { var kk = up[ui][0] + "\u0001" + up[ui][1]; if (seenP[kk]) dupP++; else seenP[kk] = 1; } d.duplicatePrefRows = dupP; } catch (eU) {}
@@ -7885,7 +8033,7 @@ function _hotelSchedulesFifo_(allowed, onlyHotel) {
     hotels[rc.hotel].receipts.push({ amount: parseFloat(r[3]) || 0, t: pd ? pd.getTime() : 0, id: String(r[0]), paymentId: String(r[1] || ""), contractId: rc.id,
       statement: String(r[5] || ""), notes: String(r[6] || ""), createdBy: String(r[7] || ""), linked: String(r[10] || "") });
   }
-  var out = {};
+  var out = {}, attMapS = _attCountMap_();
   Object.keys(hotels).forEach(function(hn) {
     var H = hotels[hn];
     H.items.sort(function(a, b) {
@@ -7928,7 +8076,8 @@ function _hotelSchedulesFifo_(allowed, onlyHotel) {
       var inst = dueByPid[x.paymentId];
       return { receiptId: x.id, amount: r2(x.amount), payDate: fmt(x.t), payDateIso: x.t ? _fmtDate_(new Date(x.t), tz, "yyyy-MM-dd") : "",
         statement: x.statement, notes: x.notes, createdBy: x.createdBy, linkedAccountPaymentId: x.linked,
-        contractId: x.contractId, paymentId: x.paymentId, installmentDue: inst ? fmt(inst.dueT) : "", orphan: !!x.paymentId && !inst, unassigned: !x.paymentId };
+        contractId: x.contractId, paymentId: x.paymentId, installmentDue: inst ? fmt(inst.dueT) : "", orphan: !!x.paymentId && !inst, unassigned: !x.paymentId,
+        attCount: _attCount_(attMapS, "receipt", x.id, "account", x.linked) };
     });
     var contractsOut = Object.keys(contracts).filter(function(id) { return contracts[id].hotel === hn; })
       .sort(function(a, b) { return (contracts[a].startT - contracts[b].startT) || idCmp(a, b); })
@@ -8011,7 +8160,7 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
       });
     }
 
-    var rData = _getSheetValues_("Contract_Payment_Receipts");
+    var rData = _getSheetValues_("Contract_Payment_Receipts"), attMapH = _attCountMap_();
     for (var ri=1; ri<rData.length; ri++) {
       var rrow = rData[ri];
       if (!rrow[0] || rrow[9]===true || !allHotelContractIds[rrow[2]]) continue;
@@ -8023,6 +8172,7 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
       totalPaidH += amt;
       rowsH.push({
         kind: "receipt", refId: rrow[0], contractId: rrow[2], paymentId: String(rrow[1] || ""),
+        attCount: _attCount_(attMapH, "receipt", rrow[0], "account", rrow[10]), // V3.80
         sortKey: isNaN(pd.getTime()) ? 0 : pd.getTime(),
         date: isNaN(pd.getTime()) ? "" : _fmtDate_(pd, tz, "dd/MM/yyyy"),
         payDateIso: isNaN(pd.getTime()) ? "" : _fmtDate_(pd, tz, "yyyy-MM-dd"),
@@ -8101,6 +8251,7 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
 
   // 2) الدفعات المسدَّدة (دائن) — تُستبعد عند فلتر فندق محدَّد أي دفعة عامة أو مخصَّصة لفندق آخر
   var pData = _getSheetValues_("Account_Payments");
+  var attMap = _attCountMap_(); // V3.80
   var rcState = {}; // V3.79 — حالة سداد الفندق المقابل لكل دفعة مزدوجة: ok / deleted
   try { var rcD = _getSheetValues_("Contract_Payment_Receipts"); for (var rz=1; rz<rcD.length; rz++) { if (rcD[rz][0]) rcState[String(rcD[rz][0])] = rcD[rz][9]===true ? "deleted" : "ok"; } } catch (eRc) {}
   for (var j=1; j<pData.length; j++) {
@@ -8127,6 +8278,7 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
       paymentDateIso: isNaN(pd2.getTime()) ? "" : _fmtDate_(pd2, tz, "yyyy-MM-dd"),
       linkedHotelReceiptId: linkedReceiptId,
       hotelSide: linkedReceiptId ? (rcState[linkedReceiptId] || "missing") : "", // V3.79
+      attCount: _attCount_(attMap, "account", p[0], "receipt", (rcState[linkedReceiptId] === "ok") ? linkedReceiptId : ""), // V3.80
       debit: 0,
       credit: Math.round(amt*100)/100
     });
