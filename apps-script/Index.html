@@ -535,6 +535,31 @@ body.m-view .att-grid { grid-template-columns:repeat(2,1fr); }
 body.m-view .att-pick { width:100%; text-align:center; font-size:13px; padding:10px; }
 .as-newpay { margin-inline-start:auto; align-self:center; font-size:8pt; padding:5px 14px; font-weight:800; color:var(--clr-primary-dark); }
 .hs-table tr.hs-pay { background:#f8fbff; }
+/* V3.83 — صف الإجماليات بلون واضح */
+.hs-table tr.hs-total td { background:#f9e3a0 !important; color:#3b2a05; border-top:2px solid var(--clr-primary-dark) !important; border-bottom:2px solid var(--clr-primary-dark) !important; font-size:8.8pt !important; font-weight:900 !important; }
+:root[data-theme="dark"] .hs-table tr.hs-total td { background:#5b4a14 !important; color:#fff4cf; }
+body.m-view table.data-table tbody tr.hs-total { background:#f9e3a0; border:2px solid var(--clr-primary-dark); }
+body.m-view table.data-table tbody tr.hs-total td { background:#f9e3a0 !important; color:#3b2a05; }
+:root[data-theme="dark"] body.m-view table.data-table tbody tr.hs-total, :root[data-theme="dark"] body.m-view table.data-table tbody tr.hs-total td { background:#5b4a14 !important; color:#fff4cf; }
+/* V3.83 — كشف الحساب مضمَّن أسفل صف الطرف بدل النافذة الضيقة */
+body .modal-box.as-inline, body.m-view .modal-box.as-inline { position:static !important; width:100% !important; max-width:none !important; max-height:none !important; height:auto !important; overflow:visible !important; margin:0 !important; transform:none !important; left:auto !important; top:auto !important; box-shadow:var(--shadow-md); border:1px solid var(--clr-border); border-radius:var(--radius-md) !important; display:block; }
+.modal-box.as-inline .modal-header { cursor:default; border-radius:var(--radius-md) var(--radius-md) 0 0; }
+.modal-box.as-inline .modal-body { overflow:visible; }
+.modal-box.as-inline #asStmtTableWrap { max-height:none !important; overflow-y:visible !important; }
+table.data-table tbody tr.as-inline-row > td.as-inline-td, body.m-view table.data-table tbody tr.as-inline-row > td.as-inline-td { padding:0 !important; background:transparent !important; white-space:normal !important; overflow:visible !important; max-width:none !important; text-align:start !important; display:table-cell; border-bottom:none !important; }
+body.m-view table.data-table tbody tr.as-inline-row { background:transparent; border:none; box-shadow:none; padding:0; margin:0 0 10px; }
+body.m-view table.data-table tbody tr.as-inline-row > td.as-inline-td { display:block !important; }
+table.data-table tbody tr.acc-open-row > td { background:#eef6ee; }
+.as-filter { display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; background:#f8fafc; border:1px dashed var(--clr-border); border-radius:var(--radius-md); padding:8px 10px; margin-bottom:12px; }
+.as-filter .asf-t { font-size:8pt; font-weight:800; color:var(--clr-primary-dark); align-self:center; }
+.as-filter label { display:block; font-size:7.3pt; font-weight:700; color:var(--clr-muted); margin-bottom:2px; }
+.as-filter .asf-date { display:flex; align-items:center; border:1px solid var(--clr-border); border-radius:var(--radius-sm); background:#fff; overflow:hidden; }
+.as-filter .asf-date input[type=text] { width:92px; border:none; outline:none; font-size:8pt; padding:5px; font-family:monospace; cursor:pointer; background:#fff; }
+.as-filter .asf-date button { background:none; border:none; color:var(--clr-muted); cursor:pointer; font-size:11px; padding:3px 5px; }
+.as-filter select { font-size:8pt; padding:5px; min-width:150px; }
+.as-filter .asf-note { font-size:7.2pt; color:var(--clr-muted); font-weight:700; margin-inline-start:auto; align-self:center; }
+:root[data-theme="dark"] .as-filter { background:var(--clr-card); }
+body.m-view .as-filter select, body.m-view .as-filter .asf-date input[type=text] { font-size:13px; }
 .hs-dual { font-size:7.5pt; color:#1d4ed8; font-weight:800; }
 body.m-view #asSummaryBox { gap:6px !important; }
 body.m-view #asSummaryBox > div { padding:7px 4px !important; }
@@ -4159,6 +4184,7 @@ function _runDailyBackgroundChecksNow_() {
     var startX, startY, origLeft, origTop;
     header.addEventListener('mousedown', function(e) {
       if (e.target.closest('button')) return; // لا نسحب عند الضغط على الأزرار
+      if (box.classList.contains('as-inline')) return; // V3.83 — كشف مضمَّن بالصفحة
       e.preventDefault();
       var rect = box.getBoundingClientRect();
       // تحويل الموضع من relative إلى absolute/fixed عند أول سحب
@@ -5977,7 +6003,8 @@ var _bkPageRows = [];
 // V3.61 — مفتاح Escape يغلق النافذة المنبثقة العليا (عبر زر إغلاقها نفسه، فيُنفَّذ منطق الإغلاق الخاص بكل نافذة)
 document.addEventListener('keydown', function(e) {
   if (e.key !== 'Escape') return;
-  var open = document.querySelectorAll('.modal-overlay.open'); if (!open.length) return;
+  var open = document.querySelectorAll('.modal-overlay.open');
+  if (!open.length) { if (typeof _asInlineKey !== 'undefined' && _asInlineKey !== null && !document.getElementById('globalDatePickerPopup').style.display.match(/block/)) { e.preventDefault(); closeAccountStatement(); } return; } // V3.83
   var btn = open[open.length - 1].querySelector('.modal-close-btn');
   if (btn) { e.preventDefault(); btn.click(); }
 });
@@ -7258,9 +7285,10 @@ function _mLabelTables_() {
   if (!_mIsOn()) return;
   document.querySelectorAll('table.data-table').forEach(function(tb) {
     if (tb.id === 'bookingsTable') return; // لها بطاقة مخصصة
-    var heads = Array.prototype.map.call(tb.querySelectorAll('thead th'), function(th) { return (th.innerText || '').trim(); });
+    var heads = Array.prototype.filter.call(tb.querySelectorAll('thead th'), function(th) { return th.closest('table') === tb; }).map(function(th) { return (th.innerText || '').trim(); }); // V3.83 — جداول متداخلة (كشف مضمَّن): رؤوس هذا الجدول وحده
     if (!heads.length) return;
     tb.querySelectorAll('tbody tr').forEach(function(tr) {
+      if (tr.closest('table') !== tb) return;
       var tds = tr.children;
       for (var i = 0; i < tds.length; i++) {
         var td = tds[i]; if (td._mDone) continue; td._mDone = true;
@@ -10443,7 +10471,7 @@ function loadAccountsSummary() {
     if (!canViewHotelLedger && _accPartyType === 'hotel') { _accPartyType = 'collection'; accSwitchTab('collection'); return; }
   }
   var tbody = document.getElementById('accountsTableBody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--clr-muted);">جاري التحميل...</td></tr>';
+  if (tbody && _asInlineKey === null) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--clr-muted);">جاري التحميل...</td></tr>'; // V3.83 — والكشف مفتوح: تحديث صامت دون مسحه
   var fromIso = document.getElementById('acc_date_from').value || '';
   var toIso = document.getElementById('acc_date_to').value || '';
   var hint = document.getElementById('acc_date_filter_hint');
@@ -10454,6 +10482,7 @@ function loadAccountsSummary() {
       _accSummaryData = list || [];
       renderAccountsSummaryTable();
     }).withFailureHandler(function(e) {
+      if (_asInlineKey !== null) { showToast(e.message || String(e), 'error'); return; }
       if (tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--clr-danger);">' + escapeHtml(e.message||String(e)) + '</td></tr>';
     }).getAccountsSummary(_accPartyType, sessionUser.username, hotelFilter, fromIso, toIso);
   });
@@ -10479,6 +10508,7 @@ function renderAccountsSummaryTable() {
   if (!tbody) return;
   var q = ((document.getElementById('acc_search')||{}).value || '').trim().toLowerCase();
   var list = _accSummaryData.filter(function(r){ return !q || String(r.partyName).toLowerCase().indexOf(q) > -1; });
+  _accStashPanel_(); // V3.83 — لوحة الكشف المضمَّنة تُحفظ خارج الجدول قبل إعادة رسمه
 
   var tDue=0, tPaid=0;
   list.forEach(function(r){ tDue += r.totalDue; tPaid += r.totalPaid; });
@@ -10497,6 +10527,11 @@ function renderAccountsSummaryTable() {
       + card('صافي الرصيد (ر.س)', fmtSAR(Math.abs(tBal)) + (tBal>0.004?' مدين':(tBal<-0.004?' دائن':'')), tBal>0.004?'#b91c1c':(tBal<-0.004?'#15803d':'#475569'));
   }
 
+  if (_asInlineKey !== null) { // V3.83 — كشف مفتوح: يُعرض صف الطرف وحده (بقية الصفوف مخفية) وتحته الكشف
+    var _one = list.filter(function(r) { return String(r.partyKey) === _asInlineKey; });
+    if (!_one.length) { closeAccountStatement(); return; } // اختفى الطرف بفلتر/بحث جديد
+    list = _one;
+  }
   if (!list.length) {
     tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--clr-muted);">لا توجد بيانات لعرضها.</td></tr>';
     var _pgH = document.getElementById('accounts_pagination'); if (_pgH) _pgH.innerHTML = '';
@@ -10504,10 +10539,13 @@ function renderAccountsSummaryTable() {
   }
   // v3.34 — تبويب الفنادق: زر "➕ دفعة" يُتاح بناءً على صلاحية الجانب المالي (نفس شرط ظهور التبويب نفسه) وليس صلاحية "الحسابات"
   var canAdd = _accPartyType==='hotel' ? _bkCanViewFinance() : _accCan('canAdd');
-  tbody.innerHTML = _pgSlice_('accounts', list, 'accounts_pagination', renderAccountsSummaryTable).map(function(r, idx) {
+  var _pgList = _asInlineKey !== null ? list : _pgSlice_('accounts', list, 'accounts_pagination', renderAccountsSummaryTable);
+  if (_asInlineKey !== null) { var _pgI = document.getElementById('accounts_pagination'); if (_pgI) _pgI.innerHTML = ''; }
+  tbody.innerHTML = _pgList.map(function(r, idx) {
     var balAbs = fmtSAR(Math.abs(r.balance));
     var balColor = r.balance>0.004 ? '#b91c1c' : (r.balance<-0.004 ? '#15803d' : '#475569');
-    return '<tr>'
+    var _isOpenRow = _asInlineKey !== null && String(r.partyKey) === _asInlineKey;
+    return '<tr' + (_isOpenRow ? ' class="acc-open-row"' : '') + ' data-pkey="' + escapeHtmlAttr(r.partyKey) + '">'
       + '<td style="font-weight:800;">' + escapeHtml(r.partyName) + _accNoBookingsNote_(r) + _accSchedNote_(r) + '</td>'
       + '<td style="text-align:center;">' + (r.bookingsCount||0) + '</td>'
       + '<td style="text-align:center;font-weight:700;color:#b45309;">' + fmtSAR(r.totalDue) + '</td>'
@@ -10515,14 +10553,88 @@ function renderAccountsSummaryTable() {
       + '<td style="text-align:center;font-weight:900;color:' + balColor + ';">' + balAbs + '</td>'
       + '<td style="text-align:center;">' + _accBalanceBadge(r.balance) + '</td>'
       + '<td style="text-align:center;white-space:nowrap;">'
-      + '<button class="btn-secondary" style="font-size:7.5pt;padding:3px 9px;" onclick="openAccountStatementModal(\'' + escapeHtmlAttr(r.partyKey).replace(/'/g,"\\'") + '\', false)">📑 كشف حساب</button>'
+      + (_isOpenRow ? '<button class="btn-primary-dark" style="font-size:7.5pt;padding:3px 9px;" onclick="closeAccountStatement()">✖ إغلاق الكشف</button>' : '<button class="btn-secondary" style="font-size:7.5pt;padding:3px 9px;" onclick="openAccountStatementModal(\'' + escapeHtmlAttr(r.partyKey).replace(/'/g,"\\'") + '\', false)">📑 كشف حساب</button>')
       + (_accPartyType==='hotel' ? ' <button class="btn-secondary" style="font-size:7.5pt;padding:3px 9px;color:#1d4ed8;" onclick="openAccountStatementModal(\'' + escapeHtmlAttr(r.partyKey).replace(/'/g,"\\'") + '\', false, \'schedule\')">📅 الاستحقاقات</button>' : '')
       + (canAdd ? ' <button class="btn-secondary" style="font-size:7.5pt;padding:3px 9px;color:var(--clr-primary-dark);" onclick="openAccountStatementModal(\'' + escapeHtmlAttr(r.partyKey).replace(/'/g,"\\'") + '\', true)">➕ دفعة</button>' : '')
       + '</td></tr>';
   }).join('');
+  if (_asInlineKey !== null && _asPanel) { // V3.83 — صف الكشف: اللوحة تُوضع داخل خلية بعرض الجدول تحت صف الطرف
+    var _ir = document.createElement('tr'); _ir.className = 'as-inline-row';
+    var _id = document.createElement('td'); _id.colSpan = 7; _id.className = 'as-inline-td';
+    _id.appendChild(_asPanel); _ir.appendChild(_id); tbody.appendChild(_ir);
+  }
 }
 
-// يفتح نافذة كشف الحساب لطرف معيّن (focusForm=true → التركيز مباشرة على نموذج إضافة الدفعة)
+// ═══════════════════════════════════════════════════════════════
+// V3.83 — كشف الحساب يُعرض مضمَّناً أسفل صف الطرف (مع إخفاء بقية الصفوف) بدل النافذة الضيقة؛ وتصفية خاصة بكل كشف
+// ═══════════════════════════════════════════════════════════════
+var _asInlineKey = null, _asPanel = null;
+function _asPanelEl_() { return _asPanel || (_asPanel = document.querySelector('#AccountStatement_Modal .modal-box')); }
+function _asHome_() { var pn = _asPanelEl_(), ov = document.getElementById('AccountStatement_Modal'); if (pn && ov && pn.parentNode !== ov) ov.appendChild(pn); if (pn) pn.classList.remove('as-inline'); }
+function _accStashPanel_() { var tb = document.getElementById('accountsTableBody'), pn = _asPanel; if (pn && tb && tb.contains(pn)) { var ov = document.getElementById('AccountStatement_Modal'); if (ov) ov.appendChild(pn); } }
+function _asIsOpen_() { var ov = document.getElementById('AccountStatement_Modal'); return _asInlineKey !== null || !!(ov && ov.classList.contains('open')); }
+function _asPlace_(partyKey, row) {
+  var pn = _asPanelEl_(), tb = document.getElementById('accountsTableBody'), ov = document.getElementById('AccountStatement_Modal');
+  if (row && tb && pn && tb.getClientRects().length) {
+    _asInlineKey = String(partyKey); pn.classList.add('as-inline');
+    renderAccountsSummaryTable();
+    if (_asInlineKey !== null && pn.parentNode !== ov) {
+      ov.classList.remove('open');
+      try { var tr = null; Array.prototype.forEach.call(tb.querySelectorAll('tr[data-pkey]'), function(x) { if (x.getAttribute('data-pkey') === _asInlineKey) tr = x; }); if (tr) tr.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (eS) {}
+      return;
+    }
+  }
+  _asInlineKey = null; pn.classList.remove('as-inline'); _asHome_(); ov.classList.add('open'); // احتياط: نافذة منبثقة إن تعذّر التضمين
+}
+function closeAccountStatement() {
+  var ov = document.getElementById('AccountStatement_Modal'), key = _asInlineKey;
+  if (key !== null) {
+    _asInlineKey = null; _asHome_();
+    renderAccountsSummaryTable();
+    try { var tr = null; Array.prototype.forEach.call(document.querySelectorAll('#accountsTableBody tr[data-pkey]'), function(x) { if (x.getAttribute('data-pkey') === key) tr = x; }); if (tr) tr.scrollIntoView({ block: 'nearest' }); } catch (eS) {}
+  }
+  if (ov) ov.classList.remove('open');
+  ['as_save_btn', 'ahp_save_btn'].forEach(function(id) { var b = document.getElementById(id); if (b && b._locked) _unlockSubmit(id); });
+}
+// تصفية الكشف: تبدأ بقيم الفلتر العام وتُعدَّل هنا لهذا الكشف وحده (لا تغيّر الفلتر العام)
+function _asFilterVals_() { var g = function(id) { var e = document.getElementById(id); return e ? (e.value || '') : ''; }; return { from: g('asf_from'), to: g('asf_to'), hotel: g('asf_hotel') }; }
+function _asfSet_(id, iso) { var h = document.getElementById(id), d = document.getElementById(id + '_disp'); if (h) h.value = iso || ''; if (d) d.value = iso ? iso.split('-').reverse().join('/') : ''; }
+function _asFilterInit_() {
+  var g = function(id) { var e = document.getElementById(id); return e ? (e.value || '') : ''; };
+  var gs = document.getElementById('acc_hotel_filter'), ss = document.getElementById('asf_hotel');
+  if (ss) { ss.innerHTML = gs ? gs.innerHTML : '<option value="">كل الفنادق</option>'; ss.value = gs ? gs.value : ''; }
+  _asfSet_('asf_from', g('acc_date_from')); _asfSet_('asf_to', g('acc_date_to'));
+  var hw = document.getElementById('asf_hotel_wrap'); if (hw) hw.style.display = (_asCurrent && _asCurrent.partyType === 'hotel') ? 'none' : '';
+  _asFilterNote_();
+}
+function _asFilterNote_() {
+  var f = _asFilterVals_(), g = function(id) { var e = document.getElementById(id); return e ? (e.value || '') : ''; }, isHotel = !!(_asCurrent && _asCurrent.partyType === 'hotel');
+  var same = f.from === g('acc_date_from') && f.to === g('acc_date_to') && (isHotel || f.hotel === g('acc_hotel_filter'));
+  var el = document.getElementById('asf_note'); if (el) { el.innerText = same ? 'مطابقة للفلتر العام' : '✏️ فلتر خاص بهذا الكشف — لا يغيّر الفلتر العام'; el.style.color = same ? '' : '#b45309'; }
+  var rb = document.getElementById('asf_reset_btn'); if (rb) rb.style.display = same ? 'none' : '';
+}
+var _asReq = 0;
+function asFilterChanged() {
+  _asFilterNote_();
+  if (!_asCurrent) return;
+  loadAccountStatement(null, { keepSchedule: true });
+  if (_asCurrent.partyType === 'hotel' && _asTab === 'schedule' && _hsData) renderHotelSchedule();
+}
+function asFilterClear(id) { _asfSet_(id, ''); asFilterChanged(); }
+function asFilterReset() { _asFilterInit_(); asFilterChanged(); }
+// نموذج دفعة العميل/جهة التحصيل: مخفي افتراضياً ويظهر بزر «تسجيل دفعة» أو بتعديل دفعة
+function _asPartyFormShow_(v, scroll) {
+  var b = document.getElementById('asPaymentFormBox'); if (!b) return;
+  b.style.display = v ? '' : 'none';
+  if (v && scroll) { try { b.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) {} }
+}
+function asNewPartyPayment() {
+  resetAsPaymentForm(); _asPartyFormShow_(true, true);
+  setTimeout(function() { var a = document.getElementById('as_amount'); if (a) a.focus(); }, 350);
+}
+function asNewPaymentClick() { if (_asCurrent && _asCurrent.partyType === 'hotel') hsNewPayment(); else asNewPartyPayment(); }
+
+// يفتح كشف الحساب لطرف معيّن (focusForm=true → التركيز مباشرة على نموذج إضافة الدفعة)
 // v3.34 — تبويب "الفنادق": يظهر نموذج دفعة مخصَّص (asHotelPaymentFormBox) بدل نموذج العميل/جهة التحصيل
 function openAccountStatementModal(partyKey, focusForm, tab) {
   var row = null;
@@ -10532,41 +10644,51 @@ function openAccountStatementModal(partyKey, focusForm, tab) {
   var _typeLabel = _accPartyType==='hotel' ? 'فندق' : (_accPartyType==='collection'?'جهة تحصيل':'عميل');
   document.getElementById('asModalTitle').innerText = '📑 كشف حساب — ' + _asCurrent.partyName + ' (' + _typeLabel + ')' + (_accPartyType!=='hotel' && _hotelFilterActive ? ' — فندق: ' + _hotelFilterActive : '');
   var isHotel = _accPartyType === 'hotel';
-  document.getElementById('asPaymentFormBox').style.display = isHotel ? 'none' : (_accCan('canAdd') || _accCan('canEdit') ? '' : 'none');
-  document.getElementById('asHotelPaymentFormBox').style.display = 'none'; // V3.82 — يظهر بزر «تسجيل دفعة» أو بتعديل دفعة
-  var _nb = document.getElementById('asNewPayBtn'); if (_nb) _nb.style.display = (isHotel && _bkCanViewFinance()) ? '' : 'none';
+  // V3.82/V3.83 — نموذجا الدفعة (الفندق / العميل وجهة التحصيل) مخفيان؛ يظهران بزر «➕ تسجيل دفعة» أو بتعديل دفعة
+  var _canPayBtn = isHotel ? _bkCanViewFinance() : _accCan('canAdd');
+  document.getElementById('asPaymentFormBox').style.display = 'none';
+  document.getElementById('asHotelPaymentFormBox').style.display = 'none';
+  var _nb = document.getElementById('asNewPayBtn'); if (_nb) _nb.style.display = _canPayBtn ? '' : 'none';
+  _asFilterInit_();
   if (isHotel) resetAhpPaymentForm(); else resetAsPaymentForm();
   document.getElementById('asSummaryBox').innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:10px;color:var(--clr-muted);">جاري التحميل...</div>';
   document.getElementById('asTableBody').innerHTML = '';
-  document.getElementById('AccountStatement_Modal').classList.add('open');
   // V3.78 — تبويبا الفندق (كشف الحساب / الاستحقاقات والدفعات)
   _hsData = null; hsCloseInstForm();
-  document.getElementById('asTabs').style.display = isHotel ? '' : 'none';
+  document.getElementById('asTabs').style.display = (isHotel || _canPayBtn) ? '' : 'none';
+  document.getElementById('asTabStmt').style.display = isHotel ? '' : 'none';
+  document.getElementById('asTabSched').style.display = isHotel ? '' : 'none';
   asSwitchTab(isHotel && tab === 'schedule' ? 'schedule' : 'statement');
-  loadAccountStatement(function(){ if (focusForm) { if (isHotel) { hsNewPayment(); } else { var a=document.getElementById('as_amount'); if (a) a.focus(); } } });
+  _asPlace_(partyKey, row); // V3.83 — مضمَّن أسفل صف الطرف (وإلا نافذة منبثقة)
+  loadAccountStatement(function(){ if (focusForm) { if (isHotel) { hsNewPayment(); } else { asNewPartyPayment(); } } });
 }
 
 // يجلب كشف الحساب التفصيلي من الخادم ثم يرسمه
 // v3.23 — يرث فلتر الفندق النشط بشاشة الحسابات الرئيسية (نفس الفلتر المختار بالجدول)؛ لعرض كل الفنادق اختر "كل الفنادق" هناك أولاً
 // v3.33 — يرث أيضاً فلتر الفترة (من/إلى) النشط بالشاشة الرئيسية؛ hotelFilter غير مستخدَم لتبويب "الفنادق" (partyKey هو الفندق نفسه)
-function loadAccountStatement(afterCb) {
+// V3.83 — التصفية من شريط «تصفية هذا الكشف» (يبدأ بالفلتر العام) لا من الفلتر العام مباشرة
+function loadAccountStatement(afterCb, opts) {
   if (!_asCurrent) return;
-  var hotelFilter = (_asCurrent.partyType==='hotel') ? '' : ((document.getElementById('acc_hotel_filter')||{}).value || '');
-  var fromIso = document.getElementById('acc_date_from').value || '';
-  var toIso = document.getElementById('acc_date_to').value || '';
-  if (_asCurrent.partyType === 'hotel') { _hsData = null; if (_asTab === 'schedule') loadHotelSchedule(); } // V3.78
+  var _f = _asFilterVals_();
+  var hotelFilter = (_asCurrent.partyType==='hotel') ? '' : _f.hotel;
+  var fromIso = _f.from;
+  var toIso = _f.to;
+  var _my = ++_asReq; // أحدث طلب فقط يُرسم (تغيير التصفية بسرعة لا يعرض رداً قديماً)
+  if (_asCurrent.partyType === 'hotel' && !(opts && opts.keepSchedule)) { _hsData = null; if (_asTab === 'schedule') loadHotelSchedule(); } // V3.78
   google.script.run.withSuccessHandler(function(data) {
+    if (_my !== _asReq) return;
     _asStatementData = data;
     renderAccountStatement();
     if (afterCb) afterCb();
   }).withFailureHandler(function(e) {
+    if (_my !== _asReq) return;
     document.getElementById('asSummaryBox').innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:10px;color:var(--clr-danger);">' + escapeHtml(e.message||String(e)) + '</div>';
   }).getAccountStatement(_asCurrent.partyType, _asCurrent.partyKey, sessionUser.username, hotelFilter, fromIso, toIso);
 }
 
 // يُغلق نافذة كشف الحساب ويفتح دفعات سداد تعاقد معيّن (من صف "تعاقد" بكشف حساب الفندق)
 function asGoToContractPayments(contractId) {
-  document.getElementById('AccountStatement_Modal').classList.remove('open');
+  closeAccountStatement();
   openContractPaymentsModal(contractId, _asCurrent ? _asCurrent.partyName : '');
 }
 
@@ -10635,7 +10757,9 @@ function renderHotelSchedule() {
   // (الأقساط − الدفعات حتى ذلك السطر) — فيُعرف كم يتبقى للفندق عند أي دفعة. حالة كل قسط بالخصم بالأقدمية كما هي.
   html += '<div class="hs-sec-title"><span>📅 الأقساط والدفعات بترتيب التاريخ</span><label style="font-size:7.6pt;font-weight:700;color:var(--clr-text-sub);display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="hs_hide_paid"' + (_hsHidePaid ? ' checked' : '') + ' onchange="_hsHidePaid=this.checked;renderHotelSchedule()"> إخفاء المسدد والدفعات (المتبقي فقط)</label></div>';
   var led = d.ledger || [];
-  var rows = led.filter(function(r) { return !_hsHidePaid || (r.type === 'due' && r.status !== 'paid'); });
+  var _sf = _asFilterVals_(); // V3.83 — تصفية التاريخ الخاصة بالكشف (عرض فقط: الرصيد التراكمي يبقى محسوباً من بداية التعاقد)
+  var rows = led.filter(function(r) { return (!_hsHidePaid || (r.type === 'due' && r.status !== 'paid')) && (!_sf.from || !r.dateIso || r.dateIso >= _sf.from) && (!_sf.to || !r.dateIso || r.dateIso <= _sf.to); });
+  if (_sf.from || _sf.to) html += '<div class="hs-note" style="background:#fff8e6;border-color:#fde68a;color:#92400e;">🔎 عرض الفترة ' + (_sf.from ? 'من ' + escapeHtml(_sf.from.split('-').reverse().join('/')) : 'من البداية') + ' ' + (_sf.to ? 'إلى ' + escapeHtml(_sf.to.split('-').reverse().join('/')) : 'حتى النهاية') + ' (' + rows.length + ' من ' + led.length + ' سطر) — الرصيد التراكمي والإجماليات محسوبة من بداية التعاقد.</div>';
   var balHtml = function(b) {
     if (b > 0.004) return '<span style="color:#b91c1c;">' + n(b) + '</span>';
     if (b < -0.004) return '<span style="color:#1d4ed8;">-' + n(Math.abs(b)) + '</span>';
@@ -10684,7 +10808,7 @@ function renderHotelSchedule() {
         + '<td style="text-align:center;white-space:nowrap;">' + acts + '</td></tr>';
     });
     if (!todayShown && rows.length) html += '<tr class="hs-today"><td colspan="8">— اليوم ' + escapeHtml(d.today) + ' —</td></tr>';
-    html += '<tr style="background:#fbf7ec;"><td colspan="2" style="font-weight:900;">الإجمالي</td><td style="text-align:center;font-weight:900;color:#b45309;">' + n(d.totalDue) + '</td><td style="text-align:center;font-weight:900;color:#15803d;">' + n(d.totalPaid) + '</td><td style="text-align:center;font-weight:900;color:#b91c1c;">' + n(Math.max(0, d.balance)) + '</td><td></td><td style="text-align:center;font-weight:900;">' + balHtml(d.balance) + '</td><td></td></tr>';
+    html += '<tr class="hs-total"><td colspan="2" style="font-weight:900;">الإجمالي</td><td style="text-align:center;font-weight:900;color:#b45309;">' + n(d.totalDue) + '</td><td style="text-align:center;font-weight:900;color:#15803d;">' + n(d.totalPaid) + '</td><td style="text-align:center;font-weight:900;color:#b91c1c;">' + n(Math.max(0, d.balance)) + '</td><td></td><td style="text-align:center;font-weight:900;">' + balHtml(d.balance) + '</td><td></td></tr>';
     html += '</tbody></table></div>';
   }
   box.innerHTML = html;
@@ -10885,7 +11009,7 @@ function _attBump_(kind, refId, linkedRef, delta) {
       (_hsData.receipts || []).forEach(function(r) { if (keys['receipt:' + r.receiptId]) bump(r); });
       (_hsData.ledger || []).forEach(function(r) { if (r.type === 'pay' && keys['receipt:' + r.receiptId]) bump(r); });
     }
-    if (document.getElementById('AccountStatement_Modal').classList.contains('open')) { renderAccountStatement(); if (_asTab === 'schedule' && _hsData) renderHotelSchedule(); }
+    if (_asIsOpen_()) { renderAccountStatement(); if (_asTab === 'schedule' && _hsData) renderHotelSchedule(); }
   } catch (e) {}
 }
 // تجهيز ملف للرفع (V3.82): الصورة تُفكّ خارج الخيط الرئيسي (createImageBitmap)، وتُصغَّر وتُضغط بخطوات حتى ≈ 400KB (إيصال مقروء وأسرع رفعاً بكثير —
@@ -11127,14 +11251,15 @@ function resetAsPaymentForm() {
   document.getElementById('as_method').value = 'نقدي';
   document.getElementById('as_notes').value = '';
   var hotelSel = document.getElementById('as_hotel');
-  if (hotelSel) hotelSel.value = (document.getElementById('acc_hotel_filter')||{}).value || '';
+  if (hotelSel) hotelSel.value = (document.getElementById('asf_hotel') || document.getElementById('acc_hotel_filter') || {}).value || '';
   var now = new Date();
   var iso = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
   document.getElementById('as_pay_date').value = iso;
   document.getElementById('as_pay_date_disp').value = String(now.getDate()).padStart(2,'0') + '/' + String(now.getMonth()+1).padStart(2,'0') + '/' + now.getFullYear();
   document.getElementById('asFormError').innerText = '';
   document.getElementById('asFormTitle').innerText = '➕ تسجيل دفعة مسدَّدة (ر.س)';
-  document.getElementById('as_cancel_edit_btn').style.display = 'none';
+  var _cb2 = document.getElementById('as_cancel_edit_btn'); _cb2.style.display = ''; _cb2.innerText = 'إلغاء'; // V3.83 — زر إلغاء دائم (يُخفي النموذج)
+  _asPartyFormShow_(false);
   document.getElementById('as_dual_toggle_wrap').style.display = '';
   document.getElementById('as_dual_toggle').checked = false;
   document.getElementById('as_dual_toggle').disabled = false;
@@ -11163,7 +11288,8 @@ function editAsPayment(paymentId) {
     document.getElementById('as_pay_date_disp').value = p[2] + '/' + p[1] + '/' + p[0];
   }
   document.getElementById('asFormTitle').innerText = '✏️ تعديل الدفعة ' + r.refId;
-  document.getElementById('as_cancel_edit_btn').style.display = '';
+  document.getElementById('as_cancel_edit_btn').style.display = ''; document.getElementById('as_cancel_edit_btn').innerText = 'إلغاء التعديل';
+  _asPartyFormShow_(true, true);
   document.getElementById('as_dual_toggle').checked = false;
   document.getElementById('as_dual_toggle').disabled = true;
   document.getElementById('as_dual_toggle_wrap').style.display = 'none';
@@ -12062,7 +12188,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.82';
+var CLIENT_APP_VERSION = 'V3.83';
 var _BUILD_VERSION = CLIENT_APP_VERSION; // نسخة الكود المحمَّل في هذا التبويب (لا تتغير بعد التحميل)
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
@@ -12984,13 +13110,13 @@ function submitHotelPurge() {
 <!-- ══════════════ نافذة كشف حساب (شاشة الحسابات) ══════════════ -->
 <div id="AccountStatement_Modal" class="modal-overlay">
   <div class="modal-box" style="max-width:860px;">
-    <div class="modal-header"><span id="asModalTitle">📑 كشف حساب</span><button class="modal-close-btn" onclick="document.getElementById('AccountStatement_Modal').classList.remove('open')">×</button></div>
+    <div class="modal-header"><span id="asModalTitle">📑 كشف حساب</span><button class="modal-close-btn" onclick="closeAccountStatement()">×</button></div>
     <div class="modal-body">
       <!-- V3.78 — حساب الفندق: تبويب كشف الحساب + تبويب جدول الاستحقاقات والدفعات (خصم بالأقدمية) -->
       <div id="asTabs" class="as-tabs" style="display:none;">
         <button type="button" id="asTabStmt" class="as-tab active" onclick="asSwitchTab('statement')">📑 كشف الحساب</button>
         <button type="button" id="asTabSched" class="as-tab" onclick="asSwitchTab('schedule')">📅 الاستحقاقات والدفعات</button>
-        <button type="button" id="asNewPayBtn" class="btn-secondary as-newpay" style="display:none;" onclick="hsNewPayment()">➕ تسجيل دفعة</button>
+        <button type="button" id="asNewPayBtn" class="btn-secondary as-newpay" style="display:none;" onclick="asNewPaymentClick()">➕ تسجيل دفعة</button>
       </div>
       <div id="asHotelPaymentFormBox" style="display:none;background:var(--clr-bg);border-radius:var(--radius-md);padding:10px 12px;margin-bottom:14px;">
         <div style="font-size:8.5pt;font-weight:800;color:var(--clr-primary-dark);margin-bottom:8px;" id="ahpFormTitle">➕ تسجيل دفعة سداد للفندق (ر.س)</div>
@@ -13034,35 +13160,8 @@ function submitHotelPurge() {
         </div>
       </div>
 
-      <div id="asSchedWrap" style="display:none;">
-        <div id="hsInstForm" style="display:none;background:#eef6ff;border:1px solid #bfdbfe;border-radius:var(--radius-md);padding:10px 12px;margin-bottom:12px;">
-          <div id="hsInstFormTitle" style="font-size:8.5pt;font-weight:800;color:var(--clr-primary-dark);margin-bottom:8px;">✏️ تعديل قسط</div>
-          <input type="hidden" id="hs_inst_edit_id"><input type="hidden" id="hs_inst_contract_id">
-          <div class="form-row">
-            <div class="form-group"><label>قيمة القسط (ر.س) *</label><input type="number" id="hs_inst_amount" min="0" step="0.01"></div>
-            <div class="form-group">
-              <label>تاريخ الاستحقاق *</label>
-              <div class="custom-date-field">
-                <input type="text" id="hs_inst_due_disp" placeholder="dd/mm/yyyy" readonly onclick="openDatePicker('hs_inst_due')">
-                <input type="hidden" id="hs_inst_due">
-                <button type="button" class="dp-cal-btn" onclick="openDatePicker('hs_inst_due')">📅</button>
-              </div>
-            </div>
-          </div>
-          <div class="form-group"><label>ملاحظات</label><input type="text" id="hs_inst_notes"></div>
-          <div class="modal-error" id="hsInstError"></div>
-          <div style="display:flex;gap:8px;margin-top:6px;">
-            <button type="button" class="btn-primary-dark" style="font-size:8pt;padding:6px 14px;" id="hs_inst_save_btn" onclick="hsSaveInstallment()">💾 حفظ القسط</button>
-            <button type="button" class="btn-secondary" style="font-size:8pt;padding:6px 14px;" onclick="hsCloseInstForm()">إلغاء</button>
-          </div>
-        </div>
-        <div id="asSchedBox"></div>
-      </div>
-      <div id="asSummaryBox" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;"></div>
-      <div id="asLostDualBox" class="hs-note" style="display:none;background:#fef2f2;border-color:#fecaca;color:#991b1b;font-weight:700;"></div>
-
       <!-- نموذج إضافة/تعديل دفعة مسدَّدة -->
-      <div id="asPaymentFormBox" style="background:var(--clr-bg);border-radius:var(--radius-md);padding:10px 12px;margin-bottom:14px;">
+      <div id="asPaymentFormBox" style="display:none;background:var(--clr-bg);border-radius:var(--radius-md);padding:10px 12px;margin-bottom:14px;">
         <div style="font-size:8.5pt;font-weight:800;color:var(--clr-primary-dark);margin-bottom:8px;" id="asFormTitle">➕ تسجيل دفعة مسدَّدة (ر.س)</div>
         <input type="hidden" id="as_edit_id">
         <!-- v3.32 — دفعة مزدوجة: هذا الطرف سدَّد المبلغ مباشرة لفندق بدل تحويله للشركة؛ تُسجَّل الدفعة في الطرفين معاً -->
@@ -13122,6 +13221,43 @@ function submitHotelPurge() {
         </div>
       </div>
 
+      <!-- V3.83 — تصفية خاصة بهذا الكشف (تبدأ بقيم الفلتر العام ويمكن تغييرها هنا دون المساس به) -->
+      <div id="asFilterBar" class="as-filter">
+        <span class="asf-t">🔎 تصفية هذا الكشف</span>
+        <div><label>من تاريخ</label><div class="asf-date"><input type="text" id="asf_from_disp" placeholder="مفتوحة" readonly onclick="openDatePicker('asf_from')"><input type="hidden" id="asf_from" onchange="asFilterChanged()"><button type="button" title="مسح" onclick="asFilterClear('asf_from')">✕</button></div></div>
+        <div><label>إلى تاريخ</label><div class="asf-date"><input type="text" id="asf_to_disp" placeholder="مفتوحة" readonly onclick="openDatePicker('asf_to')"><input type="hidden" id="asf_to" onchange="asFilterChanged()"><button type="button" title="مسح" onclick="asFilterClear('asf_to')">✕</button></div></div>
+        <div id="asf_hotel_wrap"><label>الفندق</label><select id="asf_hotel" onchange="asFilterChanged()"><option value="">كل الفنادق</option></select></div>
+        <button type="button" class="btn-secondary" id="asf_reset_btn" style="font-size:7.5pt;padding:5px 10px;display:none;" onclick="asFilterReset()">↩️ مثل الفلتر العام</button>
+        <span class="asf-note" id="asf_note"></span>
+      </div>
+
+      <div id="asSchedWrap" style="display:none;">
+        <div id="hsInstForm" style="display:none;background:#eef6ff;border:1px solid #bfdbfe;border-radius:var(--radius-md);padding:10px 12px;margin-bottom:12px;">
+          <div id="hsInstFormTitle" style="font-size:8.5pt;font-weight:800;color:var(--clr-primary-dark);margin-bottom:8px;">✏️ تعديل قسط</div>
+          <input type="hidden" id="hs_inst_edit_id"><input type="hidden" id="hs_inst_contract_id">
+          <div class="form-row">
+            <div class="form-group"><label>قيمة القسط (ر.س) *</label><input type="number" id="hs_inst_amount" min="0" step="0.01"></div>
+            <div class="form-group">
+              <label>تاريخ الاستحقاق *</label>
+              <div class="custom-date-field">
+                <input type="text" id="hs_inst_due_disp" placeholder="dd/mm/yyyy" readonly onclick="openDatePicker('hs_inst_due')">
+                <input type="hidden" id="hs_inst_due">
+                <button type="button" class="dp-cal-btn" onclick="openDatePicker('hs_inst_due')">📅</button>
+              </div>
+            </div>
+          </div>
+          <div class="form-group"><label>ملاحظات</label><input type="text" id="hs_inst_notes"></div>
+          <div class="modal-error" id="hsInstError"></div>
+          <div style="display:flex;gap:8px;margin-top:6px;">
+            <button type="button" class="btn-primary-dark" style="font-size:8pt;padding:6px 14px;" id="hs_inst_save_btn" onclick="hsSaveInstallment()">💾 حفظ القسط</button>
+            <button type="button" class="btn-secondary" style="font-size:8pt;padding:6px 14px;" onclick="hsCloseInstForm()">إلغاء</button>
+          </div>
+        </div>
+        <div id="asSchedBox"></div>
+      </div>
+      <div id="asSummaryBox" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;"></div>
+      <div id="asLostDualBox" class="hs-note" style="display:none;background:#fef2f2;border-color:#fecaca;color:#991b1b;font-weight:700;"></div>
+
       <!-- v3.34 — نموذج تسجيل/تعديل دفعة سداد لفندق مباشرة من كشف حسابه (تبويب "حسب الفندق") -->
       <!-- جدول حركات كشف الحساب -->
       <div id="asStmtTableWrap" style="overflow-x:auto;max-height:340px;overflow-y:auto;border:1px solid var(--clr-border);border-radius:var(--radius-sm);">
@@ -13139,7 +13275,7 @@ function submitHotelPurge() {
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn-secondary" onclick="document.getElementById('AccountStatement_Modal').classList.remove('open')">إغلاق</button>
+      <button class="btn-secondary" onclick="closeAccountStatement()">إغلاق</button>
       <button class="btn-primary-dark" id="asPrintBtn" onclick="(_asTab==='schedule' ? printHotelSchedule : printAccountStatement)()">🖨️ طباعة كشف الحساب</button>
     </div>
   </div>
