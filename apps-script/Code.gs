@@ -2069,7 +2069,12 @@ function _attRef_(kind, refId) {
   } else {
     var r = _getSheetValues_("Contract_Payment_Receipts");
     for (var j = 1; j < r.length; j++) if (String(r[j][0]) === refId && r[j][9] !== true)
-      return { kind: kind, refId: refId, linkedKind: "account", linkedRef: String(r[j][10] || ""), hotel: String(_buildContractHotelMap_()[r[j][2]] || ""), amount: parseFloat(r[j][3]) || 0 };
+    {
+      // V3.86 — اسم الفندق يُحسب عند أول استخدام فقط (شيت التعاقدات يُقرأ للمقيَّدين بفنادق لا للمدير): كان قراءة كاملة في كل رفع/قائمة
+      var _o = { kind: kind, refId: refId, linkedKind: "account", linkedRef: String(r[j][10] || ""), amount: parseFloat(r[j][3]) || 0 }, _cid = r[j][2], _h = null;
+      Object.defineProperty(_o, "hotel", { enumerable: true, get: function() { if (_h === null) _h = String(_buildContractHotelMap_()[_cid] || ""); return _h; } });
+      return _o;
+    }
   }
   throw new Error("لم يتم العثور على الدفعة (أو أنها محذوفة).");
 }
@@ -2087,10 +2092,52 @@ function _attRowObj_(row, ref) {
     uploadedBy: String(row[7] || ""), uploadedAt: isNaN(at.getTime()) ? "" : _fmtDate_(at, tz, "dd/MM/yyyy HH:mm"),
     linked: !!ref && !(String(row[1]) === ref.kind && String(row[2]) === ref.refId) };
 }
+// V3.86 — قياس مراحل الرفع (يظهر بتقرير الأداء كـ ~uploadPaymentAttachment:<مرحلة>)
+function _attPhase_(name, t0) { try { _recordPerfSample_("~uploadPaymentAttachment:" + name, Date.now() - t0); } catch (e) {} }
+var _ATT_FAST_MAX_BYTES = 4500 * 1024; // الرفع متعدد الأجزاء لـ Drive مناسب للملفات الصغيرة (≤5MB)؛ الأكبر عبر DriveApp
+// يرفع الملف إلى مجلد الإيصالات عبر واجهة Drive REST بنداء واحد (أسرع بكثير من DriveApp.createFile) ويُعيد معرّف الملف
+function _driveUploadRest_(folderId, name, mimeType, bytes) {
+  if (!Array.isArray(bytes)) bytes = Array.prototype.slice.call(bytes);
+  var boundary = "rcpt" + Utilities.getUuid().replace(/-/g, "");
+  var head = Utilities.newBlob("--" + boundary + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n"
+    + JSON.stringify({ name: name, mimeType: mimeType, parents: [folderId] })
+    + "\r\n--" + boundary + "\r\nContent-Type: " + mimeType + "\r\n\r\n").getBytes();
+  var tail = Utilities.newBlob("\r\n--" + boundary + "--").getBytes();
+  try { _incrementDailyQuota_("URLFETCH"); } catch (e) {}
+  var res = UrlFetchApp.fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id", {
+    method: "post", contentType: "multipart/related; boundary=" + boundary,
+    headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() }, payload: [].concat(head, bytes, tail), muteHttpExceptions: true
+  });
+  var code = res.getResponseCode();
+  if (code < 200 || code > 299) throw new Error("HTTP " + code + " " + String(res.getContentText() || "").slice(0, 160));
+  var id = JSON.parse(res.getContentText()).id;
+  if (!id) throw new Error("HTTP 200 بلا معرّف ملف");
+  return String(id);
+}
+// ينشئ ملف المرفق: REST أولاً، وعند أي إخفاق يعود تلقائياً لـ DriveApp (الطريقة القديمة). عدم صلاحية/مجال (401/403 أو استثناء) يعطّل REST ست ساعات
+function _attDriveCreate_(bytes, mimeType, blobName) {
+  var off = false, fid = "";
+  try { off = !!CacheService.getScriptCache().get("ATT_FAST_OFF"); } catch (e) {}
+  try { fid = PropertiesService.getScriptProperties().getProperty("RECEIPTS_FOLDER_ID") || ""; } catch (e) {}
+  if (!off && fid && bytes.length <= _ATT_FAST_MAX_BYTES && typeof UrlFetchApp !== "undefined" && typeof ScriptApp !== "undefined") {
+    var t = Date.now();
+    try { var id = _driveUploadRest_(fid, blobName, mimeType, bytes); _attPhase_("drive-rest", t); return id; }
+    catch (e2) {
+      var msg = String((e2 && e2.message) || e2), m = /^HTTP (\d{3})/.exec(msg), code = m ? parseInt(m[1], 10) : 0;
+      if (!m || code === 401 || code === 403) { try { CacheService.getScriptCache().put("ATT_FAST_OFF", "1", 21600); } catch (e3) {} }
+      try { console.warn("[uploadPaymentAttachment] رفع REST تعذّر → DriveApp: " + msg.slice(0, 200)); } catch (e4) {}
+    }
+  }
+  var t2 = Date.now();
+  var file = _ensureReceiptsFolder_(true).createFile(Utilities.newBlob(bytes, mimeType, blobName)); // خاص: لا مشاركة ولا رابط عام
+  _attPhase_("drive-app", t2);
+  return file.getId();
+}
 // تناديها الواجهة: رفع مرفق لدفعة (base64). الصور تُضغط في المتصفح قبل الرفع
 function uploadPaymentAttachment(kind, refId, fileName, mimeType, base64Data, thumbB64, currentUser) { _apiGuard_();
   var _fn = "[uploadPaymentAttachment]"; _logInfo_(_fn, "START | " + kind + ":" + String(refId || "").slice(0, 30));
   try {
+  var _tA = Date.now();
   var ref = _attRef_(kind, refId);
   _attPerm_(currentUser, ref, true);
   mimeType = String(mimeType || "").toLowerCase().trim();
@@ -2102,18 +2149,22 @@ function uploadPaymentAttachment(kind, refId, fileName, mimeType, base64Data, th
   if (_attCount_(counts, ref.kind, ref.refId, ref.linkedKind, ref.linkedRef) >= _ATT_MAX_PER_PAYMENT) throw new Error("الحد الأقصى " + _ATT_MAX_PER_PAYMENT + " مرفقاً للدفعة الواحدة.");
   var clean = String(fileName || "إيصال").replace(/[\\\/:*?"<>|\u0000-\u001f]/g, "_").slice(0, 80) || "إيصال";
   var stamp = _fmtDate_(new Date(), _tz_(), "yyyyMMdd-HHmmss");
-  var blob = Utilities.newBlob(bytes, mimeType, ref.kind + "_" + ref.refId + "_" + stamp + "_" + clean);
-  var file = _ensureReceiptsFolder_(true).createFile(blob); // خاص: لا مشاركة ولا رابط عام — خارج قفل الكتابة (أبطأ خطوة)
+  var blobName = ref.kind + "_" + ref.refId + "_" + stamp + "_" + clean;
+  _attPhase_("prep", _tA);
+  var fileId = _attDriveCreate_(bytes, mimeType, blobName); // خارج قفل الكتابة (أبطأ خطوة)
   var thumb = String(thumbB64 || ""); if (thumb.length < 200 || thumb.length > 45000 || !/^[A-Za-z0-9+\/=]+$/.test(thumb)) thumb = ""; // معاينة اختيارية: غير الصالحة تُهمَل بصمت
-  var upAt = new Date(), id = "";
+  var upAt = new Date(), id = "", _tC = Date.now();
   _withLock_(function() { // القفل لتسلسل الرقم وكتابة الصفوف فقط
     id = _getNextSequentialId_("ATT-", 5);
-    _getOrCreateSheet_(_ATT_SHEET).appendRow([id, ref.kind, ref.refId, file.getId(), clean, mimeType, bytes.length, currentUser, upAt, false]);
+    _getOrCreateSheet_(_ATT_SHEET).appendRow([id, ref.kind, ref.refId, fileId, clean, mimeType, bytes.length, currentUser, upAt, false]);
     if (thumb) _getOrCreateSheet_("Payment_Attachment_Thumbs").appendRow([id, thumb]);
     _invalidateSheetCache_(_ATT_SHEET); _invalidateSheetCache_("Payment_Attachment_Thumbs");
   }, 20000);
+  _attPhase_("sheets", _tC);
+  var _tD = Date.now();
   logAudit("الحسابات", "إرفاق إيصال", ref.refId, "", "", "", "إرفاق " + (mimeType === "application/pdf" ? "ملف PDF" : "صورة") + " «" + clean + "» بدفعة " + (ref.kind === "account" ? "عميل/جهة" : "فندق") + " #" + ref.refId + (ref.linkedRef ? " (دفعة مزدوجة — يظهر عند الطرفين)" : ""), currentUser);
-  var item = _attRowObj_([id, ref.kind, ref.refId, file.getId(), clean, mimeType, bytes.length, currentUser, upAt, false], ref);
+  _attPhase_("audit", _tD);
+  var item = _attRowObj_([id, ref.kind, ref.refId, fileId, clean, mimeType, bytes.length, currentUser, upAt, false], ref);
   if (thumb) item.thumb = thumb;
   return { success: true, attachmentId: id, name: clean, item: item }; // الصف كاملاً: الواجهة تضيفه دون نداء قائمة ثانٍ
   } catch (e) { _logError_(_fn, e); throw e; }
@@ -5400,7 +5451,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.85";
+var APP_VERSION = "V3.86";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
