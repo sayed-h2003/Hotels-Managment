@@ -541,6 +541,17 @@ body.m-view .att-pick { width:100%; text-align:center; font-size:13px; padding:1
 body.m-view table.data-table tbody tr.hs-total { background:#f9e3a0; border:2px solid var(--clr-primary-dark); }
 body.m-view table.data-table tbody tr.hs-total td { background:#f9e3a0 !important; color:#3b2a05; }
 :root[data-theme="dark"] body.m-view table.data-table tbody tr.hs-total, :root[data-theme="dark"] body.m-view table.data-table tbody tr.hs-total td { background:#5b4a14 !important; color:#fff4cf; }
+/* V3.84 — أعمدة الدفتر: ترتيب بالسحب والإفلات وعرض بسحب الحافة (لا اقتطاع للنص) */
+#hsItemsTable td, #hsItemsTable th { white-space:normal; max-width:none; overflow:visible; text-overflow:clip; vertical-align:middle; }
+#hsItemsTable th { position:relative; }
+#hsItemsTable th[draggable="true"] { cursor:grab; user-select:none; }
+#hsItemsTable th.hs-dragging { opacity:.45; }
+#hsItemsTable th.hs-drop { background:#1d4a30 !important; box-shadow:inset 0 -3px 0 #c9a84c; }
+.hs-rs { position:absolute; top:0; bottom:0; inset-inline-end:0; width:9px; cursor:col-resize; touch-action:none; }
+.hs-rs::after { content:''; position:absolute; top:25%; bottom:25%; inset-inline-end:3px; width:2px; background:rgba(255,255,255,.35); border-radius:2px; }
+.hs-rs:hover::after, .hs-rs.on::after { background:#c9a84c; }
+.hs-hint { font-size:7pt; font-weight:600; color:var(--clr-muted); }
+body.m-view .hs-hint, body.m-view .hs-rs { display:none; }
 /* V3.83 — كشف الحساب مضمَّن أسفل صف الطرف بدل النافذة الضيقة */
 body .modal-box.as-inline, body.m-view .modal-box.as-inline { position:static !important; width:100% !important; max-width:none !important; max-height:none !important; height:auto !important; overflow:visible !important; margin:0 !important; transform:none !important; left:auto !important; top:auto !important; box-shadow:var(--shadow-md); border:1px solid var(--clr-border); border-radius:var(--radius-md) !important; display:block; }
 .modal-box.as-inline .modal-header { cursor:default; border-radius:var(--radius-md) var(--radius-md) 0 0; }
@@ -10733,6 +10744,71 @@ function _hsStatusHtml_(it) {
   if (it.status === 'partial') return '<span class="hs-badge part">🟡 مسدد جزئياً</span>';
   return '<span class="hs-badge up">⏳ قادم</span>';
 }
+// ═══ V3.84 — أعمدة دفتر الاستحقاقات: ترتيب بالسحب والإفلات + عرض بسحب الحافة (يُحفظ بالمتصفح) ═══
+var _HS_COLS = [{ k: 'date', l: 'التاريخ' }, { k: 'desc', l: 'البيان' }, { k: 'due', l: 'القسط (ر.س)' }, { k: 'paid', l: 'المسدد (ر.س)' }, { k: 'status', l: 'حالة القسط' }, { k: 'bal', l: 'الرصيد التراكمي' }];
+var _HS_COLS_KEY = 'hsLedgerCols_v2', _hsCols = null, _hsDragKey = null;
+function _hsColLabel_(k) { var r = 'إجراءات'; _HS_COLS.forEach(function(c) { if (c.k === k) r = c.l; }); return r; }
+function _hsColsState_() {
+  if (_hsCols) return _hsCols;
+  var st = { order: [], widths: {}, fixed: false }, all = _HS_COLS.map(function(c) { return c.k; });
+  try {
+    var o = JSON.parse(localStorage.getItem(_HS_COLS_KEY) || 'null');
+    if (o && o.order) { o.order.forEach(function(k) { if (all.indexOf(k) > -1 && st.order.indexOf(k) < 0) st.order.push(k); }); }
+    if (o && o.widths && o.fixed) { var okW = all.concat(['act']).every(function(k) { return o.widths[k] >= 40 && o.widths[k] <= 1200; }); if (okW) { st.widths = o.widths; st.fixed = true; } }
+  } catch (e) {}
+  all.forEach(function(k) { if (st.order.indexOf(k) < 0) st.order.push(k); });
+  _hsCols = st; return st;
+}
+function _hsColsSave_() { try { localStorage.setItem(_HS_COLS_KEY, JSON.stringify(_hsCols)); } catch (e) {} }
+function hsColsReset() { _hsCols = null; try { localStorage.removeItem(_HS_COLS_KEY); } catch (e) {} renderHotelSchedule(); }
+function _hsMoveCol_(from, to) {
+  var st = _hsColsState_(), fi = st.order.indexOf(from), ti = st.order.indexOf(to);
+  if (fi < 0 || ti < 0 || fi === ti) return;
+  st.order.splice(fi, 1);
+  st.order.splice(fi < ti ? st.order.indexOf(to) + 1 : st.order.indexOf(to), 0, from);
+  _hsColsSave_(); renderHotelSchedule();
+}
+function _hsColsBind_() {
+  var t = document.getElementById('hsItemsTable'); if (!t) return;
+  Array.prototype.forEach.call(t.querySelectorAll('thead th[data-col]'), function(th) {
+    var k = th.getAttribute('data-col');
+    if (k !== 'act') {
+      th.addEventListener('dragstart', function(e) { _hsDragKey = k; th.classList.add('hs-dragging'); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', k); } catch (x) {} });
+      th.addEventListener('dragend', function() { _hsDragKey = null; Array.prototype.forEach.call(t.querySelectorAll('th'), function(x) { x.classList.remove('hs-dragging', 'hs-drop'); }); });
+      th.addEventListener('dragover', function(e) { if (_hsDragKey && _hsDragKey !== k) { e.preventDefault(); th.classList.add('hs-drop'); } });
+      th.addEventListener('dragleave', function() { th.classList.remove('hs-drop'); });
+      th.addEventListener('drop', function(e) { e.preventDefault(); var from = _hsDragKey; _hsDragKey = null; if (from && from !== k) _hsMoveCol_(from, k); });
+    }
+    var rs = th.querySelector('.hs-rs');
+    if (rs) rs.addEventListener('pointerdown', function(e) { _hsResizeStart_(e, th, rs); });
+  });
+}
+function _hsResizeStart_(e, th, rs) {
+  e.preventDefault(); e.stopPropagation();
+  var t = document.getElementById('hsItemsTable'); if (!t) return;
+  var ths = Array.prototype.slice.call(t.querySelectorAll('thead th[data-col]')), w = {};
+  ths.forEach(function(x) { w[x.getAttribute('data-col')] = Math.round(x.getBoundingClientRect().width); });
+  ths.forEach(function(x) { x.style.width = w[x.getAttribute('data-col')] + 'px'; });
+  t.style.tableLayout = 'fixed';
+  var sum = function() { var n = 0; for (var q in w) n += w[q]; return n; };
+  t.style.width = sum() + 'px'; t.style.minWidth = '';
+  var k = th.getAttribute('data-col'), startW = w[k], startX = e.clientX, rtl = getComputedStyle(t).direction === 'rtl', wasDrag = th.getAttribute('draggable');
+  th.setAttribute('draggable', 'false'); rs.classList.add('on');
+  try { rs.setPointerCapture(e.pointerId); } catch (x) {}
+  var mv = function(ev) { var dx = rtl ? (startX - ev.clientX) : (ev.clientX - startX); w[k] = Math.max(48, Math.round(startW + dx)); th.style.width = w[k] + 'px'; t.style.width = sum() + 'px'; };
+  var up = function() {
+    rs.removeEventListener('pointermove', mv); rs.removeEventListener('pointerup', up); rs.removeEventListener('pointercancel', up);
+    rs.classList.remove('on'); if (wasDrag) th.setAttribute('draggable', wasDrag);
+    var st = _hsColsState_(); st.widths = w; st.fixed = true; _hsColsSave_();
+  };
+  rs.addEventListener('pointermove', mv); rs.addEventListener('pointerup', up); rs.addEventListener('pointercancel', up);
+}
+// صفوف الدفتر كما تُعرض: تصفية «إخفاء المسدد» + تصفية تاريخ الكشف (الرصيد التراكمي يبقى من بداية التعاقد)
+function _hsLedgerRows_() {
+  var led = (_hsData && _hsData.ledger) || [], sf = _asFilterVals_();
+  var rows = led.filter(function(r) { return (!_hsHidePaid || (r.type === 'due' && r.status !== 'paid')) && (!sf.from || !r.dateIso || r.dateIso >= sf.from) && (!sf.to || !r.dateIso || r.dateIso <= sf.to); });
+  return { led: led, rows: rows, sf: sf };
+}
 function renderHotelSchedule() {
   var box = document.getElementById('asSchedBox'), d = _hsData; if (!box || !d) return;
   var n = function(v) { return fmtSAR(v || 0); };
@@ -10755,10 +10831,8 @@ function renderHotelSchedule() {
 
   // V3.82 — دفتر واحد مرتب بالتاريخ: الأقساط بتواريخ استحقاقها والدفعات بتواريخ سدادها (بيانها تفصيلاً)، والرصيد التراكمي بعد كل سطر
   // (الأقساط − الدفعات حتى ذلك السطر) — فيُعرف كم يتبقى للفندق عند أي دفعة. حالة كل قسط بالخصم بالأقدمية كما هي.
-  html += '<div class="hs-sec-title"><span>📅 الأقساط والدفعات بترتيب التاريخ</span><label style="font-size:7.6pt;font-weight:700;color:var(--clr-text-sub);display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="hs_hide_paid"' + (_hsHidePaid ? ' checked' : '') + ' onchange="_hsHidePaid=this.checked;renderHotelSchedule()"> إخفاء المسدد والدفعات (المتبقي فقط)</label></div>';
-  var led = d.ledger || [];
-  var _sf = _asFilterVals_(); // V3.83 — تصفية التاريخ الخاصة بالكشف (عرض فقط: الرصيد التراكمي يبقى محسوباً من بداية التعاقد)
-  var rows = led.filter(function(r) { return (!_hsHidePaid || (r.type === 'due' && r.status !== 'paid')) && (!_sf.from || !r.dateIso || r.dateIso >= _sf.from) && (!_sf.to || !r.dateIso || r.dateIso <= _sf.to); });
+  html += '<div class="hs-sec-title"><span>📅 الأقساط والدفعات بترتيب التاريخ <span class="hs-hint">↔️ اسحب عنوان العمود لتغيير ترتيبه، وحافته لتغيير عرضه</span> <button type="button" class="btn-secondary" style="font-size:7pt;padding:2px 8px;" title="إرجاع ترتيب الأعمدة وعرضها للوضع الافتراضي" onclick="hsColsReset()">↺ الأعمدة</button></span><label style="font-size:7.6pt;font-weight:700;color:var(--clr-text-sub);display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="hs_hide_paid"' + (_hsHidePaid ? ' checked' : '') + ' onchange="_hsHidePaid=this.checked;renderHotelSchedule()"> إخفاء المسدد والدفعات (المتبقي فقط)</label></div>';
+  var _lv = _hsLedgerRows_(), led = _lv.led, _sf = _lv.sf, rows = _lv.rows; // V3.83 — تصفية التاريخ الخاصة بالكشف (عرض فقط: الرصيد التراكمي يبقى محسوباً من بداية التعاقد)
   if (_sf.from || _sf.to) html += '<div class="hs-note" style="background:#fff8e6;border-color:#fde68a;color:#92400e;">🔎 عرض الفترة ' + (_sf.from ? 'من ' + escapeHtml(_sf.from.split('-').reverse().join('/')) : 'من البداية') + ' ' + (_sf.to ? 'إلى ' + escapeHtml(_sf.to.split('-').reverse().join('/')) : 'حتى النهاية') + ' (' + rows.length + ' من ' + led.length + ' سطر) — الرصيد التراكمي والإجماليات محسوبة من بداية التعاقد.</div>';
   var balHtml = function(b) {
     if (b > 0.004) return '<span style="color:#b91c1c;">' + n(b) + '</span>';
@@ -10767,26 +10841,30 @@ function renderHotelSchedule() {
   };
   if (!led.length) html += '<div style="text-align:center;padding:14px;color:var(--clr-muted);background:var(--clr-bg);border-radius:var(--radius-sm);">لا توجد تعاقدات أو أقساط أو دفعات لهذا الفندق.</div>';
   else {
-    html += '<div style="overflow-x:auto;border:1px solid var(--clr-border);border-radius:var(--radius-sm);"><table class="data-table hs-table" id="hsItemsTable" style="width:100%;"><thead><tr>'
-      + '<th>التاريخ</th><th>البيان</th><th>القسط (ر.س)</th><th>المسدد (ر.س)</th><th>المتبقي من القسط</th><th>حالة القسط</th><th>الرصيد التراكمي</th><th>إجراءات</th></tr></thead><tbody>';
+    var _hc = _hsColsState_(), _ord = _hc.order, _wd = _hc.widths, _ncol = _ord.length + 1;
+    var _tbl = _hc.fixed ? ('table-layout:fixed;width:' + _ord.concat(['act']).reduce(function(a, k) { return a + (_wd[k] || 0); }, 0) + 'px;') : 'width:100%;';
+    var _th = function(k) { return '<th data-col="' + k + '"' + (k !== 'act' ? ' draggable="true" title="اسحب لتغيير ترتيب العمود"' : '') + (_hc.fixed ? ' style="width:' + (_wd[k] || 80) + 'px;"' : '') + '>' + _hsColLabel_(k) + '<span class="hs-rs" title="اسحب لتغيير العرض"></span></th>'; };
+    html += '<div style="overflow-x:auto;border:1px solid var(--clr-border);border-radius:var(--radius-sm);"><table class="data-table hs-table" id="hsItemsTable" style="' + _tbl + '"><thead><tr>'
+      + _ord.map(_th).join('') + _th('act') + '</tr></thead><tbody>';
+    var _tr = function(cls, c) { return '<tr class="' + cls + '">' + _ord.map(function(k) { return c[k]; }).join('') + c.act + '</tr>'; };
     var todayShown = false;
     rows.forEach(function(r) {
-      if (!todayShown && r.future) { todayShown = true; html += '<tr class="hs-today"><td colspan="8">— اليوم ' + escapeHtml(d.today) + ' —</td></tr>'; }
+      if (!todayShown && r.future) { todayShown = true; html += '<tr class="hs-today"><td colspan="' + _ncol + '">— اليوم ' + escapeHtml(d.today) + ' —</td></tr>'; }
       if (r.type === 'pay') {
         var who = r.payerName ? ('دفعة من ' + (r.payerType === 'client' ? 'العميل ' : '') + escapeHtml(r.payerName)) : 'دفعة سداد';
         var stmt = r.statement || r.notes || '';
         if (r.payerName && /^دفعة مزدوجة من/.test(stmt)) stmt = (r.notes && !/^دفعة مزدوجة من/.test(r.notes)) ? r.notes : ''; // البيان الافتراضي يكرر اسم المسدِّد
         var pacts = _attBtnHtml_('receipt', r.receiptId, r.attCount, canEdit, (r.date || '') + ' — ' + n(r.amount) + ' ر.س') + (canEdit ? ('<button class="btn-secondary" style="font-size:7pt;padding:2px 7px;" title="تعديل / نقل الدفعة" onclick="hsEditReceipt(\'' + escapeHtmlAttr(r.receiptId) + '\')">✏️</button> '
           + '<button class="btn-secondary" style="font-size:7pt;padding:2px 7px;color:var(--clr-danger);" title="حذف الدفعة" onclick="deleteAhpPayment(\'' + escapeHtmlAttr(r.receiptId) + '\',' + (r.linkedAccountPaymentId ? 'true' : 'false') + ',\'' + escapeHtmlAttr(r.linkedAccountPaymentId || '') + '\')">🗑</button>') : '');
-        html += '<tr class="hs-pay">'
-          + '<td style="white-space:nowrap;font-weight:700;">' + escapeHtml(r.date) + '</td>'
-          + '<td>💳 <b>' + who + '</b>' + (r.linkedAccountPaymentId ? ' <span class="hs-dual" title="دفعة مزدوجة">🔗</span>' : '') + (stmt ? ' — ' + escapeHtml(stmt) : '')
-            + '<span class="hs-sub">تعاقد #' + escapeHtml(r.contractId) + ' · ' + (r.unassigned ? 'بلا قسط (يُخصم بالأقدمية)' : (r.orphan ? '⚠️ قسط #' + escapeHtml(r.paymentId) + ' محذوف' : 'مسجَّلة على قسط #' + escapeHtml(r.paymentId))) + '</span></td>'
-          + '<td style="text-align:center;">—</td>'
-          + '<td style="text-align:center;font-weight:800;color:#15803d;">' + n(r.amount) + '</td>'
-          + '<td style="text-align:center;">—</td><td style="text-align:center;">—</td>'
-          + '<td style="text-align:center;font-weight:800;">' + balHtml(r.balance) + '</td>'
-          + '<td style="text-align:center;white-space:nowrap;">' + pacts + '</td></tr>';
+        html += _tr('hs-pay', {
+          date: '<td style="white-space:nowrap;font-weight:700;">' + escapeHtml(r.date) + '</td>',
+          desc: '<td>💳 <b>' + who + '</b>' + (r.linkedAccountPaymentId ? ' <span class="hs-dual" title="دفعة مزدوجة">🔗</span>' : '') + (stmt ? ' — ' + escapeHtml(stmt) : '')
+            + '<span class="hs-sub">تعاقد #' + escapeHtml(r.contractId) + ' · ' + (r.unassigned ? 'بلا قسط (يُخصم بالأقدمية)' : (r.orphan ? '⚠️ قسط #' + escapeHtml(r.paymentId) + ' محذوف' : 'مسجَّلة على قسط #' + escapeHtml(r.paymentId))) + '</span></td>',
+          due: '<td style="text-align:center;">—</td>',
+          paid: '<td style="text-align:center;font-weight:800;color:#15803d;">' + n(r.amount) + '</td>',
+          status: '<td style="text-align:center;">—</td>',
+          bal: '<td style="text-align:center;font-weight:800;">' + balHtml(r.balance) + '</td>',
+          act: '<td style="text-align:center;white-space:nowrap;">' + pacts + '</td>' });
         return;
       }
       var it = r, cls = it.status === 'paid' ? 'hs-paid' : (it.overdue ? 'hs-over' : (it.status === 'partial' ? 'hs-part' : ''));
@@ -10797,21 +10875,25 @@ function renderHotelSchedule() {
           + '<button class="btn-secondary" style="font-size:7pt;padding:2px 7px;color:var(--clr-danger);" title="حذف القسط" onclick="hsDeleteInstallment(\'' + escapeHtmlAttr(it.paymentId) + '\')">🗑</button>';
         else acts = '<button class="btn-secondary" style="font-size:7pt;padding:2px 7px;color:#1d4ed8;" title="جدولة هذا المبلغ كقسط" onclick="hsScheduleRest(\'' + escapeHtmlAttr(it.contractId) + '\',' + it.remaining + ')">➕ جدولة</button>';
       }
-      html += '<tr class="' + cls + '">'
-        + '<td style="white-space:nowrap;font-weight:700;">' + escapeHtml(it.date) + '</td>'
-        + '<td>' + what + '<span class="hs-sub"><a href="javascript:void(0)" onclick="asGoToContractPayments(\'' + escapeHtmlAttr(it.contractId) + '\')" style="color:var(--clr-primary-dark);font-weight:700;">' + escapeHtml(it.contractLabel) + '</a></span></td>'
-        + '<td style="text-align:center;font-weight:700;color:#b45309;">' + n(it.amount) + '</td>'
-        + '<td style="text-align:center;">—</td>'
-        + '<td style="text-align:center;font-weight:900;color:' + (it.remaining > 0.004 ? '#b91c1c' : '#475569') + ';">' + (it.remaining > 0.004 ? n(it.remaining) : '—') + '</td>'
-        + '<td style="text-align:center;">' + _hsStatusHtml_(it) + '</td>'
-        + '<td style="text-align:center;font-weight:800;">' + balHtml(it.balance) + '</td>'
-        + '<td style="text-align:center;white-space:nowrap;">' + acts + '</td></tr>';
+      html += _tr(cls, {
+        date: '<td style="white-space:nowrap;font-weight:700;">' + escapeHtml(it.date) + '</td>',
+        desc: '<td>' + what + '<span class="hs-sub"><a href="javascript:void(0)" onclick="asGoToContractPayments(\'' + escapeHtmlAttr(it.contractId) + '\')" style="color:var(--clr-primary-dark);font-weight:700;">' + escapeHtml(it.contractLabel) + '</a></span></td>',
+        due: '<td style="text-align:center;font-weight:700;color:#b45309;">' + n(it.amount) + '</td>',
+        paid: '<td style="text-align:center;">—</td>',
+        status: '<td style="text-align:center;">' + _hsStatusHtml_(it) + '</td>',
+        bal: '<td style="text-align:center;font-weight:800;">' + balHtml(it.balance) + '</td>',
+        act: '<td style="text-align:center;white-space:nowrap;">' + acts + '</td>' });
     });
-    if (!todayShown && rows.length) html += '<tr class="hs-today"><td colspan="8">— اليوم ' + escapeHtml(d.today) + ' —</td></tr>';
-    html += '<tr class="hs-total"><td colspan="2" style="font-weight:900;">الإجمالي</td><td style="text-align:center;font-weight:900;color:#b45309;">' + n(d.totalDue) + '</td><td style="text-align:center;font-weight:900;color:#15803d;">' + n(d.totalPaid) + '</td><td style="text-align:center;font-weight:900;color:#b91c1c;">' + n(Math.max(0, d.balance)) + '</td><td></td><td style="text-align:center;font-weight:900;">' + balHtml(d.balance) + '</td><td></td></tr>';
+    if (!todayShown && rows.length) html += '<tr class="hs-today"><td colspan="' + _ncol + '">— اليوم ' + escapeHtml(d.today) + ' —</td></tr>';
+    html += _tr('hs-total', {
+      date: '<td></td>', desc: '<td style="font-weight:900;">الإجمالي</td>',
+      due: '<td style="text-align:center;font-weight:900;color:#b45309;">' + n(d.totalDue) + '</td>',
+      paid: '<td style="text-align:center;font-weight:900;color:#15803d;">' + n(d.totalPaid) + '</td>',
+      status: '<td></td>', bal: '<td style="text-align:center;font-weight:900;">' + balHtml(d.balance) + '</td>', act: '<td></td>' });
     html += '</tbody></table></div>';
   }
   box.innerHTML = html;
+  _hsColsBind_();
 }
 // تعديل/نقل دفعة من جدول الدفعات (يستخدم نموذج دفعة الفندق أسفل النافذة)
 function hsEditReceipt(receiptId) {
@@ -10879,31 +10961,63 @@ function printHotelSchedule() {
   var d = _hsData; if (!d) { showToast('لا يوجد جدول استحقاقات معروض للطباعة.', 'warning'); return; }
   var b = _companyBranding || {}, brandName = b.nameAr || b.nameEn || 'نظام إدارة حجوزات الفنادق', now = new Date();
   var printDate = String(now.getDate()).padStart(2,'0') + '/' + String(now.getMonth()+1).padStart(2,'0') + '/' + now.getFullYear() + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
-  var st = function(it) { return it.status === 'paid' ? ('مسدد بالكامل' + (it.settledOn ? ' ' + it.settledOn : '')) : (it.overdue ? ('متأخر ' + it.overdueDays + ' يوم' + (it.status === 'partial' ? ' (جزئي)' : '')) : (it.status === 'partial' ? 'مسدد جزئياً' : 'قادم')); };
   var chips = ['المستحق: ' + fmtSAR(d.totalDue) + ' ر.س', 'المسدد: ' + fmtSAR(d.totalPaid) + ' ر.س', (d.balance >= 0 ? 'المتبقي: ' : 'زيادة: ') + fmtSAR(Math.abs(d.balance)) + ' ر.س', 'متأخر حتى اليوم: ' + fmtSAR(d.overdue) + ' ر.س', 'خلال 30 يوماً: ' + fmtSAR(d.next30) + ' ر.س'];
-  var rowsHtml = d.items.map(function(it) {
-    var bg = it.status === 'paid' ? '#f0fdf4' : (it.overdue ? '#fef2f2' : (it.status === 'partial' ? '#fffbeb' : '#fff'));
-    return '<tr style="background:' + bg + ';"><td style="text-align:center;">' + it.n + '</td><td style="text-align:center;white-space:nowrap;">' + escapeHtml(it.dueDate) + '</td>'
-      + '<td>' + escapeHtml(it.contractLabel) + ' — ' + (it.kind === 'unscheduled' ? 'غير مجدول' : 'قسط #' + escapeHtml(it.paymentId)) + '</td>'
-      + '<td style="text-align:center;">' + fmtSAR(it.amount) + '</td><td style="text-align:center;">' + (it.allocated ? fmtSAR(it.allocated) : '—') + '</td>'
-      + '<td style="text-align:center;font-weight:800;">' + (it.remaining > 0.004 ? fmtSAR(it.remaining) : '—') + '</td><td style="text-align:center;">' + escapeHtml(st(it)) + '</td>'
-      + '<td style="text-align:center;font-weight:800;">' + (it.outstandingThrough > 0.004 ? fmtSAR(it.outstandingThrough) : 'مغطّى') + '</td></tr>';
-  }).join('');
-  var recHtml = (d.receipts || []).map(function(r) {
-    return '<tr><td style="text-align:center;white-space:nowrap;">' + escapeHtml(r.payDate) + '</td><td style="text-align:center;">' + fmtSAR(r.amount) + '</td><td>' + escapeHtml(r.statement || r.notes || '') + '</td><td>تعاقد #' + escapeHtml(r.contractId) + ' — قسط #' + escapeHtml(r.paymentId) + '</td></tr>';
-  }).join('');
+  // V3.84 — يُطبع الدفتر كما هو معروض: نفس ترتيب الأعمدة ونسب عرضها ونفس الصفوف المصفّاة (إخفاء المسدد/الفترة)، بتنسيق مناسب للورق
+  var V = _hsLedgerRows_(), hc = _hsColsState_(), ord = hc.order, sf = V.sf, dmy = function(iso) { return iso.split('-').reverse().join('/'); };
+  var def = { date: 12, due: 14, paid: 14, status: 18, bal: 15 }, pw = {}, tot = 0;
+  if (hc.fixed) { ord.forEach(function(k) { tot += hc.widths[k] || 80; }); ord.forEach(function(k) { pw[k] = Math.round((hc.widths[k] || 80) / tot * 1000) / 10; }); }
+  else { var used = 0; ord.forEach(function(k) { if (k !== 'desc') { pw[k] = def[k]; used += def[k]; } }); pw.desc = 100 - used; }
+  var n = function(v) { return fmtSAR(v || 0); };
+  var balP = function(v) { return v > 0.004 ? '<span style="color:#b91c1c;">' + n(v) + '</span>' : (v < -0.004 ? '<span style="color:#1d4ed8;">-' + n(Math.abs(v)) + '</span>' : '<span style="color:#15803d;">0.00</span>'); };
+  var pill = function(it) {
+    if (it.status === 'paid') return '<span class="pb g">✔ مسدد بالكامل</span>' + (it.settledOn ? '<div class="sb">اكتمل ' + escapeHtml(it.settledOn) + (it.lateDays ? ' — متأخراً ' + it.lateDays + ' يوم' : '') + '</div>' : '');
+    if (it.overdue) return '<span class="pb r">متأخر ' + (it.kind === 'unscheduled' ? 'منذ بداية التعاقد' : it.overdueDays + ' يوم') + '</span>' + (it.status === 'partial' ? '<div class="sb">مسدد جزئياً</div>' : '');
+    if (it.status === 'partial') return '<span class="pb y">مسدد جزئياً</span>';
+    return '<span class="pb b">قادم</span>';
+  };
+  var thH = ord.map(function(k) { return '<th style="width:' + pw[k] + '%;">' + _hsColLabel_(k) + '</th>'; }).join('');
+  var todayDone = false, body = '';
+  var todayRow = '<tr class="td"><td colspan="' + ord.length + '">— اليوم ' + escapeHtml(d.today) + ' —</td></tr>';
+  var tr = function(cls, c) { return '<tr class="' + cls + '">' + ord.map(function(k) { return c[k]; }).join('') + '</tr>'; };
+  V.rows.forEach(function(r) {
+    if (!todayDone && r.future) { todayDone = true; body += todayRow; }
+    if (r.type === 'pay') {
+      var who = r.payerName ? ('دفعة من ' + (r.payerType === 'client' ? 'العميل ' : '') + escapeHtml(r.payerName)) : 'دفعة سداد';
+      var stmt = r.statement || r.notes || '';
+      if (r.payerName && /^دفعة مزدوجة من/.test(stmt)) stmt = (r.notes && !/^دفعة مزدوجة من/.test(r.notes)) ? r.notes : '';
+      body += tr('pay', {
+        date: '<td class="c nw">' + escapeHtml(r.date) + '</td>',
+        desc: '<td><b>' + who + '</b>' + (r.linkedAccountPaymentId ? ' 🔗' : '') + (stmt ? ' — ' + escapeHtml(stmt) : '') + '<div class="sb">تعاقد #' + escapeHtml(r.contractId) + ' · ' + (r.unassigned ? 'بلا قسط (يُخصم بالأقدمية)' : (r.orphan ? 'قسط #' + escapeHtml(r.paymentId) + ' محذوف' : 'على قسط #' + escapeHtml(r.paymentId))) + '</div></td>',
+        due: '<td class="c">—</td>', paid: '<td class="c" style="color:#15803d;font-weight:800;">' + n(r.amount) + '</td>', status: '<td class="c">—</td>',
+        bal: '<td class="c" style="font-weight:800;">' + balP(r.balance) + '</td>' });
+      return;
+    }
+    var cls = r.status === 'paid' ? 'ok' : (r.overdue ? 'od' : (r.status === 'partial' ? 'pt' : ''));
+    body += tr(cls, {
+      date: '<td class="c nw">' + escapeHtml(r.date) + '</td>',
+      desc: '<td>' + (r.kind === 'unscheduled' ? '<i>باقي قيم تعاقدات الفندق (غير مجدول)</i>' : '<b>قسط #' + escapeHtml(r.paymentId) + '</b>' + (r.notes ? ' — ' + escapeHtml(r.notes) : '')) + '<div class="sb">' + escapeHtml(r.contractLabel) + '</div></td>',
+      due: '<td class="c" style="color:#b45309;font-weight:700;">' + n(r.amount) + '</td>', paid: '<td class="c">—</td>',
+      status: '<td class="c">' + pill(r) + '</td>', bal: '<td class="c" style="font-weight:800;">' + balP(r.balance) + '</td>' });
+  });
+  if (!todayDone && V.rows.length) body += todayRow;
+  var foot = tr('tot', { date: '<td></td>', desc: '<td style="font-weight:900;">الإجمالي</td>', due: '<td class="c" style="color:#b45309;">' + n(d.totalDue) + '</td>', paid: '<td class="c" style="color:#15803d;">' + n(d.totalPaid) + '</td>', status: '<td></td>', bal: '<td class="c">' + balP(d.balance) + '</td>' });
+  var sub = d.hotel + ' — حتى ' + d.today + (_hsHidePaid ? ' — المتبقي فقط' : '') + ((sf.from || sf.to) ? ' — الفترة ' + (sf.from ? 'من ' + dmy(sf.from) : 'من البداية') + (sf.to ? ' إلى ' + dmy(sf.to) : ' حتى النهاية') : '');
   var html = '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>استحقاقات — ' + escapeHtml(d.hotel) + '</title><style>'
     + _ppBaseCss('portrait', 10)
-    + '.as-print-table { width:100%; border-collapse:collapse; font-size:7.8pt; margin-bottom:10px; }'
-    + '.as-print-table th { background:#0f2419; color:#fff; padding:5px 6px; border:1px solid #0f2419; font-size:7.6pt; }'
-    + '.as-print-table td { padding:4px 6px; border:1px solid #d7e0d7; color:#1f2b22; }'
-    + 'h3 { font-size:9pt; color:#0f2419; margin:10px 0 4px; }'
+    + '.as-print-table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:7.8pt; }'
+    + '.as-print-table th { background:#0f2419; color:#fff; padding:6px 5px; border:1px solid #0f2419; font-size:7.8pt; }'
+    + '.as-print-table td { padding:4px 6px; border:1px solid #d7e0d7; color:#1f2b22; vertical-align:middle; overflow-wrap:anywhere; }'
+    + '.as-print-table td.c { text-align:center; } .as-print-table td.nw { white-space:nowrap; }'
+    + '.as-print-table .sb { font-size:6.6pt; color:#6b7a70; margin-top:1px; }'
+    + '.as-print-table tr.ok td { background:#f0fdf4; } .as-print-table tr.od td { background:#fef2f2; } .as-print-table tr.pt td { background:#fffbeb; } .as-print-table tr.pay td { background:#f3f8ff; }'
+    + '.as-print-table tr.td td { background:#0f2419; color:#f1ead2; text-align:center; font-weight:800; font-size:7pt; padding:2px; }'
+    + '.as-print-table tfoot td { background:#f9e3a0; color:#3b2a05; font-size:8.6pt; font-weight:900; border-top:2px solid #0f2419; border-bottom:2px solid #0f2419; padding:6px; }'
+    + '.pb { display:inline-block; border-radius:10px; padding:1px 8px; font-size:7pt; font-weight:800; white-space:nowrap; }'
+    + '.pb.g { background:#dcfce7; color:#166534; } .pb.r { background:#fee2e2; color:#991b1b; } .pb.y { background:#fef3c7; color:#92400e; } .pb.b { background:#e0e7ff; color:#3730a3; }'
     + '</style></head><body>'
-    + _ppRichHeaderHtml('📅 جدول الاستحقاقات (خصم بالأقدمية)', d.hotel + ' — حتى ' + d.today, chips)
-    + '<div id="printTableWrap"><table class="as-print-table"><thead><tr><th style="width:24px;">#</th><th style="width:62px;">الاستحقاق</th><th>التعاقد / البند</th><th style="width:66px;">القسط</th><th style="width:66px;">المخصوم</th><th style="width:66px;">المتبقي</th><th style="width:86px;">الحالة</th><th style="width:72px;">المتبقي التراكمي</th></tr></thead><tbody>'
-    + rowsHtml + '</tbody></table>'
-    + (recHtml ? '<h3>الدفعات المسددة للفندق</h3><table class="as-print-table"><thead><tr><th style="width:62px;">التاريخ</th><th style="width:70px;">المبلغ</th><th>البيان</th><th style="width:150px;">مسجَّلة على</th></tr></thead><tbody>' + recHtml + '</tbody></table>' : '')
-    + '</div></body></html>';
+    + _ppRichHeaderHtml('📅 الأقساط والدفعات بترتيب التاريخ', sub, chips)
+    + '<div id="printTableWrap"><table class="as-print-table"><thead><tr>' + thH + '</tr></thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table></div>'
+    + '</body></html>';
   var w = window.open('', '_blank');
   if (!w) { showToast('فعّل النوافذ المنبثقة لإكمال الطباعة.', 'warning'); return; }
   w.document.open(); w.document.write(html); w.document.close();
@@ -12188,7 +12302,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.83';
+var CLIENT_APP_VERSION = 'V3.84';
 var _BUILD_VERSION = CLIENT_APP_VERSION; // نسخة الكود المحمَّل في هذا التبويب (لا تتغير بعد التحميل)
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
