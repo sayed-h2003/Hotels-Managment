@@ -542,11 +542,12 @@ body.m-view table.data-table tbody tr.hs-total { background:#f9e3a0; border:2px 
 body.m-view table.data-table tbody tr.hs-total td { background:#f9e3a0 !important; color:#3b2a05; }
 :root[data-theme="dark"] body.m-view table.data-table tbody tr.hs-total, :root[data-theme="dark"] body.m-view table.data-table tbody tr.hs-total td { background:#5b4a14 !important; color:#fff4cf; }
 /* V3.84 — أعمدة الدفتر: ترتيب بالسحب والإفلات وعرض بسحب الحافة (لا اقتطاع للنص) */
-#hsItemsTable td, #hsItemsTable th { white-space:normal; max-width:none; overflow:visible; text-overflow:clip; vertical-align:middle; }
-#hsItemsTable th { position:relative; }
-#hsItemsTable th[draggable="true"] { cursor:grab; user-select:none; }
-#hsItemsTable th.hs-dragging { opacity:.45; }
-#hsItemsTable th.hs-drop { background:#1d4a30 !important; box-shadow:inset 0 -3px 0 #c9a84c; }
+table.data-table.tc-table td, table.data-table.tc-table th { white-space:normal; max-width:none; overflow:visible; text-overflow:clip; vertical-align:middle; }
+table.tc-table th { position:relative; }
+table.tc-table th[draggable="true"] { cursor:grab; user-select:none; }
+table.tc-table th.hs-dragging { opacity:.45; }
+table.tc-table th.hs-drop { background:#1d4a30 !important; box-shadow:inset 0 -3px 0 #c9a84c; }
+body.m-view #asStmtColsBar { display:none !important; }
 .hs-rs { position:absolute; top:0; bottom:0; inset-inline-end:0; width:9px; cursor:col-resize; touch-action:none; }
 .hs-rs::after { content:''; position:absolute; top:25%; bottom:25%; inset-inline-end:3px; width:2px; background:rgba(255,255,255,.35); border-radius:2px; }
 .hs-rs:hover::after, .hs-rs.on::after { background:#c9a84c; }
@@ -10664,6 +10665,7 @@ function openAccountStatementModal(partyKey, focusForm, tab) {
   if (isHotel) resetAhpPaymentForm(); else resetAsPaymentForm();
   document.getElementById('asSummaryBox').innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:10px;color:var(--clr-muted);">جاري التحميل...</div>';
   document.getElementById('asTableBody').innerHTML = '';
+  _asHeadRender_();
   // V3.78 — تبويبا الفندق (كشف الحساب / الاستحقاقات والدفعات)
   _hsData = null; hsCloseInstForm();
   document.getElementById('asTabs').style.display = (isHotel || _canPayBtn) ? '' : 'none';
@@ -10716,6 +10718,7 @@ function asSwitchTab(t) {
   document.getElementById('asSchedWrap').style.display = sched ? '' : 'none';
   document.getElementById('asSummaryBox').style.display = sched ? 'none' : 'grid'; // V3.82 — '' كانت تمسح display:grid فتتكدّس البطاقات الثلاث في 3 أسطر
   document.getElementById('asStmtTableWrap').style.display = sched ? 'none' : '';
+  var _cb = document.getElementById('asStmtColsBar'); if (_cb) _cb.style.display = sched ? 'none' : '';
   var pb = document.getElementById('asPrintBtn'); if (pb) pb.innerText = sched ? '🖨️ طباعة جدول الاستحقاقات' : '🖨️ طباعة كشف الحساب';
   if (_asCurrent) document.getElementById('asModalTitle').innerText = (sched ? '📅 الاستحقاقات والدفعات — ' : '📑 كشف حساب — ') + _asCurrent.partyName + (isHotel ? ' (فندق)' : '');
   if (sched) { if (_hsData) renderHotelSchedule(); else loadHotelSchedule(); }
@@ -10745,63 +10748,88 @@ function _hsStatusHtml_(it) {
   return '<span class="hs-badge up">⏳ قادم</span>';
 }
 // ═══ V3.84 — أعمدة دفتر الاستحقاقات: ترتيب بالسحب والإفلات + عرض بسحب الحافة (يُحفظ بالمتصفح) ═══
-var _HS_COLS = [{ k: 'date', l: 'التاريخ' }, { k: 'desc', l: 'البيان' }, { k: 'due', l: 'القسط (ر.س)' }, { k: 'paid', l: 'المسدد (ر.س)' }, { k: 'status', l: 'حالة القسط' }, { k: 'bal', l: 'الرصيد التراكمي' }];
-var _HS_COLS_KEY = 'hsLedgerCols_v2', _hsCols = null, _hsDragKey = null;
-function _hsColLabel_(k) { var r = 'إجراءات'; _HS_COLS.forEach(function(c) { if (c.k === k) r = c.l; }); return r; }
-function _hsColsState_() {
-  if (_hsCols) return _hsCols;
-  var st = { order: [], widths: {}, fixed: false }, all = _HS_COLS.map(function(c) { return c.k; });
-  try {
-    var o = JSON.parse(localStorage.getItem(_HS_COLS_KEY) || 'null');
-    if (o && o.order) { o.order.forEach(function(k) { if (all.indexOf(k) > -1 && st.order.indexOf(k) < 0) st.order.push(k); }); }
-    if (o && o.widths && o.fixed) { var okW = all.concat(['act']).every(function(k) { return o.widths[k] >= 40 && o.widths[k] <= 1200; }); if (okW) { st.widths = o.widths; st.fixed = true; } }
-  } catch (e) {}
-  all.forEach(function(k) { if (st.order.indexOf(k) < 0) st.order.push(k); });
-  _hsCols = st; return st;
-}
-function _hsColsSave_() { try { localStorage.setItem(_HS_COLS_KEY, JSON.stringify(_hsCols)); } catch (e) {} }
-function hsColsReset() { _hsCols = null; try { localStorage.removeItem(_HS_COLS_KEY); } catch (e) {} renderHotelSchedule(); }
-function _hsMoveCol_(from, to) {
-  var st = _hsColsState_(), fi = st.order.indexOf(from), ti = st.order.indexOf(to);
-  if (fi < 0 || ti < 0 || fi === ti) return;
-  st.order.splice(fi, 1);
-  st.order.splice(fi < ti ? st.order.indexOf(to) + 1 : st.order.indexOf(to), 0, from);
-  _hsColsSave_(); renderHotelSchedule();
-}
-function _hsColsBind_() {
-  var t = document.getElementById('hsItemsTable'); if (!t) return;
-  Array.prototype.forEach.call(t.querySelectorAll('thead th[data-col]'), function(th) {
-    var k = th.getAttribute('data-col');
-    if (k !== 'act') {
-      th.addEventListener('dragstart', function(e) { _hsDragKey = k; th.classList.add('hs-dragging'); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', k); } catch (x) {} });
-      th.addEventListener('dragend', function() { _hsDragKey = null; Array.prototype.forEach.call(t.querySelectorAll('th'), function(x) { x.classList.remove('hs-dragging', 'hs-drop'); }); });
-      th.addEventListener('dragover', function(e) { if (_hsDragKey && _hsDragKey !== k) { e.preventDefault(); th.classList.add('hs-drop'); } });
-      th.addEventListener('dragleave', function() { th.classList.remove('hs-drop'); });
-      th.addEventListener('drop', function(e) { e.preventDefault(); var from = _hsDragKey; _hsDragKey = null; if (from && from !== k) _hsMoveCol_(from, k); });
-    }
-    var rs = th.querySelector('.hs-rs');
-    if (rs) rs.addEventListener('pointerdown', function(e) { _hsResizeStart_(e, th, rs); });
-  });
-}
-function _hsResizeStart_(e, th, rs) {
-  e.preventDefault(); e.stopPropagation();
-  var t = document.getElementById('hsItemsTable'); if (!t) return;
-  var ths = Array.prototype.slice.call(t.querySelectorAll('thead th[data-col]')), w = {};
-  ths.forEach(function(x) { w[x.getAttribute('data-col')] = Math.round(x.getBoundingClientRect().width); });
-  ths.forEach(function(x) { x.style.width = w[x.getAttribute('data-col')] + 'px'; });
-  t.style.tableLayout = 'fixed';
-  var sum = function() { var n = 0; for (var q in w) n += w[q]; return n; };
-  t.style.width = sum() + 'px'; t.style.minWidth = '';
-  var k = th.getAttribute('data-col'), startW = w[k], startX = e.clientX, rtl = getComputedStyle(t).direction === 'rtl', wasDrag = th.getAttribute('draggable');
-  th.setAttribute('draggable', 'false'); rs.classList.add('on');
-  try { rs.setPointerCapture(e.pointerId); } catch (x) {}
-  var mv = function(ev) { var dx = rtl ? (startX - ev.clientX) : (ev.clientX - startX); w[k] = Math.max(48, Math.round(startW + dx)); th.style.width = w[k] + 'px'; t.style.width = sum() + 'px'; };
-  var up = function() {
-    rs.removeEventListener('pointermove', mv); rs.removeEventListener('pointerup', up); rs.removeEventListener('pointercancel', up);
-    rs.classList.remove('on'); if (wasDrag) th.setAttribute('draggable', wasDrag);
-    var st = _hsColsState_(); st.widths = w; st.fixed = true; _hsColsSave_();
+// مصنع مشترك: ترتيب الأعمدة بالسحب والإفلات + عرض العمود بسحب حافته، ويُحفظ بالمتصفح (دفتر الاستحقاقات V3.84 + كشف الحساب V3.85)
+function _tcMake_(o) {
+  var T = { st: null, drag: null };
+  T.label = function(k) { var r = 'إجراءات'; o.cols.forEach(function(c) { if (c.k === k) r = c.l; }); return r; };
+  T.state = function() {
+    if (T.st) return T.st;
+    var st = { order: [], widths: {}, fixed: false }, all = o.cols.map(function(c) { return c.k; });
+    try {
+      var j = JSON.parse(localStorage.getItem(o.key) || 'null');
+      if (j && j.order) j.order.forEach(function(k) { if (all.indexOf(k) > -1 && st.order.indexOf(k) < 0) st.order.push(k); });
+      if (j && j.widths && j.fixed && all.concat(['act']).every(function(k) { return j.widths[k] >= 40 && j.widths[k] <= 1200; })) { st.widths = j.widths; st.fixed = true; }
+    } catch (e) {}
+    all.forEach(function(k) { if (st.order.indexOf(k) < 0) st.order.push(k); });
+    T.st = st; return st;
   };
-  rs.addEventListener('pointermove', mv); rs.addEventListener('pointerup', up); rs.addEventListener('pointercancel', up);
+  T.save = function() { try { localStorage.setItem(o.key, JSON.stringify(T.st)); } catch (e) {} };
+  T.reset = function() { T.st = null; try { localStorage.removeItem(o.key); } catch (e) {} o.rerender(); };
+  T.move = function(from, to) {
+    var st = T.state(), fi = st.order.indexOf(from), ti = st.order.indexOf(to);
+    if (fi < 0 || ti < 0 || fi === ti) return;
+    st.order.splice(fi, 1);
+    st.order.splice(fi < ti ? st.order.indexOf(to) + 1 : st.order.indexOf(to), 0, from);
+    T.save(); o.rerender();
+  };
+  T.thHtml = function(k) {
+    var st = T.state();
+    return '<th data-col="' + k + '"' + (k !== 'act' ? ' draggable="true" title="اسحب لتغيير ترتيب العمود"' : '') + (st.fixed ? ' style="width:' + (st.widths[k] || 80) + 'px;"' : '') + '>' + T.label(k) + '<span class="hs-rs" title="اسحب لتغيير العرض"></span></th>';
+  };
+  T.tblStyle = function() {
+    var st = T.state();
+    return st.fixed ? ('table-layout:fixed;width:' + st.order.concat(['act']).reduce(function(a, k) { return a + (st.widths[k] || 0); }, 0) + 'px;') : 'width:100%;';
+  };
+  T.bind = function() {
+    var t = document.getElementById(o.tableId); if (!t) return;
+    Array.prototype.forEach.call(t.querySelectorAll('thead th[data-col]'), function(th) {
+      var k = th.getAttribute('data-col');
+      if (k !== 'act') {
+        th.addEventListener('dragstart', function(e) { T.drag = k; th.classList.add('hs-dragging'); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', k); } catch (x) {} });
+        th.addEventListener('dragend', function() { T.drag = null; Array.prototype.forEach.call(t.querySelectorAll('th'), function(x) { x.classList.remove('hs-dragging', 'hs-drop'); }); });
+        th.addEventListener('dragover', function(e) { if (T.drag && T.drag !== k) { e.preventDefault(); th.classList.add('hs-drop'); } });
+        th.addEventListener('dragleave', function() { th.classList.remove('hs-drop'); });
+        th.addEventListener('drop', function(e) { e.preventDefault(); var from = T.drag; T.drag = null; if (from && from !== k) T.move(from, k); });
+      }
+      var rs = th.querySelector('.hs-rs');
+      if (rs) rs.addEventListener('pointerdown', function(e) { T.resize(e, th, rs); });
+    });
+  };
+  T.resize = function(e, th, rs) {
+    e.preventDefault(); e.stopPropagation();
+    var t = document.getElementById(o.tableId); if (!t) return;
+    var ths = Array.prototype.slice.call(t.querySelectorAll('thead th[data-col]')), w = {};
+    ths.forEach(function(x) { w[x.getAttribute('data-col')] = Math.round(x.getBoundingClientRect().width); });
+    ths.forEach(function(x) { x.style.width = w[x.getAttribute('data-col')] + 'px'; });
+    t.style.tableLayout = 'fixed';
+    var sum = function() { var n = 0; for (var q in w) n += w[q]; return n; };
+    t.style.width = sum() + 'px'; t.style.minWidth = '';
+    var k = th.getAttribute('data-col'), startW = w[k], startX = e.clientX, rtl = getComputedStyle(t).direction === 'rtl', wasDrag = th.getAttribute('draggable');
+    th.setAttribute('draggable', 'false'); rs.classList.add('on');
+    try { rs.setPointerCapture(e.pointerId); } catch (x) {}
+    var mv = function(ev) { var dx = rtl ? (startX - ev.clientX) : (ev.clientX - startX); w[k] = Math.max(48, Math.round(startW + dx)); th.style.width = w[k] + 'px'; t.style.width = sum() + 'px'; };
+    var up = function() {
+      rs.removeEventListener('pointermove', mv); rs.removeEventListener('pointerup', up); rs.removeEventListener('pointercancel', up);
+      rs.classList.remove('on'); if (wasDrag) th.setAttribute('draggable', wasDrag);
+      var st = T.state(); st.widths = w; st.fixed = true; T.save();
+    };
+    rs.addEventListener('pointermove', mv); rs.addEventListener('pointerup', up); rs.addEventListener('pointercancel', up);
+  };
+  return T;
+}
+var _hsTC = _tcMake_({ key: 'hsLedgerCols_v2', tableId: 'hsItemsTable', cols: [{ k: 'date', l: 'التاريخ' }, { k: 'desc', l: 'البيان' }, { k: 'due', l: 'القسط (ر.س)' }, { k: 'paid', l: 'المسدد (ر.س)' }, { k: 'status', l: 'حالة القسط' }, { k: 'bal', l: 'الرصيد التراكمي' }], rerender: function() { renderHotelSchedule(); } });
+var _asTC = _tcMake_({ key: 'asStmtCols_v1', tableId: 'asStmtTable', cols: [{ k: 'date', l: 'التاريخ' }, { k: 'desc', l: 'البيان' }, { k: 'debit', l: 'مدين / مستحق (ر.س)' }, { k: 'credit', l: 'دائن / مسدد (ر.س)' }, { k: 'bal', l: 'الرصيد (ر.س)' }], rerender: function() { renderAccountStatement(); } });
+function _hsColLabel_(k) { return _hsTC.label(k); }
+function _hsColsState_() { return _hsTC.state(); }
+function hsColsReset() { _hsTC.reset(); }
+function _hsColsBind_() { _hsTC.bind(); }
+function asColsReset() { _asTC.reset(); }
+// رأس جدول كشف الحساب حسب ترتيب الأعمدة وعرضها المحفوظين
+function _asHeadRender_() {
+  var th = document.getElementById('asTableHead'), tb = document.getElementById('asStmtTable'); if (!th || !tb) return;
+  th.innerHTML = '<tr>' + _asTC.state().order.map(_asTC.thHtml).join('') + _asTC.thHtml('act') + '</tr>';
+  tb.style.cssText = 'font-size:8pt;' + _asTC.tblStyle();
+  _asTC.bind();
 }
 // صفوف الدفتر كما تُعرض: تصفية «إخفاء المسدد» + تصفية تاريخ الكشف (الرصيد التراكمي يبقى من بداية التعاقد)
 function _hsLedgerRows_() {
@@ -10842,9 +10870,9 @@ function renderHotelSchedule() {
   if (!led.length) html += '<div style="text-align:center;padding:14px;color:var(--clr-muted);background:var(--clr-bg);border-radius:var(--radius-sm);">لا توجد تعاقدات أو أقساط أو دفعات لهذا الفندق.</div>';
   else {
     var _hc = _hsColsState_(), _ord = _hc.order, _wd = _hc.widths, _ncol = _ord.length + 1;
-    var _tbl = _hc.fixed ? ('table-layout:fixed;width:' + _ord.concat(['act']).reduce(function(a, k) { return a + (_wd[k] || 0); }, 0) + 'px;') : 'width:100%;';
-    var _th = function(k) { return '<th data-col="' + k + '"' + (k !== 'act' ? ' draggable="true" title="اسحب لتغيير ترتيب العمود"' : '') + (_hc.fixed ? ' style="width:' + (_wd[k] || 80) + 'px;"' : '') + '>' + _hsColLabel_(k) + '<span class="hs-rs" title="اسحب لتغيير العرض"></span></th>'; };
-    html += '<div style="overflow-x:auto;border:1px solid var(--clr-border);border-radius:var(--radius-sm);"><table class="data-table hs-table" id="hsItemsTable" style="' + _tbl + '"><thead><tr>'
+    var _tbl = _hsTC.tblStyle();
+    var _th = _hsTC.thHtml;
+    html += '<div style="overflow-x:auto;border:1px solid var(--clr-border);border-radius:var(--radius-sm);"><table class="data-table hs-table tc-table" id="hsItemsTable" style="' + _tbl + '"><thead><tr>'
       + _ord.map(_th).join('') + _th('act') + '</tr></thead><tbody>';
     var _tr = function(cls, c) { return '<tr class="' + cls + '">' + _ord.map(function(k) { return c[k]; }).join('') + c.act + '</tr>'; };
     var todayShown = false;
@@ -11296,6 +11324,7 @@ function asLinkHotelSubmit() {
 // يرسم ملخص وحركات كشف الحساب داخل النافذة
 function renderAccountStatement() {
   var d = _asStatementData; if (!d) return;
+  _asHeadRender_(); // V3.85 — أعمدة قابلة للترتيب والتحجيم
   var sb = document.getElementById('asSummaryBox');
   var balColor = d.balance>0.004 ? '#b91c1c' : (d.balance<-0.004 ? '#15803d' : '#475569');
   var balLabel = d.balance>0.004 ? 'مدين (مطلوب منه)' : (d.balance<-0.004 ? 'دائن (له رصيد)' : 'مسدد بالكامل');
@@ -11314,7 +11343,7 @@ function renderAccountStatement() {
   var canDelete = isHotelTab ? _bkCanViewFinance() : _accCan('canDelete');
   var tbody = document.getElementById('asTableBody');
   if (!d.rows.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--clr-muted);">لا توجد حركات على هذا الحساب بعد.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="' + (_asTC.state().order.length + 1) + '" style="text-align:center;padding:16px;color:var(--clr-muted);">لا توجد حركات على هذا الحساب بعد.</td></tr>';
     return;
   }
   // v3.33/v3.34 — أُضيف نوعا صف جديدان لكشف حساب الفنادق: "contract" (مدين — تعاقد) و"receipt" (دائن — سداد فعلي، قابل للتعديل/الحذف)
@@ -11345,13 +11374,14 @@ function renderAccountStatement() {
       if (canDelete) actions += '<button class="btn-secondary" style="font-size:7pt;padding:2px 7px;color:var(--clr-danger);" title="حذف الدفعة" onclick="deleteAhpPayment(\'' + escapeHtmlAttr(r.refId) + '\',' + (r.linkedAccountPaymentId?'true':'false') + ',\'' + escapeHtmlAttr(r.linkedAccountPaymentId||'') + '\')">🗑</button>';
     }
     var rowBg = (r.kind === 'payment' || r.kind === 'receipt') ? '#f0fdf4' : '#fff';
-    return '<tr style="background:' + rowBg + ';">'
-      + '<td style="white-space:nowrap;">' + escapeHtml(r.date||'') + '</td>'
-      + '<td>' + escapeHtml(r.description||'') + (r.kind === 'payment' && (r.hotelSide === 'deleted' || r.hotelSide === 'missing') ? ' <span class="hs-badge over" title="سداد الفندق المقابل محذوف">⚠️ غير ظاهرة في حساب الفندق</span>' : '') + '</td>'
-      + '<td style="text-align:center;color:#b45309;font-weight:700;">' + (r.debit ? fmtSAR(r.debit) : '—') + '</td>'
-      + '<td style="text-align:center;color:#15803d;font-weight:700;">' + (r.credit ? fmtSAR(r.credit) : '—') + '</td>'
-      + '<td style="text-align:center;font-weight:800;color:' + (r.runningBalance>0.004?'#b91c1c':(r.runningBalance<-0.004?'#15803d':'#475569')) + ';">' + fmtSAR(r.runningBalance) + '</td>'
-      + '<td style="text-align:center;white-space:nowrap;">' + actions + '</td></tr>';
+    var _c = {
+      date: '<td style="white-space:nowrap;">' + escapeHtml(r.date||'') + '</td>',
+      desc: '<td>' + escapeHtml(r.description||'') + (r.kind === 'payment' && (r.hotelSide === 'deleted' || r.hotelSide === 'missing') ? ' <span class="hs-badge over" title="سداد الفندق المقابل محذوف">⚠️ غير ظاهرة في حساب الفندق</span>' : '') + '</td>',
+      debit: '<td style="text-align:center;color:#b45309;font-weight:700;">' + (r.debit ? fmtSAR(r.debit) : '—') + '</td>',
+      credit: '<td style="text-align:center;color:#15803d;font-weight:700;">' + (r.credit ? fmtSAR(r.credit) : '—') + '</td>',
+      bal: '<td style="text-align:center;font-weight:800;color:' + (r.runningBalance>0.004?'#b91c1c':(r.runningBalance<-0.004?'#15803d':'#475569')) + ';">' + fmtSAR(r.runningBalance) + '</td>',
+      act: '<td style="text-align:center;white-space:nowrap;">' + actions + '</td>' };
+    return '<tr style="background:' + rowBg + ';">' + _asTC.state().order.map(function(k) { return _c[k]; }).join('') + _c.act + '</tr>';
   }).join('');
 }
 
@@ -11750,7 +11780,7 @@ function printAccountStatement() {
   var now = new Date();
   var printDate = String(now.getDate()).padStart(2,'0') + '/' + String(now.getMonth()+1).padStart(2,'0') + '/' + now.getFullYear()
     + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
-  var typeLabel = d.partyType === 'collection' ? 'جهة تحصيل' : 'عميل';
+  var typeLabel = d.partyType === 'collection' ? 'جهة تحصيل' : (d.partyType === 'hotel' ? 'فندق' : 'عميل');
   var balLabel = d.balance>0.004 ? 'مدين (مطلوب منه)' : (d.balance<-0.004 ? 'دائن (له رصيد)' : 'مسدد بالكامل');
   var balColor = d.balance>0.004 ? '#b91c1c' : (d.balance<-0.004 ? '#15803d' : '#475569');
 
@@ -11761,36 +11791,38 @@ function printAccountStatement() {
     'إجمالي المسدد: ' + fmtSAR(d.totalPaid) + ' ر.س',
     'الرصيد: ' + fmtSAR(Math.abs(d.balance)) + ' ر.س ' + balLabel]);
 
-  var rowsHtml = d.rows.map(function(r, i) {
-    return '<tr' + (r.kind==='payment' ? ' style="background:#f0fdf4;"' : (i%2 ? ' style="background:#f8faf8;"' : '')) + '>'
-      + '<td style="text-align:center;">' + (i+1) + '</td>'
-      + '<td style="text-align:center;white-space:nowrap;">' + escapeHtml(r.date||'') + '</td>'
-      + '<td style="text-align:center;white-space:nowrap;">' + escapeHtml(r.refId||'') + '</td>'
-      + '<td>' + escapeHtml(r.description||'') + '</td>'
-      + '<td style="text-align:center;color:#b45309;font-weight:700;">' + (r.debit ? fmtSAR(r.debit) : '—') + '</td>'
-      + '<td style="text-align:center;color:#15803d;font-weight:700;">' + (r.credit ? fmtSAR(r.credit) : '—') + '</td>'
-      + '<td style="text-align:center;font-weight:800;">' + fmtSAR(r.runningBalance) + '</td></tr>';
+  // V3.85 — يُطبع الكشف كما هو معروض: نفس ترتيب الأعمدة ونسب عرضها (المرجع تحت البيان بخط صغير) وصف الإجماليات ملوّن بآخر صفحة
+  var tc = _asTC.state(), ord = tc.order, pw = {}, def = { date: 13, debit: 15, credit: 15, bal: 15 };
+  if (tc.fixed) { var tt = 0; ord.forEach(function(k) { tt += tc.widths[k] || 80; }); ord.forEach(function(k) { pw[k] = Math.round((tc.widths[k] || 80) / tt * 1000) / 10; }); }
+  else { var uu = 0; ord.forEach(function(k) { if (k !== 'desc') { pw[k] = def[k]; uu += def[k]; } }); pw.desc = 100 - uu; }
+  var trP = function(cls, c) { return '<tr class="' + cls + '">' + ord.map(function(k) { return c[k]; }).join('') + '</tr>'; };
+  var rowsHtml = d.rows.map(function(r) {
+    return trP((r.kind === 'payment' || r.kind === 'receipt') ? 'pay' : '', {
+      date: '<td class="c nw">' + escapeHtml(r.date||'') + '</td>',
+      desc: '<td>' + escapeHtml(r.description||'') + (r.refId ? '<div class="sb">' + escapeHtml(r.refId) + '</div>' : '') + '</td>',
+      debit: '<td class="c" style="color:#b45309;font-weight:700;">' + (r.debit ? fmtSAR(r.debit) : '—') + '</td>',
+      credit: '<td class="c" style="color:#15803d;font-weight:700;">' + (r.credit ? fmtSAR(r.credit) : '—') + '</td>',
+      bal: '<td class="c" style="font-weight:800;color:' + (r.runningBalance>0.004?'#b91c1c':(r.runningBalance<-0.004?'#15803d':'#475569')) + ';">' + fmtSAR(r.runningBalance) + '</td>' });
   }).join('');
-  // صف الإجماليات ضمن جسم الجدول ليُقسَّم طبيعياً مع الصفحات ويظهر بنهاية الكشف
-  rowsHtml += '<tr class="as-total-row">'
-    + '<td colspan="4" style="text-align:left;font-weight:900;">الإجماليات — بالريال السعودي (ر.س)</td>'
-    + '<td style="text-align:center;font-weight:900;color:#b45309;">' + fmtSAR(d.totalDue) + '</td>'
-    + '<td style="text-align:center;font-weight:900;color:#15803d;">' + fmtSAR(d.totalPaid) + '</td>'
-    + '<td style="text-align:center;font-weight:900;color:' + balColor + ';">' + fmtSAR(Math.abs(d.balance)) + ' ' + (d.balance>0.004?'مدين':(d.balance<-0.004?'دائن':'')) + '</td></tr>';
+  var footP = trP('tot', {
+    date: '<td></td>', desc: '<td style="font-weight:900;">الإجماليات — بالريال السعودي (ر.س)</td>',
+    debit: '<td class="c" style="color:#b45309;">' + fmtSAR(d.totalDue) + '</td>', credit: '<td class="c" style="color:#15803d;">' + fmtSAR(d.totalPaid) + '</td>',
+    bal: '<td class="c" style="color:' + balColor + ';">' + fmtSAR(Math.abs(d.balance)) + ' ' + (d.balance>0.004?'مدين':(d.balance<-0.004?'دائن':'')) + '</td>' });
+  var thP = ord.map(function(k) { return '<th style="width:' + pw[k] + '%;">' + _asTC.label(k) + '</th>'; }).join('');
 
   var html = '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>كشف حساب — ' + escapeHtml(d.partyName) + '</title>'
     + '<style>'
     + _ppBaseCss('portrait', 10)
-    + '.as-print-table { width:100%; border-collapse:collapse; font-size:8pt; }'
-    + '.as-print-table th { background:#0f2419; color:#fff; padding:5px 6px; border:1px solid #0f2419; font-size:7.8pt; }'
-    + '.as-print-table td { padding:4px 6px; border:1px solid #d7e0d7; color:#1f2b22; }'
-    + '.as-total-row td { background:#fbf7ec !important; border-top:2px solid #c9a84c !important; font-size:8.5pt; }'
+    + '.as-print-table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:8pt; }'
+    + '.as-print-table th { background:#0f2419; color:#fff; padding:6px 5px; border:1px solid #0f2419; font-size:7.8pt; }'
+    + '.as-print-table td { padding:4px 6px; border:1px solid #d7e0d7; color:#1f2b22; vertical-align:middle; overflow-wrap:anywhere; }'
+    + '.as-print-table td.c { text-align:center; } .as-print-table td.nw { white-space:nowrap; }'
+    + '.as-print-table .sb { font-size:6.6pt; color:#6b7a70; margin-top:1px; }'
+    + '.as-print-table tr.pay td { background:#f0fdf4; }'
+    + '.as-print-table tfoot td { background:#f9e3a0; color:#3b2a05; font-size:8.6pt; font-weight:900; border-top:2px solid #0f2419; border-bottom:2px solid #0f2419; padding:6px; }'
     + '</style></head><body>'
     + _ppRichHeaderHtml('📑 كشف حساب', d.partyName + ' (' + typeLabel + ')', chips)
-    + '<div id="printTableWrap"><table class="as-print-table"><thead><tr>'
-    + '<th style="width:26px;">#</th><th style="width:64px;">التاريخ</th><th style="width:64px;">المرجع</th><th>البيان</th>'
-    + '<th style="width:78px;">مدين / مستحق (ر.س)</th><th style="width:78px;">دائن / مسدد (ر.س)</th><th style="width:78px;">الرصيد (ر.س)</th>'
-    + '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>'
+    + '<div id="printTableWrap"><table class="as-print-table"><thead><tr>' + thP + '</tr></thead><tbody>' + rowsHtml + '</tbody><tfoot>' + footP + '</tfoot></table></div>'
     + '</body></html>';
 
   var w = window.open('', '_blank');
@@ -12302,7 +12334,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.84';
+var CLIENT_APP_VERSION = 'V3.85';
 var _BUILD_VERSION = CLIENT_APP_VERSION; // نسخة الكود المحمَّل في هذا التبويب (لا تتغير بعد التحميل)
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
@@ -13374,16 +13406,10 @@ function submitHotelPurge() {
 
       <!-- v3.34 — نموذج تسجيل/تعديل دفعة سداد لفندق مباشرة من كشف حسابه (تبويب "حسب الفندق") -->
       <!-- جدول حركات كشف الحساب -->
+      <div id="asStmtColsBar" class="hs-sec-title" style="margin:0 0 6px;"><span class="hs-hint">↔️ اسحب عنوان العمود لتغيير ترتيبه، وحافته لتغيير عرضه</span><button type="button" class="btn-secondary" style="font-size:7pt;padding:2px 8px;" title="إرجاع ترتيب الأعمدة وعرضها للوضع الافتراضي" onclick="asColsReset()">↺ الأعمدة</button></div>
       <div id="asStmtTableWrap" style="overflow-x:auto;max-height:340px;overflow-y:auto;border:1px solid var(--clr-border);border-radius:var(--radius-sm);">
-        <table class="data-table" style="width:100%;font-size:8pt;">
-          <thead><tr>
-            <th style="width:80px;">التاريخ</th>
-            <th style="min-width:220px;">البيان</th>
-            <th style="width:95px;">مدين / مستحق (ر.س)</th>
-            <th style="width:95px;">دائن / مسدد (ر.س)</th>
-            <th style="width:95px;">الرصيد (ر.س)</th>
-            <th style="width:80px;">إجراءات</th>
-          </tr></thead>
+        <table class="data-table tc-table" id="asStmtTable" style="width:100%;font-size:8pt;">
+          <thead id="asTableHead"></thead>
           <tbody id="asTableBody"></tbody>
         </table>
       </div>
