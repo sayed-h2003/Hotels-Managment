@@ -493,6 +493,28 @@ body.m-view.m-av-days .avail-zoom, body.m-view.m-av-days #avail_panel_toggle, bo
 .hs-badge { display:inline-block; border-radius:12px; padding:1px 8px; font-size:7.2pt; font-weight:800; white-space:nowrap; }
 .hs-badge.paid { background:#dcfce7; color:#166534; } .hs-badge.over { background:#fee2e2; color:#991b1b; } .hs-badge.part { background:#fef3c7; color:#92400e; } .hs-badge.up { background:#e0e7ff; color:#3730a3; }
 .hs-sub { display:block; font-size:6.8pt; color:var(--clr-muted); font-weight:600; margin-top:1px; }
+.bk-totals-row td { background:#fbf7ec !important; border-top:2px solid #c9a84c !important; padding:7px 10px !important; }
+.bk-tot-wrap { display:flex; flex-wrap:wrap; align-items:center; gap:8px 22px; font-size:8.6pt; }
+.bk-tot-title { font-weight:900; color:var(--clr-primary-dark); }
+.bk-tot-i { display:inline-flex; align-items:baseline; gap:6px; }
+.bk-tot-l { font-size:7.6pt; font-weight:700; color:var(--clr-text-sub); }
+.bk-tot-i b { font-size:10.5pt; font-weight:900; color:#0f2419; }
+.bk-tot-i.neg b { color:#b91c1c; }
+body.m-view #bookingsTable tfoot, body.m-view #bookingsTable tfoot tr, body.m-view #bookingsTable tfoot td { display:block; width:100%; }
+body.m-view #bookingsTable tfoot tr.bk-totals-row { margin:6px 0; border-radius:12px; overflow:hidden; border:1px solid #efe2bd; }
+body.m-view .bk-tot-wrap { display:grid; grid-template-columns:1fr 1fr; gap:6px 10px; font-size:12.5px; }
+body.m-view .bk-tot-title { grid-column:1/-1; }
+body.m-view .bk-tot-i { flex-direction:column; align-items:flex-start; gap:0; }
+body.m-view .bk-tot-i b { font-size:15px; }
+.att-prog { margin-top:6px; }
+.att-prog-bar { height:10px; background:#e5e7eb; border-radius:8px; overflow:hidden; position:relative; }
+.att-prog-bar i { display:block; height:100%; width:0; background:linear-gradient(90deg,#1d4ed8,#3b82f6); border-radius:8px; transition:width .35s ease; }
+.att-prog.working .att-prog-bar i { background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.28) 0 8px,rgba(255,255,255,0) 8px 16px),linear-gradient(90deg,#1d4ed8,#3b82f6); background-size:32px 32px,100% 100%; animation:attStripes .8s linear infinite; }
+.att-prog.done .att-prog-bar i { background:linear-gradient(90deg,#15803d,#22c55e); }
+.att-prog-txt { font-size:7.8pt; font-weight:700; color:var(--clr-text-sub); margin-top:3px; display:flex; justify-content:space-between; gap:8px; }
+@keyframes attStripes { from { background-position:0 0,0 0; } to { background-position:32px 0,0 0; } }
+.att-pick.busy { opacity:.55; pointer-events:none; }
+body.m-view .att-prog-txt { font-size:12px; }
 .att-btn b { display:inline-block; min-width:14px; margin-inline-start:2px; background:#1d4ed8; color:#fff; border-radius:8px; font-size:6.5pt; padding:0 3px; }
 .att-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:10px; margin-bottom:10px; }
 .att-card { border:1px solid var(--clr-border); border-radius:var(--radius-md); overflow:hidden; background:#fff; display:flex; flex-direction:column; }
@@ -1538,6 +1560,7 @@ body.sb-collapsed #availHScrollProxy { right: 0; }
           <tbody id="bookingsTableBody">
             <tr><td colspan="15" style="text-align:center;padding:20px;color:var(--clr-muted);">جاري التحميل...</td></tr>
           </tbody>
+          <tfoot id="bookingsTableFoot"></tfoot>
         </table>
       </div>
       <div id="bookings_pagination"></div>
@@ -3838,7 +3861,7 @@ function renderCpReceiptsLedger(data) {
         return '<tr class="cp-ledger-row" style="background:#f0fdf4;">'
           + '<td style="white-space:nowrap;">' + escapeHtml(r.payDate || '') + '</td>'
           + '<td style="text-align:center;font-weight:700;color:#15803d;">' + n(r.amount) + '</td>'
-          + '<td>' + escapeHtml(r.statement || r.notes || '') + (r.linkedAccountPaymentId ? ' <span style="font-size:6.8pt;color:#1d4ed8;font-weight:700;">🔗 مزدوجة</span>' : '') + '</td>'
+          + '<td>' + escapeHtml(r.statement || r.notes || '') + (r.linkedAccountPaymentId ? ' <span style="font-size:6.8pt;color:#1d4ed8;font-weight:700;">🔗 مزدوجة' + (r.payerName ? ' من ' + (r.payerType === 'client' ? 'العميل ' : 'جهة التحصيل ') + escapeHtml(r.payerName) : '') + '</span>' : '') + '</td>'
           + '<td style="text-align:center;white-space:nowrap;">' + (r.installmentDue ? escapeHtml(r.installmentDue) : '<span style="color:var(--clr-muted);">بلا قسط</span>') + '</td>'
           + '<td style="text-align:center;font-weight:700;">' + n(r.cumPaid) + '</td>'
           + '<td style="text-align:center;font-weight:900;color:' + remColor + ';">' + n(Math.abs(r.remainingAfter)) + (r.remainingAfter < -0.004 ? ' زيادة' : '') + '</td></tr>';
@@ -5656,6 +5679,7 @@ function _bkRenderPageResult_(res, statsRows, allRows) {
   res = res || {rows:[], total:0, totalPages:1, page:1};
   var pageRows = res.rows||[];
   _allBookingsRaw = statsRows || pageRows;
+  _bkTotals = res.totals || _bkTotalsOf_(allRows || pageRows); // V3.81 — وضع الخادم: من رد الصفحة؛ المحلي: من كل الصفوف المطابقة
   // v3.6 — لم نعد نعيد بناء قوائم الفلاتر من نتائج الصفحة (كان يُسبب فقدان الاختيار وإخفاء الفنادق غير الظاهرة)
   renderBkStatCards();
   renderBookingsTable(pageRows);
@@ -5946,9 +5970,36 @@ document.addEventListener('keydown', function(e) {
   var btn = open[open.length - 1].querySelector('.modal-close-btn');
   if (btn) { e.preventDefault(); btn.click(); }
 });
+// V3.81 — صف الإجماليات: إجمالي الغرف، إجمالي الليالي (غرف كل حجز × ليالي الحجز)، إجمالي القيمة — لكل الحجوزات المطابقة للفلاتر
+// (لا لصفحة العرض وحدها)، وتتغير مع أي فلتر. حجوزات الشراء (غرف بالسالب) تُطرح فتظهر الصافي.
+var _bkTotals = null;
+function _bkTotalsOf_(rows) {
+  var t = { count: (rows || []).length, rooms: 0, roomNights: 0, value: 0 }, fin = false;
+  (rows || []).forEach(function(b) {
+    var r = Number(b.roomCount) || 0, n = Number(b.nights) || 0;
+    t.rooms += r; t.roomNights += r * n;
+    if (b.bookingValue !== undefined && b.bookingValue !== null) { fin = true; t.value += Number(b.bookingValue) || 0; }
+  });
+  t.value = fin ? Math.round(t.value * 100) / 100 : null;
+  return t;
+}
+function _bkRenderTotals_() {
+  var foot = document.getElementById('bookingsTableFoot'); if (!foot) return;
+  var t = _bkTotals, canFin = _bkCanViewFinance();
+  if (!t || !t.count) { foot.innerHTML = ''; return; }
+  var n = function(v) { return Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 2 }); };
+  var item = function(icon, label, val, cls) { return '<span class="bk-tot-i' + (cls ? ' ' + cls : '') + '"><span class="bk-tot-l">' + icon + ' ' + label + '</span><b>' + val + '</b></span>'; };
+  var cols = Math.max(1, BK_COL_DEFS.filter(function(c) { return _bkVisibleCols.indexOf(c.k) > -1 && (canFin || (c.k !== 'salePrice' && c.k !== 'bookingValue')); }).length);
+  foot.innerHTML = '<tr class="bk-totals-row"><td colspan="' + cols + '"><div class="bk-tot-wrap"><span class="bk-tot-title">الإجماليات — ' + t.count + ' حجز حسب الفلاتر</span>'
+    + item('🛏', 'إجمالي الغرف', n(t.rooms), t.rooms < 0 ? 'neg' : '')
+    + item('🌙', 'إجمالي الليالي (غرف × ليالي)', n(t.roomNights), t.roomNights < 0 ? 'neg' : '')
+    + (canFin && t.value !== null ? item('💰', 'إجمالي القيمة (ر.س)', n(t.value), t.value < 0 ? 'neg' : '') : '')
+    + '</div></td></tr>';
+}
 function renderBookingsTable(list) {
   _bkPageRows = list || [];
   renderBookingsTableHead();
+  _bkRenderTotals_();
   var tbody = document.getElementById('bookingsTableBody');
   var canFin = _bkCanViewFinance();
   var visibleDefs=BK_COL_DEFS.filter(function(c){return _bkVisibleCols.indexOf(c.k)>-1 && (canFin || (c.k!=='salePrice'&&c.k!=='bookingValue'));});
@@ -6174,7 +6225,10 @@ function _bkRecalc() {
   document.getElementById('bk_nights_preview').innerText=nights;
   // v3.2 — لو القيمة صفر (لا سعر بيع مدخل)، لا نعرض 0.00 بل نتركها فارغة/شرطة
   var _bkVal = nights*rooms*price;
-  document.getElementById('bk_value_preview').innerText = _bkVal > 0 ? _bkVal.toLocaleString('en-US',{minimumFractionDigits:2}) : '—';
+  var _bvEl = document.getElementById('bk_value_preview');
+  // V3.81 — حجز الشراء (غرف بالسالب) قيمته سالبة وتظهر كبقية الحجوزات (كانت تُخفى لأن الشرط "أكبر من صفر")
+  _bvEl.innerText = _bkVal !== 0 ? _bkVal.toLocaleString('en-US',{minimumFractionDigits:2}) : '—';
+  _bvEl.style.color = _bkVal < 0 ? '#b91c1c' : '';
   var hint=document.getElementById('bk_room_count_hint');
   if (hint) hint.style.display = rooms<0 ? 'block' : 'none';
 }
@@ -10612,7 +10666,7 @@ function renderHotelSchedule() {
       html += '<tr>'
         + '<td style="white-space:nowrap;font-weight:700;">' + escapeHtml(r.payDate) + '</td>'
         + '<td style="text-align:center;font-weight:800;color:#15803d;">' + n(r.amount) + '</td>'
-        + '<td>' + escapeHtml(r.statement || r.notes || '—') + (r.linkedAccountPaymentId ? ' <span style="font-size:6.8pt;color:#1d4ed8;font-weight:700;">🔗 مزدوجة</span>' : '') + '</td>'
+        + '<td>' + escapeHtml(r.statement || r.notes || '—') + (r.linkedAccountPaymentId ? ' <span style="font-size:6.8pt;color:#1d4ed8;font-weight:700;">🔗 مزدوجة' + (r.payerName ? ' من ' + (r.payerType === 'client' ? 'العميل ' : 'جهة التحصيل ') + escapeHtml(r.payerName) : '') + '</span>' : '') + '</td>'
         + '<td style="white-space:nowrap;">تعاقد #' + escapeHtml(r.contractId) + '<span class="hs-sub">' + (r.unassigned ? 'على حساب الفندق — بلا قسط (يُخصم بالأقدمية)' : (r.orphan ? '⚠️ قسط #' + escapeHtml(r.paymentId) + ' محذوف' : ('قسط #' + escapeHtml(r.paymentId) + (r.installmentDue ? ' — استحقاق ' + escapeHtml(r.installmentDue) : '')))) + '</span></td>'
         + '<td style="text-align:center;white-space:nowrap;">' + acts + '</td></tr>';
     });
@@ -10813,14 +10867,29 @@ function _attPrepare_(file, cb) {
   img.onerror = function() { URL.revokeObjectURL(url); raw(); };
   img.src = url;
 }
-function _attUploadFiles_(kind, refId, files, statusEl, done) {
-  var list = Array.prototype.slice.call(files || []), ok = 0, errs = [];
+// V3.81 — شريط تقدّم رفع الإيصالات: التعبئة = الملفات المنتهية + جزء من الملف الجاري؛ خطوط متحركة أثناء التجهيز/الرفع (الخادم لا يبلّغ بنسبة بايتات)
+function _attProg_(hostId, state, done, total, label) {
+  var h = document.getElementById(hostId); if (!h) return;
+  if (state === 'hide') { h.style.display = 'none'; h.className = 'att-prog'; h.innerHTML = ''; return; }
+  if (!h._built) { h.innerHTML = '<div class="att-prog-bar"><i></i></div><div class="att-prog-txt"><span class="t"></span><span class="p"></span></div>'; h._built = true; }
+  var frac = state === 'prep' ? 0.12 : (state === 'send' ? 0.45 : 1), pct = Math.min(100, Math.round(((done + (state === 'done' ? 0 : frac)) / Math.max(1, total)) * 100));
+  if (state === 'done') pct = 100;
+  h.style.display = ''; h.className = 'att-prog ' + (state === 'done' ? 'done' : 'working');
+  h.querySelector('i').style.width = pct + '%'; h.querySelector('.t').innerText = label || ''; h.querySelector('.p').innerText = pct + '%';
+}
+function _attUploadFiles_(kind, refId, files, progId, done) {
+  var list = Array.prototype.slice.call(files || []), ok = 0, errs = [], total = list.length;
   var next = function(i) {
-    if (i >= list.length) { done(ok, errs); return; }
-    if (statusEl) statusEl.innerText = 'جاري رفع ' + (i + 1) + ' من ' + list.length + '...';
+    if (i >= total) {
+      if (progId) { _attProg_(progId, 'done', total, total, errs.length ? ('تم رفع ' + ok + ' من ' + total) : ('✓ تم رفع ' + ok + (ok === 1 ? ' ملف' : ' ملفات'))); setTimeout(function() { _attProg_(progId, 'hide'); }, errs.length ? 2500 : 1200); }
+      done(ok, errs); return;
+    }
+    var nm = list[i].name || 'إيصال';
+    if (progId) _attProg_(progId, 'prep', i, total, 'تجهيز «' + nm + '» (' + (i + 1) + ' من ' + total + ')...');
     _attPrepare_(list[i], function(f, err) {
       if (!f) { errs.push(err); next(i + 1); return; }
-      google.script.run.withSuccessHandler(function() { ok++; next(i + 1); })
+      if (progId) _attProg_(progId, 'send', i, total, 'جاري رفع «' + nm + '» (' + (i + 1) + ' من ' + total + ')...');
+      google.script.run.withSuccessHandler(function() { ok++; if (progId) _attProg_(progId, 'send', i + 1, total, 'تم رفع «' + nm + '»'); next(i + 1); })
         .withFailureHandler(function(e) { errs.push((list[i].name || '') + ': ' + (e.message || String(e))); next(i + 1); })
         .uploadPaymentAttachment(kind, refId, f.name, f.mime, f.b64, sessionUser.username);
     });
@@ -10828,10 +10897,13 @@ function _attUploadFiles_(kind, refId, files, statusEl, done) {
   next(0);
 }
 function attUploadPicked() {
-  var inp = document.getElementById('att_files'), st = document.getElementById('attStatus');
+  var inp = document.getElementById('att_files'), st = document.getElementById('attStatus'), pick = document.getElementById('attPickBtn');
   if (!inp.files || !inp.files.length) return;
-  _attUploadFiles_(_att.kind, _att.refId, inp.files, st, function(ok, errs) {
-    inp.value = ''; st.innerText = '';
+  var files = Array.prototype.slice.call(inp.files); inp.value = '';
+  if (pick) pick.classList.add('busy'); // يمنع اختيار ملفات أخرى أثناء الرفع
+  st.innerText = '';
+  _attUploadFiles_(_att.kind, _att.refId, files, 'attProg', function(ok, errs) {
+    if (pick) pick.classList.remove('busy');
     if (ok) showToast('تم رفع ' + ok + ' مرفق.', 'success');
     if (errs.length) showToast(errs.join(' | '), 'error');
     _attLoad_(); _attRefreshCounts_();
@@ -10841,10 +10913,13 @@ function attUploadPicked() {
 function _attAfterSave_(inputId, ref, done) {
   var inp = document.getElementById(inputId), files = inp && inp.files;
   if (!ref || !ref.id || !files || !files.length) { done(); return; }
-  showToast('جاري رفع ' + files.length + ' مرفق...', 'info');
-  _attUploadFiles_(ref.kind, ref.id, files, null, function(ok, errs) {
+  var list = Array.prototype.slice.call(files), btn = document.getElementById(inputId === 'as_files' ? 'as_save_btn' : 'ahp_save_btn');
+  if (btn) btn.disabled = true; // الدفعة حُفظت — لا نسمح بحفظ مكرر أثناء رفع الإيصالات
+  inp.disabled = true;
+  _attUploadFiles_(ref.kind, ref.id, list, inputId + '_prog', function(ok, errs) {
+    if (btn) btn.disabled = false; inp.disabled = false;
     if (errs.length) showToast('حُفظت الدفعة، لكن تعذّر رفع: ' + errs.join(' | '), 'error');
-    done();
+    setTimeout(done, errs.length ? 0 : 700); // لحظة تُظهر اكتمال الشريط قبل إعادة رسم الكشف
   });
 }
 
@@ -11897,7 +11972,7 @@ window.normalizeArabicDigits = function(s) {
   }, true);
 })();
 
-var CLIENT_APP_VERSION = 'V3.80';
+var CLIENT_APP_VERSION = 'V3.81';
 var _BUILD_VERSION = CLIENT_APP_VERSION; // نسخة الكود المحمَّل في هذا التبويب (لا تتغير بعد التحميل)
 // v3.5 — يشغّل أداة إصلاح الأرقام العربية القديمة في الشيتات (Admin فقط)
 function repairArabicDigitsSubmit() {
@@ -12906,7 +12981,7 @@ function submitHotelPurge() {
           </div>
         </div>
         <p id="as_hotel_hint" style="font-size:7.2pt;color:var(--clr-muted);margin:-4px 0 6px;">تخصيص الدفعة لفندق بعينه يتيح فلترة الحسابات حسب الفندق بدقة؛ اتركها "عامة" إن كانت الدفعة تغطي أكثر من فندق.</p>
-        <div class="form-group att-form-field"><label>📎 إيصال السداد (صورة أو PDF) — اختياري</label><input type="file" id="as_files" accept="image/*,application/pdf" multiple></div>
+        <div class="form-group att-form-field"><label>📎 إيصال السداد (صورة أو PDF) — اختياري</label><input type="file" id="as_files" accept="image/*,application/pdf" multiple><div class="att-prog" id="as_files_prog" style="display:none;"></div></div>
         <div class="modal-error" id="asFormError"></div>
         <div style="display:flex;gap:8px;margin-top:8px;">
           <button class="btn-primary-dark" style="font-size:8pt;padding:6px 14px;" id="as_save_btn" onclick="saveAccountPaymentSubmit()">💾 حفظ الدفعة</button>
@@ -12949,7 +13024,7 @@ function submitHotelPurge() {
           <select id="ahp_collection"><option value="">— بدون (دفعة عادية من الفندق) —</option></select>
           <p style="font-size:7.2pt;color:var(--clr-muted);margin:4px 0 0;">🔗 عند تحديد جهة تحصيل، تُسجَّل هذه الدفعة أيضاً كسداد من هذه الجهة بكشف حسابها (دفعة مزدوجة) — بنفس المبلغ والتاريخ.</p>
         </div>
-        <div class="form-group att-form-field"><label>📎 إيصال السداد (صورة أو PDF) — اختياري</label><input type="file" id="ahp_files" accept="image/*,application/pdf" multiple></div>
+        <div class="form-group att-form-field"><label>📎 إيصال السداد (صورة أو PDF) — اختياري</label><input type="file" id="ahp_files" accept="image/*,application/pdf" multiple><div class="att-prog" id="ahp_files_prog" style="display:none;"></div></div>
         <div class="modal-error" id="ahpFormError"></div>
         <div style="display:flex;gap:8px;margin-top:8px;">
           <button class="btn-primary-dark" style="font-size:8pt;padding:6px 14px;" id="ahp_save_btn" onclick="saveAhpPaymentSubmit()">💾 حفظ الدفعة</button>
@@ -12987,9 +13062,10 @@ function submitHotelPurge() {
       <div id="attInfo" style="font-size:8pt;font-weight:700;color:var(--clr-text-sub);margin-bottom:8px;"></div>
       <div id="attGrid" class="att-grid"></div>
       <div id="attUploadBox" class="att-upload">
-        <label class="btn-primary-dark att-pick">📷 إضافة صورة / PDF<input type="file" id="att_files" accept="image/*,application/pdf" multiple style="display:none" onchange="attUploadPicked()"></label>
+        <label class="btn-primary-dark att-pick" id="attPickBtn">📷 إضافة صورة / PDF<input type="file" id="att_files" accept="image/*,application/pdf" multiple style="display:none" onchange="attUploadPicked()"></label>
         <span id="attStatus" style="font-size:7.8pt;color:var(--clr-muted);"></span>
       </div>
+      <div class="att-prog" id="attProg" style="display:none;"></div>
     </div>
     <div class="modal-footer"><button class="btn-secondary" onclick="document.getElementById('Attachments_Modal').classList.remove('open')">إغلاق</button></div>
   </div>

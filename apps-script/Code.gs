@@ -1706,7 +1706,7 @@ function getContractPayments(contractId, currentUser) { _apiGuard_();
   var receipts=[];
   try {
     var dueOf={}; payments.forEach(function(p){ dueOf[String(p.paymentId)]=p.dueDate; });
-    var rData=_getSheetValues_("Contract_Payment_Receipts"), unalloc=0;
+    var rData=_getSheetValues_("Contract_Payment_Receipts"), unalloc=0, payerMapC=_accPayerMap_();
     for (var r=1; r<rData.length; r++) {
       var rr=rData[r];
       if (!rr[0]||rr[9]===true) continue;
@@ -1715,7 +1715,8 @@ function getContractPayments(contractId, currentUser) { _apiGuard_();
       var pd=rr[4] instanceof Date?rr[4]:new Date(rr[4]);
       receipts.push({ receiptId:rr[0], paymentId:rr[1], amount:Math.round((parseFloat(rr[3])||0)*100)/100,
         _t:isNaN(pd.getTime())?0:pd.getTime(), payDate:isNaN(pd.getTime())?"":_fmtDate_(pd,tz,"dd/MM/yyyy"),
-        statement:rr[5]||"", notes:rr[6]||"", installmentDue:dueOf[String(rr[1])]||"", linkedAccountPaymentId:rr[10]||"" });
+        statement:rr[5]||"", notes:rr[6]||"", installmentDue:dueOf[String(rr[1])]||"", linkedAccountPaymentId:rr[10]||"",
+        payerName:(payerMapC[String(rr[10]||"")]||{}).name||"", payerType:(payerMapC[String(rr[10]||"")]||{}).type||"" });
     }
     receipts.sort(function(a,b){ return (a._t-b._t) || String(a.receiptId).localeCompare(String(b.receiptId), undefined, {numeric:true}); });
     var base = contractValue>0 ? contractValue : totalScheduled, cum=0;
@@ -2157,6 +2158,34 @@ function deletePaymentAttachment(attachmentId, currentUser) { _apiGuard_();
   logAudit("الحسابات", "حذف مرفق", String(f.data[2]), "", "", "", "حذف مرفق «" + String(f.data[4] || "") + "» من دفعة #" + String(f.data[2]), currentUser);
   return { success: true };
   } catch (e) { _logError_(_fn, e); throw e; }
+}
+
+// V3.81 — رقم بحد أقصى خانتين عشريتين إن وُجدت كسور (100 ⇒ "100"، 100.5 ⇒ "100.5"، 133.3333 ⇒ "133.33") بفواصل الآلاف
+function _fmtNum2_(v) {
+  var n = Math.round((parseFloat(v) || 0) * 100) / 100, s = String(n), neg = s.charAt(0) === "-"; if (neg) s = s.slice(1);
+  var parts = s.split("."); parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return (neg ? "-" : "") + parts.join(".");
+}
+// خريطة (رقم دفعة العميل/الجهة ← {type, name}) لإظهار اسم المسدِّد على الدفعات المزدوجة بجانب الفندق
+function _accPayerMap_() {
+  var m = {};
+  try {
+    var d = _getSheetValues_("Account_Payments");
+    for (var i = 1; i < d.length; i++) { if (d[i][0]) m[String(d[i][0])] = { type: String(d[i][1]) === "client" ? "client" : "collection", name: String(d[i][3] || d[i][2] || "") }; }
+  } catch (e) {}
+  return m;
+}
+function _payerLabel_(info) { return info ? ((info.type === "client" ? "العميل " : "جهة التحصيل ") + info.name) : ""; }
+// V3.81 — إجماليات الحجوزات المعروضة: الغرف، الليالي (غرف × ليالي لكل حجز)، القيمة (null لمن لا يرى الجانب المالي)
+function _bookingTotals_(rows) {
+  var t = { count: rows.length, rooms: 0, roomNights: 0, value: 0 }, fin = false;
+  rows.forEach(function(b) {
+    var r = Number(b.roomCount) || 0, n = Number(b.nights) || 0;
+    t.rooms += r; t.roomNights += r * n;
+    if (b.bookingValue !== undefined) { fin = true; t.value += Number(b.bookingValue) || 0; }
+  });
+  t.value = fin ? Math.round(t.value * 100) / 100 : null;
+  return t;
 }
 
 // اسم فندق تعاقد قائم (غير محذوف) أو null — خريطة الفنادق المرجعية تشمل التعاقدات المحذوفة أيضاً
@@ -5346,7 +5375,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.80";
+var APP_VERSION = "V3.81";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -5532,7 +5561,7 @@ function getBookingsPage(filters, page, pageSize, currentUser) { _apiGuard_();
   var total = filtered.length;
   var start = (page-1)*pageSize;
   var slice = filtered.slice(start, start+pageSize);
-  var res = { rows: slice, total: total, page: page, pageSize: pageSize, totalPages: Math.max(1, Math.ceil(total/pageSize)) };
+  var res = { rows: slice, total: total, page: page, pageSize: pageSize, totalPages: Math.max(1, Math.ceil(total/pageSize)), totals: _bookingTotals_(filtered) }; // V3.81
   try { _recordPerfSample_("~getBookingsPage:filterSort", Date.now()-_tFilter, true); } catch(eT) {}
   // V3.54 — شريط "الأوفر" مع الصفحة عند فتح الشاشة (نفس قراءة شيت الحجوزات المحفوظة بهذا التنفيذ بدل نداء ثانٍ)
   if (filters.includeOvercap) { try { res.overcap = getOverCapacityNotifications(currentUser); } catch(eO) {} }
@@ -8033,7 +8062,7 @@ function _hotelSchedulesFifo_(allowed, onlyHotel) {
     hotels[rc.hotel].receipts.push({ amount: parseFloat(r[3]) || 0, t: pd ? pd.getTime() : 0, id: String(r[0]), paymentId: String(r[1] || ""), contractId: rc.id,
       statement: String(r[5] || ""), notes: String(r[6] || ""), createdBy: String(r[7] || ""), linked: String(r[10] || "") });
   }
-  var out = {}, attMapS = _attCountMap_();
+  var out = {}, attMapS = _attCountMap_(), payerMapS = _accPayerMap_();
   Object.keys(hotels).forEach(function(hn) {
     var H = hotels[hn];
     H.items.sort(function(a, b) {
@@ -8077,7 +8106,8 @@ function _hotelSchedulesFifo_(allowed, onlyHotel) {
       return { receiptId: x.id, amount: r2(x.amount), payDate: fmt(x.t), payDateIso: x.t ? _fmtDate_(new Date(x.t), tz, "yyyy-MM-dd") : "",
         statement: x.statement, notes: x.notes, createdBy: x.createdBy, linkedAccountPaymentId: x.linked,
         contractId: x.contractId, paymentId: x.paymentId, installmentDue: inst ? fmt(inst.dueT) : "", orphan: !!x.paymentId && !inst, unassigned: !x.paymentId,
-        attCount: _attCount_(attMapS, "receipt", x.id, "account", x.linked) };
+        attCount: _attCount_(attMapS, "receipt", x.id, "account", x.linked),
+        payerName: payerMapS[x.linked] ? payerMapS[x.linked].name : "", payerType: payerMapS[x.linked] ? payerMapS[x.linked].type : "" };
     });
     var contractsOut = Object.keys(contracts).filter(function(id) { return contracts[id].hotel === hn; })
       .sort(function(a, b) { return (contracts[a].startT - contracts[b].startT) || idCmp(a, b); })
@@ -8154,13 +8184,13 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
         kind: "contract", refId: crow[0], contractId: crow[0],
         sortKey: cKey,
         date: isNaN(sd.getTime()) ? "" : _fmtDate_(sd, tz, "dd/MM/yyyy"),
-        description: "تعاقد #" + crow[0] + " — " + (crow[6]||0) + " غرفة × " + (crow[7]||0) + " ر.س/ليلة"
+        description: "تعاقد #" + crow[0] + " — " + _fmtNum2_(crow[6]) + " غرفة × " + _fmtNum2_((parseFloat(crow[5]) > 0) ? crow[5] : ((isNaN(sd.getTime()) || isNaN(ed.getTime())) ? 0 : Math.round((ed - sd) / 86400000))) + " ليلة × " + _fmtNum2_(crow[7]) + " ر.س/ليلة"
           + " (" + (isNaN(sd.getTime())?"":_fmtDate_(sd,tz,"dd/MM/yyyy")) + " ← " + (isNaN(ed.getTime())?"":_fmtDate_(ed,tz,"dd/MM/yyyy")) + ")",
         debit: Math.round(val*100)/100, credit: 0
       });
     }
 
-    var rData = _getSheetValues_("Contract_Payment_Receipts"), attMapH = _attCountMap_();
+    var rData = _getSheetValues_("Contract_Payment_Receipts"), attMapH = _attCountMap_(), payerMapH = _accPayerMap_();
     for (var ri=1; ri<rData.length; ri++) {
       var rrow = rData[ri];
       if (!rrow[0] || rrow[9]===true || !allHotelContractIds[rrow[2]]) continue;
@@ -8176,7 +8206,9 @@ function getAccountStatement(partyType, partyKey, currentUser, hotelFilter, from
         sortKey: isNaN(pd.getTime()) ? 0 : pd.getTime(),
         date: isNaN(pd.getTime()) ? "" : _fmtDate_(pd, tz, "dd/MM/yyyy"),
         payDateIso: isNaN(pd.getTime()) ? "" : _fmtDate_(pd, tz, "yyyy-MM-dd"),
-        description: (linkedAp ? "🔗 دفعة مزدوجة" : "سداد") + " — تعاقد #" + rrow[2] + (rrow[5] ? " — " + rrow[5] : "") + (rrow[6] ? " — " + rrow[6] : ""),
+        description: (linkedAp ? ("🔗 دفعة مزدوجة" + (payerMapH[linkedAp] ? " من " + _payerLabel_(payerMapH[linkedAp]) : "")) : "سداد") + " — تعاقد #" + rrow[2]
+          + (rrow[5] && !(payerMapH[linkedAp] && /^دفعة مزدوجة من/.test(String(rrow[5])) && String(rrow[5]).indexOf(payerMapH[linkedAp].name) > -1) ? " — " + rrow[5] : "") + (rrow[6] && !(payerMapH[linkedAp] && /^دفعة مزدوجة من/.test(String(rrow[6]))) ? " — " + rrow[6] : ""),
+        payerName: payerMapH[linkedAp] ? payerMapH[linkedAp].name : "", payerType: payerMapH[linkedAp] ? payerMapH[linkedAp].type : "",
         statement: rrow[5]||"", notes: rrow[6]||"", createdBy: rrow[7]||"",
         linkedAccountPaymentId: linkedAp,
         amount: Math.round(amt*100)/100,
