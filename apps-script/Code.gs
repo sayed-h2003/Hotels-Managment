@@ -89,6 +89,9 @@ const SHEET_SCHEMAS = {
   // الملف نفسه خاص على Drive (بلا رابط عام) ويُعرض عبر البرنامج فقط؛ في الدفعة المزدوجة يظهر المرفق عند الطرفين معاً
   "Payment_Attachments": ["Attachment_ID", "Kind", "Ref_ID", "File_ID", "File_Name", "Mime_Type", "Size",
                            "Uploaded_By", "Uploaded_At", "Is_Deleted"],
+  // V3.82 — معاينة مصغّرة (JPEG base64 ≈ 10–25KB) لكل صورة مرفقة: تصل مع قائمة المرفقات فلا نداء لكل صورة. شيت منفصل كي لا تثقل
+  // قراءة شيت المرفقات الذي يُقرأ مع كل كشف حساب (أعداد المرفقات).
+  "Payment_Attachment_Thumbs": ["Attachment_ID", "Thumb_B64"],
   // v3.44 — قياس أداء الخادم (يجمع قياس الخادم نفسه + قياس رحلة المتصفح الكاملة معاً):
   // تجميع كل 10 دقائق (عدد/مجموع المدة/أقصى/فشل) لكل دالة، يُفرَّغ من الكاش عبر مشغّل زمني
   "Perf":     ["Day", "Hour", "Function", "Count", "Sum_Duration_Ms", "Max_Ms", "Fails", "Version"],
@@ -458,7 +461,7 @@ function flushDeferredNotifications(currentUser) { _apiGuard_();
   return { created: _notifQueueDrain_() };
 }
 // نداءات لا تحتاج القفل: قراءات، والفحوصات الدورية والتصدير/الإرسال (طويلة وتقفل داخلياً ما يلزم)
-var _API_NOLOCK_RE = /^(get|poll|ping|flush|search|list|check|load|is|has|export|count|preview|validate|logout|mark|send|generate|test|globalSearch)/;
+var _API_NOLOCK_RE = /^(get|poll|ping|flush|search|list|check|load|is|has|export|count|preview|validate|logout|mark|send|generate|test|globalSearch|upload)/; // V3.82 — upload: رفع الإيصال يقفل عند كتابة الشيت فقط (كان يحجز قفل الكتابة كل مدة رفع الملف لـ Drive)
 // البوابة الوحيدة لنداءات المتصفح بعد الدخول
 function api(token, fnName) {
   var args = Array.prototype.slice.call(arguments, 2);
@@ -527,7 +530,7 @@ function _apiTable_() {
     editContractPaymentReceipt: { f: editContractPaymentReceipt, u: 1 },
     deleteContractPaymentReceipt: { f: deleteContractPaymentReceipt, u: 1 },
     saveDualPayment: { f: saveDualPayment, u: 1 },
-    uploadPaymentAttachment: { f: uploadPaymentAttachment, u: 5 },
+    uploadPaymentAttachment: { f: uploadPaymentAttachment, u: 6 },
     listPaymentAttachments: { f: listPaymentAttachments, u: 2 },
     getPaymentAttachmentData: { f: getPaymentAttachmentData, u: 1 },
     deletePaymentAttachment: { f: deletePaymentAttachment, u: 1 },
@@ -2033,8 +2036,10 @@ function saveDualPayment(p, currentUser) { _apiGuard_();
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 var _ATT_SHEET = "Payment_Attachments", _ATT_MAX_BYTES = 8 * 1024 * 1024, _ATT_MAX_PER_PAYMENT = 12;
 var _ATT_MIME_RE = /^(image\/(jpeg|png|webp|gif|heic|heif)|application\/pdf)$/;
-function _ensureReceiptsFolder_() {
-  var props = PropertiesService.getScriptProperties(), root = _ensureAppRootFolder_(), id = props.getProperty("RECEIPTS_FOLDER_ID");
+function _ensureReceiptsFolder_(fast) {
+  var props = PropertiesService.getScriptProperties(), id = props.getProperty("RECEIPTS_FOLDER_ID");
+  if (id && fast) { try { return DriveApp.getFolderById(id); } catch (eF) {} } // V3.82 — مسار الرفع: نداء Drive واحد
+  var root = _ensureAppRootFolder_();
   if (id) { try { var f = DriveApp.getFolderById(id); if (f.getName() !== "إيصالات السداد") f.setName("إيصالات السداد"); return f; } catch (e) {} }
   var nf = root.createFolder("إيصالات السداد");
   props.setProperty("RECEIPTS_FOLDER_ID", nf.getId());
@@ -2083,7 +2088,7 @@ function _attRowObj_(row, ref) {
     linked: !!ref && !(String(row[1]) === ref.kind && String(row[2]) === ref.refId) };
 }
 // تناديها الواجهة: رفع مرفق لدفعة (base64). الصور تُضغط في المتصفح قبل الرفع
-function uploadPaymentAttachment(kind, refId, fileName, mimeType, base64Data, currentUser) { _apiGuard_();
+function uploadPaymentAttachment(kind, refId, fileName, mimeType, base64Data, thumbB64, currentUser) { _apiGuard_();
   var _fn = "[uploadPaymentAttachment]"; _logInfo_(_fn, "START | " + kind + ":" + String(refId || "").slice(0, 30));
   try {
   var ref = _attRef_(kind, refId);
@@ -2098,12 +2103,19 @@ function uploadPaymentAttachment(kind, refId, fileName, mimeType, base64Data, cu
   var clean = String(fileName || "إيصال").replace(/[\\\/:*?"<>|\u0000-\u001f]/g, "_").slice(0, 80) || "إيصال";
   var stamp = _fmtDate_(new Date(), _tz_(), "yyyyMMdd-HHmmss");
   var blob = Utilities.newBlob(bytes, mimeType, ref.kind + "_" + ref.refId + "_" + stamp + "_" + clean);
-  var file = _ensureReceiptsFolder_().createFile(blob); // خاص: لا مشاركة ولا رابط عام
-  var id = _getNextSequentialId_("ATT-", 5), sheet = _getOrCreateSheet_(_ATT_SHEET);
-  sheet.appendRow([id, ref.kind, ref.refId, file.getId(), clean, mimeType, bytes.length, currentUser, new Date(), false]);
-  _invalidateSheetCache_(_ATT_SHEET);
+  var file = _ensureReceiptsFolder_(true).createFile(blob); // خاص: لا مشاركة ولا رابط عام — خارج قفل الكتابة (أبطأ خطوة)
+  var thumb = String(thumbB64 || ""); if (thumb.length < 200 || thumb.length > 45000 || !/^[A-Za-z0-9+\/=]+$/.test(thumb)) thumb = ""; // معاينة اختيارية: غير الصالحة تُهمَل بصمت
+  var upAt = new Date(), id = "";
+  _withLock_(function() { // القفل لتسلسل الرقم وكتابة الصفوف فقط
+    id = _getNextSequentialId_("ATT-", 5);
+    _getOrCreateSheet_(_ATT_SHEET).appendRow([id, ref.kind, ref.refId, file.getId(), clean, mimeType, bytes.length, currentUser, upAt, false]);
+    if (thumb) _getOrCreateSheet_("Payment_Attachment_Thumbs").appendRow([id, thumb]);
+    _invalidateSheetCache_(_ATT_SHEET); _invalidateSheetCache_("Payment_Attachment_Thumbs");
+  }, 20000);
   logAudit("الحسابات", "إرفاق إيصال", ref.refId, "", "", "", "إرفاق " + (mimeType === "application/pdf" ? "ملف PDF" : "صورة") + " «" + clean + "» بدفعة " + (ref.kind === "account" ? "عميل/جهة" : "فندق") + " #" + ref.refId + (ref.linkedRef ? " (دفعة مزدوجة — يظهر عند الطرفين)" : ""), currentUser);
-  return { success: true, attachmentId: id, name: clean };
+  var item = _attRowObj_([id, ref.kind, ref.refId, file.getId(), clean, mimeType, bytes.length, currentUser, upAt, false], ref);
+  if (thumb) item.thumb = thumb;
+  return { success: true, attachmentId: id, name: clean, item: item }; // الصف كاملاً: الواجهة تضيفه دون نداء قائمة ثانٍ
   } catch (e) { _logError_(_fn, e); throw e; }
 }
 // تناديها الواجهة: مرفقات دفعة (ومرفقات طرفها المرتبط في الدفعة المزدوجة)
@@ -2119,6 +2131,12 @@ function listPaymentAttachments(kind, refId, currentUser) { _apiGuard_();
     var r = d[i]; if (!r[0] || r[9] === true) continue;
     var mine = String(r[1]) === ref.kind && String(r[2]) === ref.refId, other = ref.linkedRef && String(r[1]) === ref.linkedKind && String(r[2]) === ref.linkedRef;
     if (mine || other) out.push(_attRowObj_(r, ref));
+  }
+  // V3.82 — المعاينات المصغّرة تصل مع القائمة (كانت الواجهة تجلب كل صورة كاملة بنداء مستقل — بطء وتعليق)
+  if (out.length && _getSS_().getSheetByName("Payment_Attachment_Thumbs")) {
+    var want = {}; out.forEach(function(o) { want[o.attachmentId] = o; });
+    var td = _getSheetValues_("Payment_Attachment_Thumbs");
+    for (var t = 1; t < td.length; t++) { var o2 = want[String(td[t][0])]; if (o2 && td[t][1]) o2.thumb = String(td[t][1]); }
   }
   return { items: out, linkedRef: ref.linkedRef };
   } catch (e) { _logError_(_fn, e); throw e; }
@@ -2154,6 +2172,13 @@ function deletePaymentAttachment(attachmentId, currentUser) { _apiGuard_();
   _attPermFor_(f.data, currentUser, true);
   _getOrCreateSheet_(_ATT_SHEET).getRange(f.row + 1, 10).setValue(true);
   _invalidateSheetCache_(_ATT_SHEET);
+  try { // تفريغ المعاينة (تحرير مساحة الشيت)
+    if (_getSS_().getSheetByName("Payment_Attachment_Thumbs")) {
+      var tds = _getSheetValues_("Payment_Attachment_Thumbs");
+      for (var tr = 1; tr < tds.length; tr++) { if (String(tds[tr][0]) === String(f.data[0])) { _getOrCreateSheet_("Payment_Attachment_Thumbs").getRange(tr + 1, 2).setValue(""); break; } }
+      _invalidateSheetCache_("Payment_Attachment_Thumbs");
+    }
+  } catch (eTh) {}
   try { DriveApp.getFileById(String(f.data[3])).setTrashed(true); } catch (eT) {}
   logAudit("الحسابات", "حذف مرفق", String(f.data[2]), "", "", "", "حذف مرفق «" + String(f.data[4] || "") + "» من دفعة #" + String(f.data[2]), currentUser);
   return { success: true };
@@ -5375,7 +5400,7 @@ function saveSessionTimeoutMinutes(minutes, currentUser) { _apiGuard_();
 // ═══════════════════════════════════════════════════════════════
 // v3.0 — رقم نسخة النظام المصدر الوحيد الموحّد (يُحقن للواجهة عبر getAppBootstrap)
 // ═══════════════════════════════════════════════════════════════
-var APP_VERSION = "V3.81";
+var APP_VERSION = "V3.82";
 // V3.54 — ترتيب أرقام الإصدارات رقمياً وبلا حساسية لحالة الحرف (v3.9 < v3.10 < V3.54)
 function _cmpVersion_(a, b) {
   var pa = String(a).replace(/^[vV]/, "").split("."), pb = String(b).replace(/^[vV]/, "").split(".");
@@ -8112,8 +8137,21 @@ function _hotelSchedulesFifo_(allowed, onlyHotel) {
     var contractsOut = Object.keys(contracts).filter(function(id) { return contracts[id].hotel === hn; })
       .sort(function(a, b) { return (contracts[a].startT - contracts[b].startT) || idCmp(a, b); })
       .map(function(id) { var ct = contracts[id]; return { contractId: id, label: "تعاقد #" + id + " (" + fmt(ct.startT) + " ← " + fmt(ct.endT) + ")", value: r2(ct.value), scheduled: r2(ct.scheduled) }; });
+    // V3.82 — دفتر واحد مرتب زمنياً: الأقساط بتواريخ استحقاقها والدفعات بتواريخ سدادها، ومعه الرصيد التراكمي بعد كل سطر
+    // (الأقساط − الدفعات حتى ذلك السطر). عند تساوي التاريخ تسبق الدفعةُ القسطَ (كما في كشف المستخدم). بنود الخصم بالأقدمية (items) كما هي.
+    var ledRaw = [];
+    items.forEach(function(o, i) { ledRaw.push({ type: "due", t: H.items[i].dueT || 0, seq: i, o: o }); });
+    receiptsOut.forEach(function(o, i) { ledRaw.push({ type: "pay", t: H.receipts[i].t || 0, seq: i, o: o }); });
+    ledRaw.sort(function(a, b) { return (a.t - b.t) || ((a.type === "pay" ? 0 : 1) - (b.type === "pay" ? 0 : 1)) || (a.seq - b.seq); });
+    var cumDueL = 0, cumPaidL = 0, ledger = ledRaw.map(function(x) {
+      var row = { type: x.type, date: fmt(x.t), dateIso: x.t ? _fmtDate_(new Date(x.t), tz, "yyyy-MM-dd") : "", future: x.t >= todayT };
+      Object.keys(x.o).forEach(function(k) { row[k] = x.o[k]; });
+      if (x.type === "due") cumDueL = r2(cumDueL + x.o.amount); else cumPaidL = r2(cumPaidL + x.o.amount);
+      row.cumDue = cumDueL; row.cumPaid = cumPaidL; row.balance = r2(cumDueL - cumPaidL);
+      return row;
+    });
     out[hn] = {
-      hotel: hn, items: items, receipts: receiptsOut, contracts: contractsOut, warnings: H.warnings, today: fmt(todayT),
+      hotel: hn, items: items, receipts: receiptsOut, ledger: ledger, contracts: contractsOut, warnings: H.warnings, today: fmt(todayT),
       contractsCount: Object.keys(contracts).filter(function(id) { return contracts[id].hotel === hn; }).length,
       receiptsCount: H.receipts.length,
       totalDue: tot.totalDue, totalPaid: totalPaid, balance: r2(tot.totalDue - totalPaid), credit: r2(Math.max(0, totalPaid - tot.totalDue)),
@@ -8136,7 +8174,7 @@ function getHotelPaymentSchedule(hotelName, currentUser) { _apiGuard_();
   var allowed = _getUserAllowedHotels_(currentUser);
   if (allowed && !allowed[hotelName]) throw new Error("ليس لديك صلاحية الوصول لهذا الفندق.");
   var m = _hotelSchedulesFifo_(allowed, hotelName);
-  return m[hotelName] || { hotel: hotelName, items: [], receipts: [], contracts: [], warnings: [], today: _fmtDate_(new Date(), _tz_(), "dd/MM/yyyy"), contractsCount: 0, receiptsCount: 0,
+  return m[hotelName] || { hotel: hotelName, items: [], receipts: [], ledger: [], contracts: [], warnings: [], today: _fmtDate_(new Date(), _tz_(), "dd/MM/yyyy"), contractsCount: 0, receiptsCount: 0,
     totalDue: 0, totalPaid: 0, balance: 0, credit: 0, overdue: 0, overdueCount: 0, oldestOverdue: "", next30: 0, nextDue: null, paidCount: 0, partialCount: 0, openCount: 0, paidPct: 0 };
   } catch(e) { _logError_(_fn, e); throw e; }
 }
